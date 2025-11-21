@@ -4,7 +4,7 @@ import os
 def main():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     data_dir = os.path.join(base_dir, 'data', 'verified')
-    round1_path = os.path.join(data_dir, 'openai_gpt-5', 'round1.json')
+    round1_path = os.path.join(data_dir, 'gpt-5-2025-08-07-medium-reasoning', 'round1.json')
     output_path = os.path.join(data_dir, 'instance_id_list.json')
 
     with open(round1_path, 'r', encoding='utf-8') as f:
