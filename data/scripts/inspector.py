@@ -15,7 +15,6 @@ from colorama import Fore, Style, init as colorama_init
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 
-# 初始化颜色（在 Windows / 其他终端都能正常显示）
 colorama_init(autoreset=True)
 
 
@@ -52,7 +51,6 @@ def build_traj_path(path: str, m: str | None, r: int | None, i: str | None) -> P
             raise typer.BadParameter(f"Trajectory file does not exist: '{traj_path}'")
         return traj_path
 
-    # 兼容原来的 path 行为
     path_obj = Path(path)
     if path_obj.is_file():
         return path_obj
@@ -66,7 +64,6 @@ def build_traj_path(path: str, m: str | None, r: int | None, i: str | None) -> P
 
 
 def role_style(role: str) -> str:
-    """根据 role 返回不同颜色样式前缀。"""
     if role == "system":
         return Fore.CYAN + Style.BRIGHT
     if role == "user":
@@ -76,7 +73,6 @@ def role_style(role: str) -> str:
 
 
 def print_step(step_idx: int, steps: List[Dict[str, Any]], traj_name: str | None = None) -> None:
-    """在终端打印当前 step 的所有 message。"""
     step_no = step_idx + 1
     total = len(steps)
 
@@ -137,7 +133,6 @@ def main(
     except Exception as e:
         raise typer.BadParameter(f"Failed to load trajectory '{traj_path}': {e}") from e
 
-    # 简化版：每条 message 当作一个 step
     steps: List[List[Dict[str, Any]]] = [[m] for m in messages]
     if not steps:
         typer.echo("Empty trajectory.")
@@ -170,12 +165,10 @@ def main(
         if cmd in ("q", "quit", "exit"):
             break
         elif cmd in ("l", ""):
-            # 默认回车等同 next
             idx = min(len(steps) - 1, idx + 1)
         elif cmd == "h":
             idx = max(0, idx - 1)
         else:
-            # 尝试把输入当作 step 编号
             try:
                 num = int(cmd)
                 if 1 <= num <= len(steps):
