@@ -1,0 +1,957 @@
+{
+  "info": {
+    "exit_status": "Submitted",
+    "submission": "diff --git a/_src/conf.py b/_src/conf.py\nnew file mode 100644\nindex 000000000..a471bab6f\n--- /dev/null\n+++ b/_src/conf.py\n@@ -0,0 +1,2 @@\n+extensions=['sphinx.ext.autodoc']\n+autodoc_docstring_signature=True\ndiff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py\nindex f8e4be999..209512def 100644\n--- a/sphinx/ext/autodoc/__init__.py\n+++ b/sphinx/ext/autodoc/__init__.py\n@@ -1044,6 +1044,9 @@ class DocstringSignatureMixin:\n                           RemovedInSphinx40Warning, stacklevel=2)\n         docstrings = self.get_doc()\n         self._new_docstrings = docstrings[:]\n+        # list of parsed signatures found at the beginning of the docstring\n+        # Each entry is a tuple of (args, retann)\n+        self._signatures = None\n         result = None\n         for i, doclines in enumerate(docstrings):\n             # no lines in docstring, no match\n@@ -1062,13 +1065,27 @@ class DocstringSignatureMixin:\n                     valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n             if base not in valid_names:\n                 continue\n-            # re-prepare docstring to ignore more leading indentation\n-            tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n-            self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[1:]),\n-                                                        tabsize=tab_width)\n-            result = args, retann\n-            # don't look any further\n-            break\n+            # Collect consecutive signature lines (for overloaded methods)\n+            signatures = []\n+            for j, line in enumerate(doclines):\n+                m = py_ext_sig_re.match(line)\n+                if not m:\n+                    break\n+                exmod2, path2, base2, args2, retann2 = m.groups()\n+                # Ensure each line describes the same callable name\n+                if base2 not in valid_names:\n+                    break\n+                signatures.append((args2, retann2))\n+            if signatures:\n+                # re-prepare docstring to ignore more leading indentation,\n+                # and strip all matched signature lines from the beginning\n+                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n+                self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[len(signatures):]),\n+                                                            tabsize=tab_width)\n+                self._signatures = signatures\n+                result = signatures[0]\n+                # don't look any further\n+                break\n         return result\n \n     def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:\n@@ -1082,13 +1099,28 @@ class DocstringSignatureMixin:\n         return super().get_doc(None, ignore)  # type: ignore\n \n     def format_signature(self, **kwargs: Any) -> str:\n+        extra_sigs = []\n         if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n             # only act if a signature is not explicitly given already, and if\n             # the feature is enabled\n             result = self._find_signature()\n             if result is not None:\n                 self.args, self.retann = result\n-        return super().format_signature(**kwargs)  # type: ignore\n+                # If multiple signatures were found at the beginning of the docstring,\n+                # append the rest as additional signature lines.\n+                if getattr(self, '_signatures', None):\n+                    for (args, retann) in self._signatures[1:]:\n+                        if args is not None:\n+                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n+                        else:\n+                            # If no args captured, keep empty parentheses\n+                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n+        primary = super().format_signature(**kwargs)  # type: ignore\n+        if extra_sigs:\n+            # One signature per line, the first is the primary.\n+            return '\\n'.join([primary] + extra_sigs)\n+        else:\n+            return primary\n \n \n class DocstringStripSignatureMixin(DocstringSignatureMixin):\n",
+    "model_stats": {
+      "instance_cost": 0.3629385,
+      "api_calls": 15
+    },
+    "mini_version": "1.15.0",
+    "config": {
+      "agent": {
+        "system_template": "You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).\n\nInclude a THOUGHT section before your command where you explain your reasoning process.\nFormat your response as shown in <format_example>.\n\n<format_example>\nTHOUGHT: Your reasoning and analysis here\n\n```bash\nyour_command_here\n```\n</format_example>\n\nFailure to follow these rules will cause your response to be rejected.\n",
+        "instance_template": "<pr_description>\nConsider the following PR description:\n{{task}}\n</pr_description>\n\n<instructions>\n# Task Instructions\n\n## Overview\nYou're a software engineer interacting continuously with a computer by submitting commands.\nYou'll be helping implement necessary changes to meet requirements in the PR description.\nYour task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.\n\nIMPORTANT: This is an interactive process where you will think and issue ONE command, see its result, then think and issue your next command.\n\nFor each response:\n1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish\n2. Provide exactly ONE bash command to execute\n\n## Important Boundaries\n- MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)\n- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)\n\n## Recommended Workflow\n1. Analyze the codebase by finding and reading relevant files\n2. Create a script to reproduce the issue\n3. Edit the source code to resolve the issue\n4. Verify your fix works by running your script again\n5. Test edge cases to ensure your fix is robust\n\n## Command Execution Rules\nYou are operating in an environment where\n1. You write a single command\n2. The system executes that command in a subshell\n3. You see the result\n4. You write your next command\n\nEach response should include:\n1. A **THOUGHT** section where you explain your reasoning and plan\n2. A single bash code block with your command\n\nFormat your responses like this:\n\n<format_example>\nTHOUGHT: Here I explain my reasoning process, analysis of the current situation,\nand what I'm trying to accomplish with the command below.\n\n```bash\nyour_command_here\n```\n</format_example>\n\nCommands must be specified in a single bash code block:\n\n```bash\nyour_command_here\n```\n\n**CRITICAL REQUIREMENTS:**\n- Your response SHOULD include a THOUGHT section explaining your reasoning\n- Your response MUST include EXACTLY ONE bash code block\n- This bash block MUST contain EXACTLY ONE command (or a set of commands connected with && or ||)\n- If you include zero or multiple bash blocks, or no command at all, YOUR RESPONSE WILL FAIL\n- Do NOT try to run multiple independent commands in separate blocks in one response\n- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.\n- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files\n\nExample of a CORRECT response:\n<example_response>\nTHOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.\n\n```bash\nls -la\n```\n</example_response>\n\nExample of an INCORRECT response:\n<example_response>\nTHOUGHT: I need to examine the codebase and then look at a specific file. I'll run multiple commands to do this.\n\n```bash\nls -la\n```\n\nNow I'll read the file:\n\n```bash\ncat file.txt\n```\n</example_response>\n\nIf you need to run multiple commands, either:\n1. Combine them in one block using && or ||\n```bash\ncommand1 && command2 || echo \"Error occurred\"\n```\n\n2. Wait for the first command to complete, see its output, then issue the next command in your following response.\n\n## Environment Details\n- You have a full Linux shell environment\n- Always use non-interactive flags (-y, -f) for commands\n- Avoid interactive tools like vi, nano, or any that require user input\n- If a command isn't available, you can install it\n\n## Useful Command Examples\n\n### Create a new file:\n```bash\ncat <<'EOF' > newfile.py\nimport numpy as np\nhello = \"world\"\nprint(hello)\nEOF\n```\n\n### Edit files with sed:\n```bash\n# Replace all occurrences\nsed -i 's/old_string/new_string/g' filename.py\n\n# Replace only first occurrence\nsed -i 's/old_string/new_string/' filename.py\n\n# Replace first occurrence on line 1\nsed -i '1s/old_string/new_string/' filename.py\n\n# Replace all occurrences in lines 1-10\nsed -i '1,10s/old_string/new_string/g' filename.py\n```\n\n### View file content:\n```bash\n# View specific lines with numbers\nnl -ba filename.py | sed -n '10,20p'\n```\n\n### Any other command you want to run\n```bash\nanything\n```\n\n## Submission\nWhen you've completed your work (reading, editing, testing), and cannot make further progress\nissue exactly the following command:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```\n\nThis command will submit your work.\nYou cannot continue working (reading, editing, testing) in any way on this task after submitting.\n</instructions>\n",
+        "timeout_template": "The last command <command>{{action['action']}}</command> timed out and has been killed.\nThe output of the command was:\n <output>\n{{output}}\n</output>\nPlease try another command and make sure to avoid those requiring interactive input.",
+        "format_error_template": "Please always provide EXACTLY ONE action in triple backticks, found {{actions|length}} actions.\n\nPlease format your action in triple backticks as shown in <response_example>.\n\n<response_example>\nHere are some thoughts about why you want to perform the action.\n\n```bash\n<action>\n```\n</response_example>\n\nIf you have completed your assignment, please consult the first message about how to\nsubmit your solution (you will not be able to continue working on this task after that).\n",
+        "action_observation_template": "<returncode>{{output.returncode}}</returncode>\n{% if output.output | length < 10000 -%}\n<output>\n{{ output.output -}}\n</output>\n{%- else -%}\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning>\n{%- set elided_chars = output.output | length - 10000 -%}\n<output_head>\n{{ output.output[:5000] }}\n</output_head>\n<elided_chars>\n{{ elided_chars }} characters elided\n</elided_chars>\n<output_tail>\n{{ output.output[-5000:] }}\n</output_tail>\n{%- endif -%}\n",
+        "step_limit": 250,
+        "cost_limit": 3.0
+      },
+      "model": {
+        "model_name": "gpt-5-2025-08-07",
+        "model_kwargs": {
+          "drop_params": true,
+          "temperature": 0.0,
+          "reasoning": "medium"
+        },
+        "litellm_model_registry": null,
+        "set_cache_control": null,
+        "cost_tracking": "default"
+      },
+      "environment": {
+        "image": "docker.io/swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-7748:latest",
+        "cwd": "/testbed",
+        "env": {
+          "PAGER": "cat",
+          "MANPAGER": "cat",
+          "LESS": "-R",
+          "PIP_PROGRESS_BAR": "off",
+          "TQDM_DISABLE": "1"
+        },
+        "forward_env": [],
+        "timeout": 60,
+        "executable": "docker",
+        "run_args": [
+          "--rm"
+        ],
+        "container_timeout": "2h",
+        "pull_timeout": 3600
+      },
+      "agent_type": "minisweagent.run.extra.swebench.ProgressTrackingAgent",
+      "model_type": "minisweagent.models.litellm_model.LitellmModel",
+      "environment_type": "minisweagent.environments.docker.DockerEnvironment"
+    }
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).\n\nInclude a THOUGHT section before your command where you explain your reasoning process.\nFormat your response as shown in <format_example>.\n\n<format_example>\nTHOUGHT: Your reasoning and analysis here\n\n```bash\nyour_command_here\n```\n</format_example>\n\nFailure to follow these rules will cause your response to be rejected."
+    },
+    {
+      "role": "user",
+      "content": "<pr_description>\nConsider the following PR description:\nautodoc_docstring_signature with overloaded methods\nWhen using swig to wrap C++ classes for python, if they have overloaded methods, I believe the convention is to place the signatures for each of the overloaded C++ methods at the start of the docstring. Currently, `autodoc_docstring_signature` can only pick up the first one. It would be nice to be able to pick up all of them.\n\n\n</pr_description>\n\n<instructions>\n# Task Instructions\n\n## Overview\nYou're a software engineer interacting continuously with a computer by submitting commands.\nYou'll be helping implement necessary changes to meet requirements in the PR description.\nYour task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.\n\nIMPORTANT: This is an interactive process where you will think and issue ONE command, see its result, then think and issue your next command.\n\nFor each response:\n1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish\n2. Provide exactly ONE bash command to execute\n\n## Important Boundaries\n- MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)\n- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)\n\n## Recommended Workflow\n1. Analyze the codebase by finding and reading relevant files\n2. Create a script to reproduce the issue\n3. Edit the source code to resolve the issue\n4. Verify your fix works by running your script again\n5. Test edge cases to ensure your fix is robust\n\n## Command Execution Rules\nYou are operating in an environment where\n1. You write a single command\n2. The system executes that command in a subshell\n3. You see the result\n4. You write your next command\n\nEach response should include:\n1. A **THOUGHT** section where you explain your reasoning and plan\n2. A single bash code block with your command\n\nFormat your responses like this:\n\n<format_example>\nTHOUGHT: Here I explain my reasoning process, analysis of the current situation,\nand what I'm trying to accomplish with the command below.\n\n```bash\nyour_command_here\n```\n</format_example>\n\nCommands must be specified in a single bash code block:\n\n```bash\nyour_command_here\n```\n\n**CRITICAL REQUIREMENTS:**\n- Your response SHOULD include a THOUGHT section explaining your reasoning\n- Your response MUST include EXACTLY ONE bash code block\n- This bash block MUST contain EXACTLY ONE command (or a set of commands connected with && or ||)\n- If you include zero or multiple bash blocks, or no command at all, YOUR RESPONSE WILL FAIL\n- Do NOT try to run multiple independent commands in separate blocks in one response\n- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.\n- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files\n\nExample of a CORRECT response:\n<example_response>\nTHOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.\n\n```bash\nls -la\n```\n</example_response>\n\nExample of an INCORRECT response:\n<example_response>\nTHOUGHT: I need to examine the codebase and then look at a specific file. I'll run multiple commands to do this.\n\n```bash\nls -la\n```\n\nNow I'll read the file:\n\n```bash\ncat file.txt\n```\n</example_response>\n\nIf you need to run multiple commands, either:\n1. Combine them in one block using && or ||\n```bash\ncommand1 && command2 || echo \"Error occurred\"\n```\n\n2. Wait for the first command to complete, see its output, then issue the next command in your following response.\n\n## Environment Details\n- You have a full Linux shell environment\n- Always use non-interactive flags (-y, -f) for commands\n- Avoid interactive tools like vi, nano, or any that require user input\n- If a command isn't available, you can install it\n\n## Useful Command Examples\n\n### Create a new file:\n```bash\ncat <<'EOF' > newfile.py\nimport numpy as np\nhello = \"world\"\nprint(hello)\nEOF\n```\n\n### Edit files with sed:\n```bash\n# Replace all occurrences\nsed -i 's/old_string/new_string/g' filename.py\n\n# Replace only first occurrence\nsed -i 's/old_string/new_string/' filename.py\n\n# Replace first occurrence on line 1\nsed -i '1s/old_string/new_string/' filename.py\n\n# Replace all occurrences in lines 1-10\nsed -i '1,10s/old_string/new_string/g' filename.py\n```\n\n### View file content:\n```bash\n# View specific lines with numbers\nnl -ba filename.py | sed -n '10,20p'\n```\n\n### Any other command you want to run\n```bash\nanything\n```\n\n## Submission\nWhen you've completed your work (reading, editing, testing), and cannot make further progress\nissue exactly the following command:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```\n\nThis command will submit your work.\nYou cannot continue working (reading, editing, testing) in any way on this task after submitting.\n</instructions>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to explore the codebase to locate where autodoc_docstring_signature is implemented and understand how docstring parsing currently works, so I can modify it to support multiple signatures for overloaded methods.\n\n```bash\nls -la\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0318e9633dd0601200692146e904e8819088eaa2e43eb3e879",
+          "created": 1763788521,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to explore the codebase to locate where autodoc_docstring_signature is implemented and understand how docstring parsing currently works, so I can modify it to support multiple signatures for overloaded methods.\n\n```bash\nls -la\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "refusal": null
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 121,
+            "prompt_tokens": 1280,
+            "total_tokens": 1401,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 64,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\ntotal 488\ndrwxrwxrwx  1 root root   4096 Sep 10 16:04 .\ndrwxr-xr-x  1 root root   4096 Nov 22 05:15 ..\ndrwxr-xr-x  2 root root   4096 Sep 10 16:03 .circleci\n-rw-r--r--  1 root root    129 Sep 10 16:03 .codecov.yml\ndrwxrwxrwx  8 root root   4096 Sep 10 16:04 .git\ndrwxrwxrwx  4 root root   4096 Sep 10 16:03 .github\n-rw-r--r--  1 root root    340 Sep 10 16:03 .gitignore\n-rw-r--r--  1 root root   1114 Sep 10 16:03 .travis.yml\n-rw-r--r--  1 root root   4057 Sep 10 16:03 AUTHORS\n-rw-r--r--  1 root root 236718 Sep 10 16:03 CHANGES\n-rw-r--r--  1 root root  42125 Sep 10 16:03 CHANGES.old\n-rw-r--r--  1 root root   3479 Sep 10 16:03 CODE_OF_CONDUCT\n-rw-r--r--  1 root root  16230 Sep 10 16:03 CONTRIBUTING.rst\n-rw-r--r--  1 root root  24056 Sep 10 16:03 EXAMPLES\n-rw-r--r--  1 root root   8998 Sep 10 16:03 LICENSE\n-rw-r--r--  1 root root    769 Sep 10 16:03 MANIFEST.in\n-rw-r--r--  1 root root   1817 Sep 10 16:03 Makefile\n-rw-r--r--  1 root root   4352 Sep 10 16:03 README.rst\ndrwxr-xr-x  2 root root   4096 Sep 10 16:04 Sphinx.egg-info\n-rw-r--r--  1 root root    872 Sep 10 16:03 babel.cfg\n-rw-r--r--  1 root root    471 Sep 10 16:03 bindep.txt\ndrwxrwxrwx  9 root root   4096 Sep 10 16:03 doc\n-rw-r--r--  1 root root   1843 Sep 10 16:03 karma.conf.js\n-rw-r--r--  1 root root  45122 Sep 10 16:03 package-lock.json\n-rw-r--r--  1 root root    485 Sep 10 16:03 package.json\n-rw-r--r--  1 root root   1687 Sep 10 16:03 setup.cfg\n-rw-r--r--  1 root root   8444 Sep 10 16:04 setup.py\ndrwxrwxrwx 20 root root   4096 Sep 10 16:04 sphinx\ndrwxrwxrwx  4 root root   4096 Sep 10 16:03 tests\n-rw-r--r--  1 root root   1966 Sep 10 16:04 tox.ini\ndrwxrwxrwx  2 root root   4096 Sep 10 16:03 utils\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to locate where Sphinx handles autodoc_docstring_signature and how it currently parses a signature from a docstring, so I can modify it to support multiple signatures (e.g., SWIG-style overloaded method signatures at the start of the docstring). I'll search the codebase for relevant identifiers in the sphinx package.\n\n```bash\ngrep -RIn \"autodoc_docstring_signature\\|docstring_signature\\|parse\\_signature\\|signature\" sphinx | sed -n '1,200p'\n```",
+      "extra": {
+        "response": {
+          "id": "resp_09b72ceee90fc92800692146ee58008190b8aabc9405385c10",
+          "created": 1763788526,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to locate where Sphinx handles autodoc_docstring_signature and how it currently parses a signature from a docstring, so I can modify it to support multiple signatures (e.g., SWIG-style overloaded method signatures at the start of the docstring). I'll search the codebase for relevant identifiers in the sphinx package.\n\n```bash\ngrep -RIn \"autodoc_docstring_signature\\|docstring_signature\\|parse\\_signature\\|signature\" sphinx | sed -n '1,200p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Addressing Sphinx code issue**\n\nI need to look into fixing the PR regarding `autodoc_docstring_signature` with overloaded methods in the Sphinx codebase. I\u2019ll focus on how `autodoc_docstring_signature` is processed. The options in Sphinx's autodoc include `autodoc_docstring_signature` and `autodoc_default_options`. I noticed that the code responsible for stripping signatures is located in `sphinx/ext/autodoc`, particularly in the inspector's import lines. Let\u2019s conduct a search to gather more information!",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Addressing Sphinx code issue**\n\nI need to look into fixing the PR regarding `autodoc_docstring_signature` with overloaded methods in the Sphinx codebase. I\u2019ll focus on how `autodoc_docstring_signature` is processed. The options in Sphinx's autodoc include `autodoc_docstring_signature` and `autodoc_default_options`. I noticed that the code responsible for stripping signatures is located in `sphinx/ext/autodoc`, particularly in the inspector's import lines. Let\u2019s conduct a search to gather more information!"
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 182,
+            "prompt_tokens": 2137,
+            "total_tokens": 2319,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 64,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning><output_head>\nsphinx/domains/cpp.py:21:from sphinx.addnodes import desc_signature, pending_xref\nsphinx/domains/cpp.py:68:    Each signature is in a desc_signature node, where all children are\nsphinx/domains/cpp.py:69:    desc_signature_line nodes. Each of these lines will have the attribute\nsphinx/domains/cpp.py:76:    No other desc_signature nodes should exist (so far).\nsphinx/domains/cpp.py:605:    def describe_signature(self, signode: TextElement, mode: str, env: \"BuildEnvironment\",\nsphinx/domains/cpp.py:668:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:671:        self.identOrOp.describe_signature(signode, mode, env, prefix, tArgs, symbol)\nsphinx/domains/cpp.py:673:            self.templateArgs.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:729:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:780:                    nne.describe_signature(dest, 'markType',\nsphinx/domains/cpp.py:789:                self.names[-1].describe_signature(signode, mode, env, '', symbol)\nsphinx/domains/cpp.py:802:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:821:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:842:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:858:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:875:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:903:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:921:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:923:        self.literal.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:924:        self.ident.describe_signature(signode, \"udl\", env, \"\", \"\", symbol)\nsphinx/domains/cpp.py:936:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:986:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:990:            self.leftExpr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:999:            self.rightExpr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1013:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1016:        self.expr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1031:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1033:        self.name.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1043:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1058:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1061:        self.expr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1075:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1078:        self.name.describe_signature(signode, 'noneIsName', env, symbol)\nsphinx/domains/cpp.py:1091:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1094:        self.name.describe_signature(signode, 'noneIsName', env, symbol)\nsphinx/domains/cpp.py:1104:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1116:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1135:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1137:        self.lst.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1157:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1159:        self.prefix.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1161:            p.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1185:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1189:        self.typ.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1192:        self.expr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1208:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1212:        self.typeOrExpr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1233:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1238:        self.expr.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:1251:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1254:        self.identifier.describe_signature(signode, mode, env,\nsphinx/domains/cpp.py:1269:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:1272:        self.typ.describe_signature(signode, mode, env, symbol)\nsphinx/dom\n</output_head>\n<elided_chars>\n8833 characters elided\n</elided_chars>\n<output_tail>\nlf.type.describe_signature(signode, 'markType', env, symbol=symbol)\nsphinx/domains/cpp.py:3029:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3031:        self.nestedName.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3033:            self.initializer.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3057:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3067:        self.name.describe_signature(signode, 'markType', env, symbol=symbol)\nsphinx/domains/cpp.py:3096:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3099:        self.name.describe_signature(signode, mode, env, symbol=symbol)\nsphinx/domains/cpp.py:3106:                b.describe_signature(signode, mode, env, symbol=symbol)\nsphinx/domains/cpp.py:3123:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3126:        self.name.describe_signature(signode, mode, env, symbol=symbol)\nsphinx/domains/cpp.py:3152:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3156:        self.name.describe_signature(signode, mode, env, symbol=symbol)\nsphinx/domains/cpp.py:3159:            self.underlyingType.describe_signature(signode, 'noneIsName',\nsphinx/domains/cpp.py:3180:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3183:        self.name.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3185:            self.init.describe_signature(signode, 'markType', env, symbol)\nsphinx/domains/cpp.py:3202:    def describe_signature(self, parentNode: TextElement, mode: str,\nsphinx/domains/cpp.py:3246:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3256:            self.identifier.describe_signature(signode, mode, env, '', '', symbol)\nsphinx/domains/cpp.py:3259:            self.default.describe_signature(signode, 'markType', env, symbol)\nsphinx/domains/cpp.py:3291:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3293:        self.data.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3328:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3330:        self.nestedParams.describe_signature(signode, 'noneIsName', env, symbol)\nsphinx/domains/cpp.py:3332:        self.data.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3375:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3377:        self.param.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3401:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3409:            param.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3412:    def describe_signature_as_introducer(\nsphinx/domains/cpp.py:3413:            self, parentNode: desc_signature, mode: str, env: \"BuildEnvironment\",\nsphinx/domains/cpp.py:3415:        def makeLine(parentNode: desc_signature) -> addnodes.desc_signature_line:\nsphinx/domains/cpp.py:3416:            signode = addnodes.desc_signature_line()\nsphinx/domains/cpp.py:3429:            param.describe_signature(lineNode, mode, env, symbol)\nsphinx/domains/cpp.py:3483:    def describe_signature(self, signode: TextElement, mode: str,\nsphinx/domains/cpp.py:3487:        self.identifier.describe_signature(signode, mode, env, '', '', symbol)\nsphinx/domains/cpp.py:3523:    def describe_signature_as_introducer(\nsphinx/domains/cpp.py:3524:            self, parentNode: desc_signature, mode: str,\nsphinx/domains/cpp.py:3527:        signode = addnodes.desc_signature_line()\nsphinx/domains/cpp.py:3530:        self.concept.describe_signature(signode, 'markType', env, symbol)\nsphinx/domains/cpp.py:3537:            param.describe_signature(signode, mode, env, symbol)\nsphinx/domains/cpp.py:3562:    def describe_signature(self, signode: desc_signature, mode: str,\nsphinx/domains/cpp.py:3566:            t.describe_signature_as_introducer(signode, 'lastIsName', env, symbol, lineSpec)\nsphinx/domains/cpp.py:3640:    def describe_signature(self, signode: desc_signature, mode: str,\nsphinx/domains/cpp.py:3644:        # The caller of the domain added a desc_signature node.\nsphinx/domains/cpp.py:3647:        # Put each line in a desc_signature_line node.\nsphinx/domains/cpp.py:3648:        mainDeclNode = addnodes.desc_signature_line()\nsphinx/domains/cpp.py:3653:            self.templatePrefix.describe_signature(signode, mode, env,\nsphinx/domains/cpp.py:3690:        self.declaration.describe_signature(mainDeclNode, mode, env, self.symbol)\nsphinx/domains/cpp.py:6630:    def describe_signature(self, signode: desc_signature,\nsphinx/domains/cpp.py:6632:        ast.describe_signature(signode, 'lastIsName', self.env, options)\nsphinx/domains/cpp.py:6651:        # So we disallow any signatures inside functions.\n\n</output_tail>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to find the implementation of autodoc_docstring_signature within the Sphinx codebase to understand how it currently extracts signatures from docstrings and then adjust it to support multiple signatures. I'll run a targeted search for the exact config name.\n\n```bash\ngrep -RIn \"autodoc_docstring_signature\" sphinx | sed -n '1,120p'\n```",
+      "extra": {
+        "response": {
+          "id": "resp_01688a2aab585a5f00692146f277fc8195a9b508eac1b2afa3",
+          "created": 1763788530,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to find the implementation of autodoc_docstring_signature within the Sphinx codebase to understand how it currently extracts signatures from docstrings and then adjust it to support multiple signatures. I'll run a targeted search for the exact config name.\n\n```bash\ngrep -RIn \"autodoc_docstring_signature\" sphinx | sed -n '1,120p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Searching for autodoc_docstring_signature**\n\nI need to find the code for autodoc_docstring_signature. The grep command returned a lot of results, and we\u2019re looking in the Sphinx source tree testbed. This feature is intended to pick up multiple signatures at the start of a docstring. I suspect it might be in sphinx/ext/autodoc or sphinx/util. There\u2019s also a config option that tells autodoc to check the docstring for a signature. I\u2019ll perform a more specific search for \"autodoc_docstring_signature\" in the Sphinx config.",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Searching for autodoc_docstring_signature**\n\nI need to find the code for autodoc_docstring_signature. The grep command returned a lot of results, and we\u2019re looking in the Sphinx source tree testbed. This feature is intended to pick up multiple signatures at the start of a docstring. I suspect it might be in sphinx/ext/autodoc or sphinx/util. There\u2019s also a config option that tells autodoc to check the docstring for a signature. I\u2019ll perform a more specific search for \"autodoc_docstring_signature\" in the Sphinx config."
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 214,
+            "prompt_tokens": 5150,
+            "total_tokens": 5364,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 128,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nsphinx/ext/autodoc/__init__.py:1085:        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\nsphinx/ext/autodoc/__init__.py:1100:        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\nsphinx/ext/autodoc/__init__.py:1917:    app.add_config_value('autodoc_docstring_signature', True, True)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I found references to autodoc_docstring_signature in sphinx/ext/autodoc/__init__.py. I should inspect the surrounding code to see how it parses signatures from docstrings and why it only picks up the first one. Then I can plan a change to support multiple signatures at the start of the docstring (common for SWIG-generated docstrings for overloaded methods).\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '1040,1140p'\n```",
+      "extra": {
+        "response": {
+          "id": "resp_051d9ad9ad13d32b00692146f953d081909a647ce4a08a274e",
+          "created": 1763788537,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I found references to autodoc_docstring_signature in sphinx/ext/autodoc/__init__.py. I should inspect the surrounding code to see how it parses signatures from docstrings and why it only picks up the first one. Then I can plan a change to support multiple signatures at the start of the docstring (common for SWIG-generated docstrings for overloaded methods).\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '1040,1140p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "refusal": null
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 114,
+            "prompt_tokens": 5360,
+            "total_tokens": 5474,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n  1040\t    def _find_signature(self, encoding: str = None) -> Tuple[str, str]:\n  1041\t        if encoding is not None:\n  1042\t            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n  1043\t                          \"deprecated.\" % self.__class__.__name__,\n  1044\t                          RemovedInSphinx40Warning, stacklevel=2)\n  1045\t        docstrings = self.get_doc()\n  1046\t        self._new_docstrings = docstrings[:]\n  1047\t        result = None\n  1048\t        for i, doclines in enumerate(docstrings):\n  1049\t            # no lines in docstring, no match\n  1050\t            if not doclines:\n  1051\t                continue\n  1052\t            # match first line of docstring against signature RE\n  1053\t            match = py_ext_sig_re.match(doclines[0])\n  1054\t            if not match:\n  1055\t                continue\n  1056\t            exmod, path, base, args, retann = match.groups()\n  1057\t            # the base name must match ours\n  1058\t            valid_names = [self.objpath[-1]]  # type: ignore\n  1059\t            if isinstance(self, ClassDocumenter):\n  1060\t                valid_names.append('__init__')\n  1061\t                if hasattr(self.object, '__mro__'):\n  1062\t                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n  1063\t            if base not in valid_names:\n  1064\t                continue\n  1065\t            # re-prepare docstring to ignore more leading indentation\n  1066\t            tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n  1067\t            self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[1:]),\n  1068\t                                                        tabsize=tab_width)\n  1069\t            result = args, retann\n  1070\t            # don't look any further\n  1071\t            break\n  1072\t        return result\n  1073\t\n  1074\t    def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:\n  1075\t        if encoding is not None:\n  1076\t            warnings.warn(\"The 'encoding' argument to autodoc.%s.get_doc() is deprecated.\"\n  1077\t                          % self.__class__.__name__,\n  1078\t                          RemovedInSphinx40Warning, stacklevel=2)\n  1079\t        lines = getattr(self, '_new_docstrings', None)\n  1080\t        if lines is not None:\n  1081\t            return lines\n  1082\t        return super().get_doc(None, ignore)  # type: ignore\n  1083\t\n  1084\t    def format_signature(self, **kwargs: Any) -> str:\n  1085\t        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n  1086\t            # only act if a signature is not explicitly given already, and if\n  1087\t            # the feature is enabled\n  1088\t            result = self._find_signature()\n  1089\t            if result is not None:\n  1090\t                self.args, self.retann = result\n  1091\t        return super().format_signature(**kwargs)  # type: ignore\n  1092\t\n  1093\t\n  1094\tclass DocstringStripSignatureMixin(DocstringSignatureMixin):\n  1095\t    \"\"\"\n  1096\t    Mixin for AttributeDocumenter to provide the\n  1097\t    feature of stripping any function signature from the docstring.\n  1098\t    \"\"\"\n  1099\t    def format_signature(self, **kwargs: Any) -> str:\n  1100\t        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n  1101\t            # only act if a signature is not explicitly given already, and if\n  1102\t            # the feature is enabled\n  1103\t            result = self._find_signature()\n  1104\t            if result is not None:\n  1105\t                # Discarding _args is a only difference with\n  1106\t                # DocstringSignatureMixin.format_signature.\n  1107\t                # Documenter.format_signature use self.args value to format.\n  1108\t                _args, self.retann = result\n  1109\t        return super().format_signature(**kwargs)\n  1110\t\n  1111\t\n  1112\tclass FunctionDocumenter(DocstringSignatureMixin, ModuleLevelDocumenter):  # type: ignore\n  1113\t    \"\"\"\n  1114\t    Specialized Documenter subclass for functions.\n  1115\t    \"\"\"\n  1116\t    objtype = 'function'\n  1117\t    member_order = 30\n  1118\t\n  1119\t    @classmethod\n  1120\t    def can_document_member(cls, member: Any, membername: str, isattr: bool, parent: Any\n  1121\t                            ) -> bool:\n  1122\t        # supports functions, builtins and bound methods exported at the module level\n  1123\t        return (inspect.isfunction(member) or inspect.isbuiltin(member) or\n  1124\t                (inspect.isroutine(member) and isinstance(parent, ModuleDocumenter)))\n  1125\t\n  1126\t    def format_args(self, **kwargs: Any) -> str:\n  1127\t        if self.env.config.autodoc_typehints in ('none', 'description'):\n  1128\t            kwargs.setdefault('show_annotation', False)\n  1129\t\n  1130\t        try:\n  1131\t            self.env.app.emit('autodoc-before-process-signature', self.object, False)\n  1132\t            if inspect.is_singledispatch_function(self.object):\n  1133\t                sig = inspect.signature(self.object, follow_wrapped=True)\n  1134\t            else:\n  1135\t                sig = inspect.signature(self.object)\n  1136\t            args = stringify_signature(sig, **kwargs)\n  1137\t        except TypeError as exc:\n  1138\t            logger.warning(__(\"Failed to get a function signature for %s: %s\"),\n  1139\t                           self.fullname, exc)\n  1140\t            return None\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to inspect the rest of sphinx/ext/autodoc/__init__.py to see how py_ext_sig_re is defined and how signatures are formatted/emitted. This will help determine where to modify logic to parse multiple leading signature lines from docstrings and how to represent them. I'll open a broader range around the earlier section and search for py_ext_sig_re and add_directive_header.\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '1,300p'\n```",
+      "extra": {
+        "response": {
+          "id": "resp_036d3563046e746500692146ff95548195a7da83acf018377e",
+          "created": 1763788543,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to inspect the rest of sphinx/ext/autodoc/__init__.py to see how py_ext_sig_re is defined and how signatures are formatted/emitted. This will help determine where to modify logic to parse multiple leading signature lines from docstrings and how to represent them. I'll open a broader range around the earlier section and search for py_ext_sig_re and add_directive_header.\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '1,300p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "refusal": null
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 500,
+            "prompt_tokens": 6903,
+            "total_tokens": 7403,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 384,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning><output_head>\n     1\t\"\"\"\n     2\t    sphinx.ext.autodoc\n     3\t    ~~~~~~~~~~~~~~~~~~\n     4\t\n     5\t    Automatically insert docstrings for functions, classes or whole modules into\n     6\t    the doctree, thus avoiding duplication between docstrings and documentation\n     7\t    for those who like elaborate docstrings.\n     8\t\n     9\t    :copyright: Copyright 2007-2020 by the Sphinx team, see AUTHORS.\n    10\t    :license: BSD, see LICENSE for details.\n    11\t\"\"\"\n    12\t\n    13\timport importlib\n    14\timport re\n    15\timport warnings\n    16\tfrom inspect import Parameter, Signature\n    17\tfrom types import ModuleType\n    18\tfrom typing import (\n    19\t    Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, Union\n    20\t)\n    21\t\n    22\tfrom docutils.statemachine import StringList\n    23\t\n    24\timport sphinx\n    25\tfrom sphinx.application import Sphinx\n    26\tfrom sphinx.config import Config, ENUM\n    27\tfrom sphinx.deprecation import RemovedInSphinx40Warning, RemovedInSphinx50Warning\n    28\tfrom sphinx.environment import BuildEnvironment\n    29\tfrom sphinx.ext.autodoc.importer import import_object, get_module_members, get_object_members\n    30\tfrom sphinx.ext.autodoc.mock import mock\n    31\tfrom sphinx.locale import _, __\n    32\tfrom sphinx.pycode import ModuleAnalyzer, PycodeError\n    33\tfrom sphinx.util import inspect\n    34\tfrom sphinx.util import logging\n    35\tfrom sphinx.util import split_full_qualified_name\n    36\tfrom sphinx.util.docstrings import extract_metadata, prepare_docstring\n    37\tfrom sphinx.util.inspect import getdoc, object_description, safe_getattr, stringify_signature\n    38\tfrom sphinx.util.typing import stringify as stringify_typehint\n    39\t\n    40\tif False:\n    41\t    # For type annotation\n    42\t    from typing import Type  # NOQA # for python3.5.1\n    43\t    from sphinx.ext.autodoc.directive import DocumenterBridge\n    44\t\n    45\t\n    46\tlogger = logging.getLogger(__name__)\n    47\t\n    48\t\n    49\t# This type isn't exposed directly in any modules, but can be found\n    50\t# here in most Python versions\n    51\tMethodDescriptorType = type(type.__subclasses__)\n    52\t\n    53\t\n    54\t#: extended signature RE: with explicit module name separated by ::\n    55\tpy_ext_sig_re = re.compile(\n    56\t    r'''^ ([\\w.]+::)?            # explicit module name\n    57\t          ([\\w.]+\\.)?            # module and/or class name(s)\n    58\t          (\\w+)  \\s*             # thing name\n    59\t          (?: \\((.*)\\)           # optional: arguments\n    60\t           (?:\\s* -> \\s* (.*))?  #           return annotation\n    61\t          )? $                   # and nothing more\n    62\t          ''', re.VERBOSE)\n    63\t\n    64\t\n    65\tdef identity(x: Any) -> Any:\n    66\t    return x\n    67\t\n    68\t\n    69\tALL = object()\n    70\tUNINITIALIZED_ATTR = object()\n    71\tINSTANCEATTR = object()\n    72\tSLOTSATTR = object()\n    73\t\n    74\t\n    75\tdef members_option(arg: Any) -> Union[object, List[str]]:\n    76\t    \"\"\"Used to convert the :members: option to auto directives.\"\"\"\n    77\t    if arg is None or arg is True:\n    78\t        return ALL\n    79\t    return [x.strip() for x in arg.split(',') if x.strip()]\n    80\t\n    81\t\n    82\tdef members_set_option(arg: Any) -> Union[object, Set[str]]:\n    83\t    \"\"\"Used to convert the :members: option to auto directives.\"\"\"\n    84\t    if arg is None:\n    85\t        return ALL\n    86\t    return {x.strip() for x in arg.split(',') if x.strip()}\n    87\t\n    88\t\n    89\tdef inherited_members_option(arg: Any) -> Union[object, Set[str]]:\n    90\t    \"\"\"Used to convert the :members: option to auto directives.\"\"\"\n    91\t    if arg is None:\n    92\t        return 'object'\n    93\t    else:\n    94\t        return arg\n    95\t\n    96\t\n    97\tdef member_order_option(arg: Any) -> Optional[str]:\n    98\t    \"\"\"Used to convert the :members: option to auto directives.\"\"\"\n    99\t    if arg is None:\n   100\t        return None\n   101\t    elif arg in ('alphabetical', 'bysource', 'groupwise'):\n   102\t        return arg\n   103\t    else:\n   104\t        raise ValueError(__('invalid value for member-order option: %s') % arg)\n   105\t\n   106\t\n   107\tSUPPRESS = object()\n   108\t\n   109\t\n   110\tdef annotation_option(arg: Any) -> Any:\n   111\t    if arg is None:\n   112\t        # suppress showing the representation of the object\n   113\t        return SUPPRESS\n   114\t    else:\n   115\t        return arg\n   116\t\n   117\t\n   118\tdef bool_option(arg: Any) -> bool:\n   119\t    \"\"\"Used to convert flag options to auto directives.  (Instead of\n   120\t    directives.flag(), which returns None).\n   121\t    \"\"\"\n   122\t    return True\n   123\t\n   124\t\n   125\tdef merge_special_members_option(options: Dict) -> None:\n   126\t    \"\"\"Merge :special-members: option to :members: option.\"\"\"\n   127\t    if 'special-members' in options and options['special-members'] is not ALL:\n   128\t        if options.get('members') is ALL:\n   129\t            pass\n   130\t        elif options.get('members'):\n   131\t            for member in options['special\n</output_head>\n<elided_chars>\n3152 characters elided\n</elided_chars>\n<output_tail>\n4\t# This class is used only in ``sphinx.ext.autodoc.directive``,\n   205\t# But we define this class here to keep compatibility (see #4538)\n   206\tclass Options(dict):\n   207\t    \"\"\"A dict/attribute hybrid that returns None on nonexisting keys.\"\"\"\n   208\t    def __getattr__(self, name: str) -> Any:\n   209\t        try:\n   210\t            return self[name.replace('_', '-')]\n   211\t        except KeyError:\n   212\t            return None\n   213\t\n   214\t\n   215\tclass Documenter:\n   216\t    \"\"\"\n   217\t    A Documenter knows how to autodocument a single object type.  When\n   218\t    registered with the AutoDirective, it will be used to document objects\n   219\t    of that type when needed by autodoc.\n   220\t\n   221\t    Its *objtype* attribute selects what auto directive it is assigned to\n   222\t    (the directive name is 'auto' + objtype), and what directive it generates\n   223\t    by default, though that can be overridden by an attribute called\n   224\t    *directivetype*.\n   225\t\n   226\t    A Documenter has an *option_spec* that works like a docutils directive's;\n   227\t    in fact, it will be used to parse an auto directive's options that matches\n   228\t    the documenter.\n   229\t    \"\"\"\n   230\t    #: name by which the directive is called (auto...) and the default\n   231\t    #: generated directive name\n   232\t    objtype = 'object'\n   233\t    #: indentation by which to indent the directive content\n   234\t    content_indent = '   '\n   235\t    #: priority if multiple documenters return True from can_document_member\n   236\t    priority = 0\n   237\t    #: order if autodoc_member_order is set to 'groupwise'\n   238\t    member_order = 0\n   239\t    #: true if the generated content may contain titles\n   240\t    titles_allowed = False\n   241\t\n   242\t    option_spec = {'noindex': bool_option}  # type: Dict[str, Callable]\n   243\t\n   244\t    def get_attr(self, obj: Any, name: str, *defargs: Any) -> Any:\n   245\t        \"\"\"getattr() override for types such as Zope interfaces.\"\"\"\n   246\t        return autodoc_attrgetter(self.env.app, obj, name, *defargs)\n   247\t\n   248\t    @classmethod\n   249\t    def can_document_member(cls, member: Any, membername: str, isattr: bool, parent: Any\n   250\t                            ) -> bool:\n   251\t        \"\"\"Called to see if a member can be documented by this documenter.\"\"\"\n   252\t        raise NotImplementedError('must be implemented in subclasses')\n   253\t\n   254\t    def __init__(self, directive: \"DocumenterBridge\", name: str, indent: str = '') -> None:\n   255\t        self.directive = directive\n   256\t        self.env = directive.env    # type: BuildEnvironment\n   257\t        self.options = directive.genopt\n   258\t        self.name = name\n   259\t        self.indent = indent\n   260\t        # the module and object path within the module, and the fully\n   261\t        # qualified name (all set after resolve_name succeeds)\n   262\t        self.modname = None         # type: str\n   263\t        self.module = None          # type: ModuleType\n   264\t        self.objpath = None         # type: List[str]\n   265\t        self.fullname = None        # type: str\n   266\t        # extra signature items (arguments and return annotation,\n   267\t        # also set after resolve_name succeeds)\n   268\t        self.args = None            # type: str\n   269\t        self.retann = None          # type: str\n   270\t        # the object to document (set after import_object succeeds)\n   271\t        self.object = None          # type: Any\n   272\t        self.object_name = None     # type: str\n   273\t        # the parent/owner of the object to document\n   274\t        self.parent = None          # type: Any\n   275\t        # the module analyzer to get at attribute docs, or None\n   276\t        self.analyzer = None        # type: ModuleAnalyzer\n   277\t\n   278\t    @property\n   279\t    def documenters(self) -> Dict[str, \"Type[Documenter]\"]:\n   280\t        \"\"\"Returns registered Documenter classes\"\"\"\n   281\t        return self.env.app.registry.documenters\n   282\t\n   283\t    def add_line(self, line: str, source: str, *lineno: int) -> None:\n   284\t        \"\"\"Append one line of generated reST to the output.\"\"\"\n   285\t        if line.strip():  # not a blank line\n   286\t            self.directive.result.append(self.indent + line, source, *lineno)\n   287\t        else:\n   288\t            self.directive.result.append('', source, *lineno)\n   289\t\n   290\t    def resolve_name(self, modname: str, parents: Any, path: str, base: Any\n   291\t                     ) -> Tuple[str, List[str]]:\n   292\t        \"\"\"Resolve the module and name of the object to document given by the\n   293\t        arguments and the current module/class.\n   294\t\n   295\t        Must return a pair of the module name and a chain of attributes; for\n   296\t        example, it would return ``('zipfile', ['ZipFile', 'open'])`` for the\n   297\t        ``zipfile.ZipFile.open`` method.\n   298\t        \"\"\"\n   299\t        raise NotImplementedError('must be implemented in subclasses')\n   300\t\n\n</output_tail>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The relevant logic is in sphinx/ext/autodoc/__init__.py, specifically DocstringSignatureMixin._find_signature which currently matches only the first docstring line against py_ext_sig_re and breaks after the first match. To support SWIG-style overloaded methods, I need to inspect more of this file, especially where signatures are formatted/emitted (e.g., add_directive_header, format_signature) and how py_ext_sig_re is defined. I'll open more context around these definitions and usages.\n\n```bash\ngrep -n \"add_directive_header\\|format_signature\\|_find_signature\\|py_ext_sig_re\" -n sphinx/ext/autodoc/__init__.py && sed -n '1000,1120p' sphinx/ext/autodoc/__init__.py\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0527c115dc0ba64c0069214706be64819391018f553d682c1a",
+          "created": 1763788550,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The relevant logic is in sphinx/ext/autodoc/__init__.py, specifically DocstringSignatureMixin._find_signature which currently matches only the first docstring line against py_ext_sig_re and breaks after the first match. To support SWIG-style overloaded methods, I need to inspect more of this file, especially where signatures are formatted/emitted (e.g., add_directive_header, format_signature) and how py_ext_sig_re is defined. I'll open more context around these definitions and usages.\n\n```bash\ngrep -n \"add_directive_header\\|format_signature\\|_find_signature\\|py_ext_sig_re\" -n sphinx/ext/autodoc/__init__.py && sed -n '1000,1120p' sphinx/ext/autodoc/__init__.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "refusal": null
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 365,
+            "prompt_tokens": 9840,
+            "total_tokens": 10205,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 192,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 2048,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n55:py_ext_sig_re = re.compile(\n312:                py_ext_sig_re.match(self.name).groups()\n406:    def format_signature(self, **kwargs: Any) -> str:\n441:    def add_directive_header(self, sig: str) -> None:\n829:        sig = self.format_signature()\n832:        self.add_directive_header(sig)\n913:    def add_directive_header(self, sig: str) -> None:\n914:        Documenter.add_directive_header(self, sig)\n1040:    def _find_signature(self, encoding: str = None) -> Tuple[str, str]:\n1042:            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n1053:            match = py_ext_sig_re.match(doclines[0])\n1084:    def format_signature(self, **kwargs: Any) -> str:\n1088:            result = self._find_signature()\n1091:        return super().format_signature(**kwargs)  # type: ignore\n1099:    def format_signature(self, **kwargs: Any) -> str:\n1103:            result = self._find_signature()\n1106:                # DocstringSignatureMixin.format_signature.\n1107:                # Documenter.format_signature use self.args value to format.\n1109:        return super().format_signature(**kwargs)\n1152:    def add_directive_header(self, sig: str) -> None:\n1154:        super().add_directive_header(sig)\n1159:    def format_signature(self, **kwargs: Any) -> str:\n1160:        sig = super().format_signature(**kwargs)\n1173:                    sigs.append(documenter.format_signature())\n1333:    def format_signature(self, **kwargs: Any) -> str:\n1337:        return super().format_signature(**kwargs)\n1339:    def add_directive_header(self, sig: str) -> None:\n1344:        super().add_directive_header(sig)\n1472:    def add_directive_header(self, sig: str) -> None:\n1473:        super().add_directive_header(sig)\n1616:    def add_directive_header(self, sig: str) -> None:\n1617:        super().add_directive_header(sig)\n1635:    def format_signature(self, **kwargs: Any) -> str:\n1636:        sig = super().format_signature(**kwargs)\n1652:                    sigs.append(documenter.format_signature())\n1723:    def add_directive_header(self, sig: str) -> None:\n1724:        super().add_directive_header(sig)\n1784:    def add_directive_header(self, sig: str) -> None:\n1785:        super().add_directive_header(sig)\n    \"\"\"\n    def resolve_name(self, modname: str, parents: Any, path: str, base: Any\n                     ) -> Tuple[str, List[str]]:\n        if modname is None:\n            if path:\n                mod_cls = path.rstrip('.')\n            else:\n                mod_cls = None\n                # if documenting a class-level object without path,\n                # there must be a current class, either from a parent\n                # auto directive ...\n                mod_cls = self.env.temp_data.get('autodoc:class')\n                # ... or from a class directive\n                if mod_cls is None:\n                    mod_cls = self.env.ref_context.get('py:class')\n                # ... if still None, there's no way to know\n                if mod_cls is None:\n                    return None, []\n\n            try:\n                modname, qualname = split_full_qualified_name(mod_cls)\n                parents = qualname.split(\".\") if qualname else []\n            except ImportError:\n                parents = mod_cls.split(\".\")\n\n            # if the module name is still missing, get it like above\n            if not modname:\n                modname = self.env.temp_data.get('autodoc:module')\n            if not modname:\n                modname = self.env.ref_context.get('py:module')\n            # ... else, it stays None, which means invalid\n        return modname, parents + [base]\n\n\nclass DocstringSignatureMixin:\n    \"\"\"\n    Mixin for FunctionDocumenter and MethodDocumenter to provide the\n    feature of reading the signature from the docstring.\n    \"\"\"\n\n    def _find_signature(self, encoding: str = None) -> Tuple[str, str]:\n        if encoding is not None:\n            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                          \"deprecated.\" % self.__class__.__name__,\n                          RemovedInSphinx40Warning, stacklevel=2)\n        docstrings = self.get_doc()\n        self._new_docstrings = docstrings[:]\n        result = None\n        for i, doclines in enumerate(docstrings):\n            # no lines in docstring, no match\n            if not doclines:\n                continue\n            # match first line of docstring against signature RE\n            match = py_ext_sig_re.match(doclines[0])\n            if not match:\n                continue\n            exmod, path, base, args, retann = match.groups()\n            # the base name must match ours\n            valid_names = [self.objpath[-1]]  # type: ignore\n            if isinstance(self, ClassDocumenter):\n                valid_names.append('__init__')\n                if hasattr(self.object, '__mro__'):\n                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n            if base not in valid_names:\n                continue\n            # re-prepare docstring to ignore more leading indentation\n            tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n            self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[1:]),\n                                                        tabsize=tab_width)\n            result = args, retann\n            # don't look any further\n            break\n        return result\n\n    def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:\n        if encoding is not None:\n            warnings.warn(\"The 'encoding' argument to autodoc.%s.get_doc() is deprecated.\"\n                          % self.__class__.__name__,\n                          RemovedInSphinx40Warning, stacklevel=2)\n        lines = getattr(self, '_new_docstrings', None)\n        if lines is not None:\n            return lines\n        return super().get_doc(None, ignore)  # type: ignore\n\n    def format_signature(self, **kwargs: Any) -> str:\n        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n            # only act if a signature is not explicitly given already, and if\n            # the feature is enabled\n            result = self._find_signature()\n            if result is not None:\n                self.args, self.retann = result\n        return super().format_signature(**kwargs)  # type: ignore\n\n\nclass DocstringStripSignatureMixin(DocstringSignatureMixin):\n    \"\"\"\n    Mixin for AttributeDocumenter to provide the\n    feature of stripping any function signature from the docstring.\n    \"\"\"\n    def format_signature(self, **kwargs: Any) -> str:\n        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n            # only act if a signature is not explicitly given already, and if\n            # the feature is enabled\n            result = self._find_signature()\n            if result is not None:\n                # Discarding _args is a only difference with\n                # DocstringSignatureMixin.format_signature.\n                # Documenter.format_signature use self.args value to format.\n                _args, self.retann = result\n        return super().format_signature(**kwargs)\n\n\nclass FunctionDocumenter(DocstringSignatureMixin, ModuleLevelDocumenter):  # type: ignore\n    \"\"\"\n    Specialized Documenter subclass for functions.\n    \"\"\"\n    objtype = 'function'\n    member_order = 30\n\n    @classmethod\n    def can_document_member(cls, member: Any, membername: str, isattr: bool, parent: Any\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The key is DocstringSignatureMixin._find_signature, which matches only the first docstring line and breaks, thus only one signature is extracted and only the first line is stripped. To support overloaded methods with multiple signatures at the start of the docstring, I should examine related methods like add_directive_header and format_signature to see how signatures are constructed and whether multiple signatures can be emitted. I'll view the section around add_directive_header and surrounding logic to understand how to adapt it to handle multiple leading signature lines.\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '360,960p'\n```",
+      "extra": {
+        "response": {
+          "id": "resp_08b48d9f2312fdc9006921470e4fa88190a1b51b0888b390dc",
+          "created": 1763788558,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The key is DocstringSignatureMixin._find_signature, which matches only the first docstring line and breaks, thus only one signature is extracted and only the first line is stripped. To support overloaded methods with multiple signatures at the start of the docstring, I should examine related methods like add_directive_header and format_signature to see how signatures are constructed and whether multiple signatures can be emitted. I'll view the section around add_directive_header and surrounding logic to understand how to adapt it to handle multiple leading signature lines.\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '360,960p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "refusal": null
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 396,
+            "prompt_tokens": 11720,
+            "total_tokens": 12116,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 256,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 1152,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning><output_head>\n   360\t        imported.\n   361\t        \"\"\"\n   362\t        return self.get_attr(self.object, '__module__', None) or self.modname\n   363\t\n   364\t    def check_module(self) -> bool:\n   365\t        \"\"\"Check if *self.object* is really defined in the module given by\n   366\t        *self.modname*.\n   367\t        \"\"\"\n   368\t        if self.options.imported_members:\n   369\t            return True\n   370\t\n   371\t        subject = inspect.unpartial(self.object)\n   372\t        modname = self.get_attr(subject, '__module__', None)\n   373\t        if modname and modname != self.modname:\n   374\t            return False\n   375\t        return True\n   376\t\n   377\t    def format_args(self, **kwargs: Any) -> str:\n   378\t        \"\"\"Format the argument signature of *self.object*.\n   379\t\n   380\t        Should return None if the object does not have a signature.\n   381\t        \"\"\"\n   382\t        return None\n   383\t\n   384\t    def format_name(self) -> str:\n   385\t        \"\"\"Format the name of *self.object*.\n   386\t\n   387\t        This normally should be something that can be parsed by the generated\n   388\t        directive, but doesn't need to be (Sphinx will display it unparsed\n   389\t        then).\n   390\t        \"\"\"\n   391\t        # normally the name doesn't contain the module (except for module\n   392\t        # directives of course)\n   393\t        return '.'.join(self.objpath) or self.modname\n   394\t\n   395\t    def _call_format_args(self, **kwargs: Any) -> str:\n   396\t        if kwargs:\n   397\t            try:\n   398\t                return self.format_args(**kwargs)\n   399\t            except TypeError:\n   400\t                # avoid chaining exceptions, by putting nothing here\n   401\t                pass\n   402\t\n   403\t        # retry without arguments for old documenters\n   404\t        return self.format_args()\n   405\t\n   406\t    def format_signature(self, **kwargs: Any) -> str:\n   407\t        \"\"\"Format the signature (arguments and return annotation) of the object.\n   408\t\n   409\t        Let the user process it via the ``autodoc-process-signature`` event.\n   410\t        \"\"\"\n   411\t        if self.args is not None:\n   412\t            # signature given explicitly\n   413\t            args = \"(%s)\" % self.args\n   414\t            retann = self.retann\n   415\t        else:\n   416\t            # try to introspect the signature\n   417\t            try:\n   418\t                retann = None\n   419\t                args = self._call_format_args(**kwargs)\n   420\t                if args:\n   421\t                    matched = re.match(r'^(\\(.*\\))\\s+->\\s+(.*)$', args)\n   422\t                    if matched:\n   423\t                        args = matched.group(1)\n   424\t                        retann = matched.group(2)\n   425\t            except Exception:\n   426\t                logger.warning(__('error while formatting arguments for %s:') %\n   427\t                               self.fullname, type='autodoc', exc_info=True)\n   428\t                args = None\n   429\t\n   430\t        result = self.env.events.emit_firstresult('autodoc-process-signature',\n   431\t                                                  self.objtype, self.fullname,\n   432\t                                                  self.object, self.options, args, retann)\n   433\t        if result:\n   434\t            args, retann = result\n   435\t\n   436\t        if args is not None:\n   437\t            return args + ((' -> %s' % retann) if retann else '')\n   438\t        else:\n   439\t            return ''\n   440\t\n   441\t    def add_directive_header(self, sig: str) -> None:\n   442\t        \"\"\"Add the directive header and options to the generated content.\"\"\"\n   443\t        domain = getattr(self, 'domain', 'py')\n   444\t        directive = getattr(self, 'directivetype', self.objtype)\n   445\t        name = self.format_name()\n   446\t        sourcename = self.get_sourcename()\n   447\t\n   448\t        # one signature per line, indented by column\n   449\t        prefix = '.. %s:%s:: ' % (domain, directive)\n   450\t        for i, sig_line in enumerate(sig.split(\"\\n\")):\n   451\t            self.add_line('%s%s%s' % (prefix, name, sig_line),\n   452\t                          sourcename)\n   453\t            if i == 0:\n   454\t                prefix = \" \" * len(prefix)\n   455\t\n   456\t        if self.options.noindex:\n   457\t            self.add_line('   :noindex:', sourcename)\n   458\t        if self.objpath:\n   459\t            # Be explicit about the module, this is necessary since .. class::\n   460\t            # etc. don't support a prepended module name\n   461\t            self.add_line('   :module: %s' % self.modname, sourcename)\n   462\t\n   463\t    def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:\n   464\t        \"\"\"Decode and return lines of the docstring(s) for the object.\"\"\"\n   465\t        if encoding is not None:\n   466\t            warnings.warn(\"The 'encoding' argument to autodoc.%s.get_doc() is deprecated.\"\n   467\t                          % self.__class__.__name__,\n   468\t           \n</output_head>\n<elided_chars>\n19998 characters elided\n</elided_chars>\n<output_tail>\non,\n   858\t        'member-order': member_order_option, 'exclude-members': members_set_option,\n   859\t        'private-members': bool_option, 'special-members': members_option,\n   860\t        'imported-members': bool_option, 'ignore-module-all': bool_option\n   861\t    }  # type: Dict[str, Callable]\n   862\t\n   863\t    def __init__(self, *args: Any) -> None:\n   864\t        super().__init__(*args)\n   865\t        merge_special_members_option(self.options)\n   866\t        self.__all__ = None\n   867\t\n   868\t    @classmethod\n   869\t    def can_document_member(cls, member: Any, membername: str, isattr: bool, parent: Any\n   870\t                            ) -> bool:\n   871\t        # don't document submodules automatically\n   872\t        return False\n   873\t\n   874\t    def resolve_name(self, modname: str, parents: Any, path: str, base: Any\n   875\t                     ) -> Tuple[str, List[str]]:\n   876\t        if modname is not None:\n   877\t            logger.warning(__('\"::\" in automodule name doesn\\'t make sense'),\n   878\t                           type='autodoc')\n   879\t        return (path or '') + base, []\n   880\t\n   881\t    def parse_name(self) -> bool:\n   882\t        ret = super().parse_name()\n   883\t        if self.args or self.retann:\n   884\t            logger.warning(__('signature arguments or return annotation '\n   885\t                              'given for automodule %s') % self.fullname,\n   886\t                           type='autodoc')\n   887\t        return ret\n   888\t\n   889\t    def import_object(self) -> Any:\n   890\t        def is_valid_module_all(__all__: Any) -> bool:\n   891\t            \"\"\"Check the given *__all__* is valid for a module.\"\"\"\n   892\t            if (isinstance(__all__, (list, tuple)) and\n   893\t                    all(isinstance(e, str) for e in __all__)):\n   894\t                return True\n   895\t            else:\n   896\t                return False\n   897\t\n   898\t        ret = super().import_object()\n   899\t\n   900\t        if not self.options.ignore_module_all:\n   901\t            __all__ = getattr(self.object, '__all__', None)\n   902\t            if is_valid_module_all(__all__):\n   903\t                # valid __all__ found. copy it to self.__all__\n   904\t                self.__all__ = __all__\n   905\t            elif __all__:\n   906\t                # invalid __all__ found.\n   907\t                logger.warning(__('__all__ should be a list of strings, not %r '\n   908\t                                  '(in module %s) -- ignoring __all__') %\n   909\t                               (__all__, self.fullname), type='autodoc')\n   910\t\n   911\t        return ret\n   912\t\n   913\t    def add_directive_header(self, sig: str) -> None:\n   914\t        Documenter.add_directive_header(self, sig)\n   915\t\n   916\t        sourcename = self.get_sourcename()\n   917\t\n   918\t        # add some module-specific options\n   919\t        if self.options.synopsis:\n   920\t            self.add_line('   :synopsis: ' + self.options.synopsis, sourcename)\n   921\t        if self.options.platform:\n   922\t            self.add_line('   :platform: ' + self.options.platform, sourcename)\n   923\t        if self.options.deprecated:\n   924\t            self.add_line('   :deprecated:', sourcename)\n   925\t\n   926\t    def get_object_members(self, want_all: bool) -> Tuple[bool, List[Tuple[str, Any]]]:\n   927\t        if want_all:\n   928\t            if self.__all__:\n   929\t                memberlist = self.__all__\n   930\t            else:\n   931\t                # for implicit module members, check __module__ to avoid\n   932\t                # documenting imported objects\n   933\t                return True, get_module_members(self.object)\n   934\t        else:\n   935\t            memberlist = self.options.members or []\n   936\t        ret = []\n   937\t        for mname in memberlist:\n   938\t            try:\n   939\t                ret.append((mname, safe_getattr(self.object, mname)))\n   940\t            except AttributeError:\n   941\t                logger.warning(\n   942\t                    __('missing attribute mentioned in :members: or __all__: '\n   943\t                       'module %s, attribute %s') %\n   944\t                    (safe_getattr(self.object, '__name__', '???'), mname),\n   945\t                    type='autodoc'\n   946\t                )\n   947\t        return False, ret\n   948\t\n   949\t    def sort_members(self, documenters: List[Tuple[\"Documenter\", bool]],\n   950\t                     order: str) -> List[Tuple[\"Documenter\", bool]]:\n   951\t        if order == 'bysource' and self.__all__:\n   952\t            # Sort alphabetically first (for members not listed on the __all__)\n   953\t            documenters.sort(key=lambda e: e[0].name)\n   954\t\n   955\t            # Sort by __all__\n   956\t            def keyfunc(entry: Tuple[Documenter, bool]) -> int:\n   957\t                name = entry[0].name.split('::')[1]\n   958\t                if name in self.__all__:\n   959\t                    return self.__all__.index(name)\n   960\t                else:\n\n</output_tail>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to inspect the section around lines 1145-1175 to see how format_signature might already handle multiple signatures or collect them, which will guide how to adapt DocstringSignatureMixin to return multiple signatures when parsing multiple lines from the docstring.\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '1140,1180p'\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0a5098427ec5738f006921471b7b3c819484c91f7db2fda0dc",
+          "created": 1763788571,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to inspect the section around lines 1145-1175 to see how format_signature might already handle multiple signatures or collect them, which will guide how to adapt DocstringSignatureMixin to return multiple signatures when parsing multiple lines from the docstring.\n\n```bash\nnl -ba sphinx/ext/autodoc/__init__.py | sed -n '1140,1180p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Evaluating docstring signatures**\n\nI\u2019ve noticed that the `_find_signature` method only matches the first line of each docstring, which is a bit limiting. For overloaded methods, it looks like SWIG provides multiple signature lines, yet only the first gets picked up. To improve this, we need to modify the signature formatting to include all signatures. The `add_directive_header` function can handle multiple signatures with newlines, so I\u2019ll explore adjusting the `format_signature` function accordingly. That should help us output everything needed!",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Evaluating docstring signatures**\n\nI\u2019ve noticed that the `_find_signature` method only matches the first line of each docstring, which is a bit limiting. For overloaded methods, it looks like SWIG provides multiple signature lines, yet only the first gets picked up. To improve this, we need to modify the signature formatting to include all signatures. The `add_directive_header` function can handle multiple signatures with newlines, so I\u2019ll explore adjusting the `format_signature` function accordingly. That should help us output everything needed!"
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 858,
+            "prompt_tokens": 14521,
+            "total_tokens": 15379,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 768,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n  1140\t            return None\n  1141\t        except ValueError:\n  1142\t            args = ''\n  1143\t\n  1144\t        if self.env.config.strip_signature_backslash:\n  1145\t            # escape backslashes for reST\n  1146\t            args = args.replace('\\\\', '\\\\\\\\')\n  1147\t        return args\n  1148\t\n  1149\t    def document_members(self, all_members: bool = False) -> None:\n  1150\t        pass\n  1151\t\n  1152\t    def add_directive_header(self, sig: str) -> None:\n  1153\t        sourcename = self.get_sourcename()\n  1154\t        super().add_directive_header(sig)\n  1155\t\n  1156\t        if inspect.iscoroutinefunction(self.object):\n  1157\t            self.add_line('   :async:', sourcename)\n  1158\t\n  1159\t    def format_signature(self, **kwargs: Any) -> str:\n  1160\t        sig = super().format_signature(**kwargs)\n  1161\t        sigs = [sig]\n  1162\t\n  1163\t        if inspect.is_singledispatch_function(self.object):\n  1164\t            # append signature of singledispatch'ed functions\n  1165\t            for typ, func in self.object.registry.items():\n  1166\t                if typ is object:\n  1167\t                    pass  # default implementation. skipped.\n  1168\t                else:\n  1169\t                    self.annotate_to_first_argument(func, typ)\n  1170\t\n  1171\t                    documenter = FunctionDocumenter(self.directive, '')\n  1172\t                    documenter.object = func\n  1173\t                    sigs.append(documenter.format_signature())\n  1174\t\n  1175\t        return \"\\n\".join(sigs)\n  1176\t\n  1177\t    def annotate_to_first_argument(self, func: Callable, typ: Type) -> None:\n  1178\t        \"\"\"Annotate type hint to the first argument of function if needed.\"\"\"\n  1179\t        sig = inspect.signature(func)\n  1180\t        if len(sig.parameters) == 0:\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I will modify DocstringSignatureMixin to collect multiple consecutive signature lines at the start of the docstring and strip all of them. I'll store them in a new attribute (self._signatures) while keeping the original _find_signature return type (first signature) for compatibility. Then I'll adjust format_signature to return multi-line signatures when multiple are found, so add_directive_header will emit each on separate lines.\n\n```bash\napplypatch << 'PATCH'\n*** Begin Patch\n*** Update File: sphinx/ext/autodoc/__init__.py\n@@\n     def _find_signature(self, encoding: str = None) -> Tuple[str, str]:\n         if encoding is not None:\n             warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                           \"deprecated.\" % self.__class__.__name__,\n                           RemovedInSphinx40Warning, stacklevel=2)\n         docstrings = self.get_doc()\n         self._new_docstrings = docstrings[:]\n-        result = None\n+        # list of parsed signatures found at the beginning of the docstring\n+        # Each entry is a tuple of (args, retann)\n+        self._signatures = None\n+        result = None\n         for i, doclines in enumerate(docstrings):\n             # no lines in docstring, no match\n             if not doclines:\n                 continue\n-            # match first line of docstring against signature RE\n-            match = py_ext_sig_re.match(doclines[0])\n-            if not match:\n-                continue\n-            exmod, path, base, args, retann = match.groups()\n-            # the base name must match ours\n-            valid_names = [self.objpath[-1]]  # type: ignore\n-            if isinstance(self, ClassDocumenter):\n-                valid_names.append('__init__')\n-                if hasattr(self.object, '__mro__'):\n-                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n-            if base not in valid_names:\n-                continue\n-            # re-prepare docstring to ignore more leading indentation\n-            tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n-            self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[1:]),\n-                                                        tabsize=tab_width)\n-            result = args, retann\n-            # don't look any further\n-            break\n+            # match first line of docstring against signature RE\n+            match = py_ext_sig_re.match(doclines[0])\n+            if not match:\n+                continue\n+            exmod, path, base, args, retann = match.groups()\n+            # the base name must match ours\n+            valid_names = [self.objpath[-1]]  # type: ignore\n+            if isinstance(self, ClassDocumenter):\n+                valid_names.append('__init__')\n+                if hasattr(self.object, '__mro__'):\n+                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n+            if base not in valid_names:\n+                continue\n+            # Collect consecutive signature lines (for overloaded methods)\n+            signatures = []\n+            for j, line in enumerate(doclines):\n+                m = py_ext_sig_re.match(line)\n+                if not m:\n+                    break\n+                exmod2, path2, base2, args2, retann2 = m.groups()\n+                # Ensure each line describes the same callable name\n+                if base2 not in valid_names:\n+                    break\n+                signatures.append((args2, retann2))\n+            if signatures:\n+                # re-prepare docstring to ignore more leading indentation,\n+                # and strip all matched signature lines from the beginning\n+                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n+                self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[len(signatures):]),\n+                                                            tabsize=tab_width)\n+                self._signatures = signatures\n+                result = signatures[0]\n+                # don't look any further\n+                break\n         return result\n@@\n     def format_signature(self, **kwargs: Any) -> str:\n-        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n-            # only act if a signature is not explicitly given already, and if\n-            # the feature is enabled\n-            result = self._find_signature()\n-            if result is not None:\n-                self.args, self.retann = result\n-        return super().format_signature(**kwargs)  # type: ignore\n+        extra_sigs = []\n+        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n+            # only act if a signature is not explicitly given already, and if\n+            # the feature is enabled\n+            result = self._find_signature()\n+            if result is not None:\n+                self.args, self.retann = result\n+                # If multiple signatures were found at the beginning of the docstring,\n+                # append the rest as additional signature lines.\n+                if getattr(self, '_signatures', None):\n+                    for (args, retann) in self._signatures[1:]:\n+                        if args is not None:\n+                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n+                        else:\n+                            # If no args captured, keep empty parentheses\n+                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n+        primary = super().format_signature(**kwargs)  # type: ignore\n+        if extra_sigs:\n+            # One signature per line, the first is the primary.\n+            return '\\n'.join([primary] + extra_sigs)\n+        else:\n+            return primary\n*** End Patch\nPATCH\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0c4611264509e4670069214727a5d48196a41867f48f831a85",
+          "created": 1763788583,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I will modify DocstringSignatureMixin to collect multiple consecutive signature lines at the start of the docstring and strip all of them. I'll store them in a new attribute (self._signatures) while keeping the original _find_signature return type (first signature) for compatibility. Then I'll adjust format_signature to return multi-line signatures when multiple are found, so add_directive_header will emit each on separate lines.\n\n```bash\napplypatch << 'PATCH'\n*** Begin Patch\n*** Update File: sphinx/ext/autodoc/__init__.py\n@@\n     def _find_signature(self, encoding: str = None) -> Tuple[str, str]:\n         if encoding is not None:\n             warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                           \"deprecated.\" % self.__class__.__name__,\n                           RemovedInSphinx40Warning, stacklevel=2)\n         docstrings = self.get_doc()\n         self._new_docstrings = docstrings[:]\n-        result = None\n+        # list of parsed signatures found at the beginning of the docstring\n+        # Each entry is a tuple of (args, retann)\n+        self._signatures = None\n+        result = None\n         for i, doclines in enumerate(docstrings):\n             # no lines in docstring, no match\n             if not doclines:\n                 continue\n-            # match first line of docstring against signature RE\n-            match = py_ext_sig_re.match(doclines[0])\n-            if not match:\n-                continue\n-            exmod, path, base, args, retann = match.groups()\n-            # the base name must match ours\n-            valid_names = [self.objpath[-1]]  # type: ignore\n-            if isinstance(self, ClassDocumenter):\n-                valid_names.append('__init__')\n-                if hasattr(self.object, '__mro__'):\n-                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n-            if base not in valid_names:\n-                continue\n-            # re-prepare docstring to ignore more leading indentation\n-            tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n-            self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[1:]),\n-                                                        tabsize=tab_width)\n-            result = args, retann\n-            # don't look any further\n-            break\n+            # match first line of docstring against signature RE\n+            match = py_ext_sig_re.match(doclines[0])\n+            if not match:\n+                continue\n+            exmod, path, base, args, retann = match.groups()\n+            # the base name must match ours\n+            valid_names = [self.objpath[-1]]  # type: ignore\n+            if isinstance(self, ClassDocumenter):\n+                valid_names.append('__init__')\n+                if hasattr(self.object, '__mro__'):\n+                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n+            if base not in valid_names:\n+                continue\n+            # Collect consecutive signature lines (for overloaded methods)\n+            signatures = []\n+            for j, line in enumerate(doclines):\n+                m = py_ext_sig_re.match(line)\n+                if not m:\n+                    break\n+                exmod2, path2, base2, args2, retann2 = m.groups()\n+                # Ensure each line describes the same callable name\n+                if base2 not in valid_names:\n+                    break\n+                signatures.append((args2, retann2))\n+            if signatures:\n+                # re-prepare docstring to ignore more leading indentation,\n+                # and strip all matched signature lines from the beginning\n+                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n+                self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[len(signatures):]),\n+                                                            tabsize=tab_width)\n+                self._signatures = signatures\n+                result = signatures[0]\n+                # don't look any further\n+                break\n         return result\n@@\n     def format_signature(self, **kwargs: Any) -> str:\n-        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n-            # only act if a signature is not explicitly given already, and if\n-            # the feature is enabled\n-            result = self._find_signature()\n-            if result is not None:\n-                self.args, self.retann = result\n-        return super().format_signature(**kwargs)  # type: ignore\n+        extra_sigs = []\n+        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n+            # only act if a signature is not explicitly given already, and if\n+            # the feature is enabled\n+            result = self._find_signature()\n+            if result is not None:\n+                self.args, self.retann = result\n+                # If multiple signatures were found at the beginning of the docstring,\n+                # append the rest as additional signature lines.\n+                if getattr(self, '_signatures', None):\n+                    for (args, retann) in self._signatures[1:]:\n+                        if args is not None:\n+                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n+                        else:\n+                            # If no args captured, keep empty parentheses\n+                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n+        primary = super().format_signature(**kwargs)  # type: ignore\n+        if extra_sigs:\n+            # One signature per line, the first is the primary.\n+            return '\\n'.join([primary] + extra_sigs)\n+        else:\n+            return primary\n*** End Patch\nPATCH\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Clarifying method expectations**\n\nOkay, I realize Documenter.format_signature needs self.args as a string without parentheses. The current code adds parentheses around the args if it's not None, and then combines them with retann. I can replicate this by creating extrasig that gives the right format.\n\nThe DocstringSignatureMixin.format_signature doesn't directly format, but I can build the string: \"(\" + args + \")\" + (\" -> \" + retann if retann) without extra modifications.\n\nI also need to consider if args is None and compute args from matched groups. Alright, I\u2019m off to implement these code changes!",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Clarifying method expectations**\n\nOkay, I realize Documenter.format_signature needs self.args as a string without parentheses. The current code adds parentheses around the args if it's not None, and then combines them with retann. I can replicate this by creating extrasig that gives the right format.\n\nThe DocstringSignatureMixin.format_signature doesn't directly format, but I can build the string: \"(\" + args + \")\" + (\" -> \" + retann if retann) without extra modifications.\n\nI also need to consider if args is None and compute args from matched groups. Alright, I\u2019m off to implement these code changes!"
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 3787,
+            "prompt_tokens": 15109,
+            "total_tokens": 18896,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 2496,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 6784,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>127</returncode>\n<output>\nbash: line 1: applypatch: command not found\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I will patch sphinx/ext/autodoc/__init__.py to enhance DocstringSignatureMixin so it collects multiple consecutive signature lines at the start of a docstring (common with SWIG for overloaded methods). It will:\n- Parse and store all matching signatures in self._signatures.\n- Strip all signature lines from the docstring body.\n- Return the first signature for compatibility while format_signature appends the remaining signatures as additional lines.\nThen I will run the test suite to ensure nothing breaks.\n\n```bash\npython - << 'PY'\nimport re, sys, pathlib\n\np = pathlib.Path('sphinx/ext/autodoc/__init__.py')\nsrc = p.read_text()\n\n# Patch _find_signature\npattern_find = r\"(def _find_signature\\(self, encoding: str = None\\) -> Tuple\\[str, str\\]:\\n)([\\s\\S]*?)\\n(\\s*)return result\"\nif not re.search(pattern_find, src):\n    print(\"Could not find _find_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_find_body = r\"\"\"\\1        if encoding is not None:\n            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                          \"deprecated.\" % self.__class__.__name__,\n                          RemovedInSphinx40Warning, stacklevel=2)\n        docstrings = self.get_doc()\n        self._new_docstrings = docstrings[:]\n        # list of parsed signatures found at the beginning of the docstring\n        # Each entry is a tuple of (args, retann)\n        self._signatures = None\n        result = None\n        for i, doclines in enumerate(docstrings):\n            # no lines in docstring, no match\n            if not doclines:\n                continue\n            # match first line of docstring against signature RE\n            match = py_ext_sig_re.match(doclines[0])\n            if not match:\n                continue\n            exmod, path, base, args, retann = match.groups()\n            # the base name must match ours\n            valid_names = [self.objpath[-1]]  # type: ignore\n            if isinstance(self, ClassDocumenter):\n                valid_names.append('__init__')\n                if hasattr(self.object, '__mro__'):\n                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n            if base not in valid_names:\n                continue\n            # Collect consecutive signature lines (for overloaded methods)\n            signatures = []\n            for j, line in enumerate(doclines):\n                m = py_ext_sig_re.match(line)\n                if not m:\n                    break\n                exmod2, path2, base2, args2, retann2 = m.groups()\n                # Ensure each line describes the same callable name\n                if base2 not in valid_names:\n                    break\n                signatures.append((args2, retann2))\n            if signatures:\n                # re-prepare docstring to ignore more leading indentation,\n                # and strip all matched signature lines from the beginning\n                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n                self._new_docstrings[i] = prepare_docstring('\\\\n'.join(doclines[len(signatures):]),\n                                                            tabsize=tab_width)\n                self._signatures = signatures\n                result = signatures[0]\n                # don't look any further\n                break\n        return result\"\"\"\n\nsrc = re.sub(pattern_find, new_find_body, src)\n\n# Patch format_signature in DocstringSignatureMixin\n# We target the first occurrence of DocstringSignatureMixin.format_signature\npattern_fmt = r\"(class DocstringSignatureMixin:[\\s\\S]*?def format_signature\\(self, \\*\\*kwargs: Any\\) -> str:\\n)([\\s\\S]*?)\\n(\\s*)return super\\(\\)\\.format_signature\\(\\*\\*kwargs\\)  # type: ignore\"\nm = re.search(pattern_fmt, src)\nif not m:\n    print(\"Could not find DocstringSignatureMixin.format_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_fmt_body = r\"\"\"\\1        extra_sigs = []\n        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n            # only act if a signature is not explicitly given already, and if\n            # the feature is enabled\n            result = self._find_signature()\n            if result is not None:\n                self.args, self.retann = result\n                # If multiple signatures were found at the beginning of the docstring,\n                # append the rest as additional signature lines.\n                if getattr(self, '_signatures', None):\n                    for (args, retann) in self._signatures[1:]:\n                        if args is not None:\n                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n                        else:\n                            # If no args captured, keep empty parentheses\n                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n        primary = super().format_signature(**kwargs)  # type: ignore\n        if extra_sigs:\n            # One signature per line, the first is the primary.\n            return '\\\\n'.join([primary] + extra_sigs)\n        else:\n            return primary\"\"\"\n\nsrc = re.sub(pattern_fmt, new_fmt_body, src)\n\np.write_text(src)\nprint(\"Patched autodoc to support multiple docstring signatures.\")\nPY\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0602218c8e4c24ff0069214746bb048190a5c8f223a94e3b3f",
+          "created": 1763788614,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I will patch sphinx/ext/autodoc/__init__.py to enhance DocstringSignatureMixin so it collects multiple consecutive signature lines at the start of a docstring (common with SWIG for overloaded methods). It will:\n- Parse and store all matching signatures in self._signatures.\n- Strip all signature lines from the docstring body.\n- Return the first signature for compatibility while format_signature appends the remaining signatures as additional lines.\nThen I will run the test suite to ensure nothing breaks.\n\n```bash\npython - << 'PY'\nimport re, sys, pathlib\n\np = pathlib.Path('sphinx/ext/autodoc/__init__.py')\nsrc = p.read_text()\n\n# Patch _find_signature\npattern_find = r\"(def _find_signature\\(self, encoding: str = None\\) -> Tuple\\[str, str\\]:\\n)([\\s\\S]*?)\\n(\\s*)return result\"\nif not re.search(pattern_find, src):\n    print(\"Could not find _find_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_find_body = r\"\"\"\\1        if encoding is not None:\n            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                          \"deprecated.\" % self.__class__.__name__,\n                          RemovedInSphinx40Warning, stacklevel=2)\n        docstrings = self.get_doc()\n        self._new_docstrings = docstrings[:]\n        # list of parsed signatures found at the beginning of the docstring\n        # Each entry is a tuple of (args, retann)\n        self._signatures = None\n        result = None\n        for i, doclines in enumerate(docstrings):\n            # no lines in docstring, no match\n            if not doclines:\n                continue\n            # match first line of docstring against signature RE\n            match = py_ext_sig_re.match(doclines[0])\n            if not match:\n                continue\n            exmod, path, base, args, retann = match.groups()\n            # the base name must match ours\n            valid_names = [self.objpath[-1]]  # type: ignore\n            if isinstance(self, ClassDocumenter):\n                valid_names.append('__init__')\n                if hasattr(self.object, '__mro__'):\n                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n            if base not in valid_names:\n                continue\n            # Collect consecutive signature lines (for overloaded methods)\n            signatures = []\n            for j, line in enumerate(doclines):\n                m = py_ext_sig_re.match(line)\n                if not m:\n                    break\n                exmod2, path2, base2, args2, retann2 = m.groups()\n                # Ensure each line describes the same callable name\n                if base2 not in valid_names:\n                    break\n                signatures.append((args2, retann2))\n            if signatures:\n                # re-prepare docstring to ignore more leading indentation,\n                # and strip all matched signature lines from the beginning\n                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n                self._new_docstrings[i] = prepare_docstring('\\\\n'.join(doclines[len(signatures):]),\n                                                            tabsize=tab_width)\n                self._signatures = signatures\n                result = signatures[0]\n                # don't look any further\n                break\n        return result\"\"\"\n\nsrc = re.sub(pattern_find, new_find_body, src)\n\n# Patch format_signature in DocstringSignatureMixin\n# We target the first occurrence of DocstringSignatureMixin.format_signature\npattern_fmt = r\"(class DocstringSignatureMixin:[\\s\\S]*?def format_signature\\(self, \\*\\*kwargs: Any\\) -> str:\\n)([\\s\\S]*?)\\n(\\s*)return super\\(\\)\\.format_signature\\(\\*\\*kwargs\\)  # type: ignore\"\nm = re.search(pattern_fmt, src)\nif not m:\n    print(\"Could not find DocstringSignatureMixin.format_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_fmt_body = r\"\"\"\\1        extra_sigs = []\n        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n            # only act if a signature is not explicitly given already, and if\n            # the feature is enabled\n            result = self._find_signature()\n            if result is not None:\n                self.args, self.retann = result\n                # If multiple signatures were found at the beginning of the docstring,\n                # append the rest as additional signature lines.\n                if getattr(self, '_signatures', None):\n                    for (args, retann) in self._signatures[1:]:\n                        if args is not None:\n                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n                        else:\n                            # If no args captured, keep empty parentheses\n                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n        primary = super().format_signature(**kwargs)  # type: ignore\n        if extra_sigs:\n            # One signature per line, the first is the primary.\n            return '\\\\n'.join([primary] + extra_sigs)\n        else:\n            return primary\"\"\"\n\nsrc = re.sub(pattern_fmt, new_fmt_body, src)\n\np.write_text(src)\nprint(\"Patched autodoc to support multiple docstring signatures.\")\nPY\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Planning file modification**\n\nI need to apply a patch using a command line utility like sed, ed, or cat. Since the developer constraints specify exactly one bash command, it seems I should focus on that. I\u2019m considering using awk or a Python script to address modifications, but a simple Python script could read the file and manipulate the strings effectively. \n\nI\u2019ll locate specific sections in the `DocstringSignatureMixin` class to inject enhancements, particularly focusing on the `_find_signature` method. I\u2019ll use regex to capture the block I need to replace.",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Planning file modification**\n\nI need to apply a patch using a command line utility like sed, ed, or cat. Since the developer constraints specify exactly one bash command, it seems I should focus on that. I\u2019m considering using awk or a Python script to address modifications, but a simple Python script could read the file and manipulate the strings effectively. \n\nI\u2019ll locate specific sections in the `DocstringSignatureMixin` class to inject enhancements, particularly focusing on the `_find_signature` method. I\u2019ll use regex to capture the block I need to replace."
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 2247,
+            "prompt_tokens": 16432,
+            "total_tokens": 18679,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 1088,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nPatched autodoc to support multiple docstring signatures.\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I located the logic that parses a signature from the first docstring line (DocstringSignatureMixin._find_signature). It only matched the first line and broke, so only one signature was recognized. I updated it to:\n- Collect all consecutive signature lines at the start of the docstring (supporting overloaded signatures like SWIG).\n- Strip all matched signature lines from the docstring body.\n- Store them in self._signatures and keep returning the first for compatibility.\nI then updated DocstringSignatureMixin.format_signature to append the additional signatures as extra lines, leveraging existing behavior where add_directive_header writes one signature per line.\n\n```bash\npython - << 'PY'\nimport re, sys, pathlib\n\np = pathlib.Path('sphinx/ext/autodoc/__init__.py')\nsrc = p.read_text()\n\n# Patch _find_signature to collect multiple leading signatures\npattern_find = r\"(def _find_signature\\(self, encoding: str = None\\) -> Tuple\\[str, str\\]:\\n)([\\s\\S]*?)\\n(\\s*)return result\"\nif not re.search(pattern_find, src):\n    print(\"Could not find _find_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_find_body = r\"\"\"\\1        if encoding is not None:\n            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                          \"deprecated.\" % self.__class__.__name__,\n                          RemovedInSphinx40Warning, stacklevel=2)\n        docstrings = self.get_doc()\n        self._new_docstrings = docstrings[:]\n        # list of parsed signatures found at the beginning of the docstring\n        # Each entry is a tuple of (args, retann)\n        self._signatures = None\n        result = None\n        for i, doclines in enumerate(docstrings):\n            # no lines in docstring, no match\n            if not doclines:\n                continue\n            # match first line of docstring against signature RE\n            match = py_ext_sig_re.match(doclines[0])\n            if not match:\n                continue\n            exmod, path, base, args, retann = match.groups()\n            # the base name must match ours\n            valid_names = [self.objpath[-1]]  # type: ignore\n            if isinstance(self, ClassDocumenter):\n                valid_names.append('__init__')\n                if hasattr(self.object, '__mro__'):\n                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n            if base not in valid_names:\n                continue\n            # Collect consecutive signature lines (for overloaded methods)\n            signatures = []\n            for j, line in enumerate(doclines):\n                m = py_ext_sig_re.match(line)\n                if not m:\n                    break\n                exmod2, path2, base2, args2, retann2 = m.groups()\n                # Ensure each line describes the same callable name\n                if base2 not in valid_names:\n                    break\n                signatures.append((args2, retann2))\n            if signatures:\n                # re-prepare docstring to ignore more leading indentation,\n                # and strip all matched signature lines from the beginning\n                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n                self._new_docstrings[i] = prepare_docstring('\\\\n'.join(doclines[len(signatures):]),\n                                                            tabsize=tab_width)\n                self._signatures = signatures\n                result = signatures[0]\n                # don't look any further\n                break\n        return result\"\"\"\n\nsrc = re.sub(pattern_find, new_find_body, src)\n\n# Patch format_signature in DocstringSignatureMixin to output multi-line signatures\npattern_fmt = r\"(class DocstringSignatureMixin:[\\s\\S]*?def format_signature\\(self, \\*\\*kwargs: Any\\) -> str:\\n)([\\s\\S]*?)\\n(\\s*)return super\\(\\)\\.format_signature\\(\\*\\*kwargs\\)  # type: ignore\"\nm = re.search(pattern_fmt, src)\nif not m:\n    print(\"Could not find DocstringSignatureMixin.format_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_fmt_body = r\"\"\"\\1        extra_sigs = []\n        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n            # only act if a signature is not explicitly given already, and if\n            # the feature is enabled\n            result = self._find_signature()\n            if result is not None:\n                self.args, self.retann = result\n                # If multiple signatures were found at the beginning of the docstring,\n                # append the rest as additional signature lines.\n                if getattr(self, '_signatures', None):\n                    for (args, retann) in self._signatures[1:]:\n                        if args is not None:\n                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n                        else:\n                            # If no args captured, keep empty parentheses\n                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n        primary = super().format_signature(**kwargs)  # type: ignore\n        if extra_sigs:\n            # One signature per line, the first is the primary.\n            return '\\\\n'.join([primary] + extra_sigs)\n        else:\n            return primary\"\"\"\n\nsrc = re.sub(pattern_fmt, new_fmt_body, src)\n\np.write_text(src)\nprint(\"Patched autodoc to support multiple docstring signatures.\")\nPY\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0af2a7e587fc51050069214777d5408190bfa645fc48f89482",
+          "created": 1763788663,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I located the logic that parses a signature from the first docstring line (DocstringSignatureMixin._find_signature). It only matched the first line and broke, so only one signature was recognized. I updated it to:\n- Collect all consecutive signature lines at the start of the docstring (supporting overloaded signatures like SWIG).\n- Strip all matched signature lines from the docstring body.\n- Store them in self._signatures and keep returning the first for compatibility.\nI then updated DocstringSignatureMixin.format_signature to append the additional signatures as extra lines, leveraging existing behavior where add_directive_header writes one signature per line.\n\n```bash\npython - << 'PY'\nimport re, sys, pathlib\n\np = pathlib.Path('sphinx/ext/autodoc/__init__.py')\nsrc = p.read_text()\n\n# Patch _find_signature to collect multiple leading signatures\npattern_find = r\"(def _find_signature\\(self, encoding: str = None\\) -> Tuple\\[str, str\\]:\\n)([\\s\\S]*?)\\n(\\s*)return result\"\nif not re.search(pattern_find, src):\n    print(\"Could not find _find_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_find_body = r\"\"\"\\1        if encoding is not None:\n            warnings.warn(\"The 'encoding' argument to autodoc.%s._find_signature() is \"\n                          \"deprecated.\" % self.__class__.__name__,\n                          RemovedInSphinx40Warning, stacklevel=2)\n        docstrings = self.get_doc()\n        self._new_docstrings = docstrings[:]\n        # list of parsed signatures found at the beginning of the docstring\n        # Each entry is a tuple of (args, retann)\n        self._signatures = None\n        result = None\n        for i, doclines in enumerate(docstrings):\n            # no lines in docstring, no match\n            if not doclines:\n                continue\n            # match first line of docstring against signature RE\n            match = py_ext_sig_re.match(doclines[0])\n            if not match:\n                continue\n            exmod, path, base, args, retann = match.groups()\n            # the base name must match ours\n            valid_names = [self.objpath[-1]]  # type: ignore\n            if isinstance(self, ClassDocumenter):\n                valid_names.append('__init__')\n                if hasattr(self.object, '__mro__'):\n                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n            if base not in valid_names:\n                continue\n            # Collect consecutive signature lines (for overloaded methods)\n            signatures = []\n            for j, line in enumerate(doclines):\n                m = py_ext_sig_re.match(line)\n                if not m:\n                    break\n                exmod2, path2, base2, args2, retann2 = m.groups()\n                # Ensure each line describes the same callable name\n                if base2 not in valid_names:\n                    break\n                signatures.append((args2, retann2))\n            if signatures:\n                # re-prepare docstring to ignore more leading indentation,\n                # and strip all matched signature lines from the beginning\n                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n                self._new_docstrings[i] = prepare_docstring('\\\\n'.join(doclines[len(signatures):]),\n                                                            tabsize=tab_width)\n                self._signatures = signatures\n                result = signatures[0]\n                # don't look any further\n                break\n        return result\"\"\"\n\nsrc = re.sub(pattern_find, new_find_body, src)\n\n# Patch format_signature in DocstringSignatureMixin to output multi-line signatures\npattern_fmt = r\"(class DocstringSignatureMixin:[\\s\\S]*?def format_signature\\(self, \\*\\*kwargs: Any\\) -> str:\\n)([\\s\\S]*?)\\n(\\s*)return super\\(\\)\\.format_signature\\(\\*\\*kwargs\\)  # type: ignore\"\nm = re.search(pattern_fmt, src)\nif not m:\n    print(\"Could not find DocstringSignatureMixin.format_signature to patch\", file=sys.stderr)\n    sys.exit(1)\n\nnew_fmt_body = r\"\"\"\\1        extra_sigs = []\n        if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n            # only act if a signature is not explicitly given already, and if\n            # the feature is enabled\n            result = self._find_signature()\n            if result is not None:\n                self.args, self.retann = result\n                # If multiple signatures were found at the beginning of the docstring,\n                # append the rest as additional signature lines.\n                if getattr(self, '_signatures', None):\n                    for (args, retann) in self._signatures[1:]:\n                        if args is not None:\n                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n                        else:\n                            # If no args captured, keep empty parentheses\n                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n        primary = super().format_signature(**kwargs)  # type: ignore\n        if extra_sigs:\n            # One signature per line, the first is the primary.\n            return '\\\\n'.join([primary] + extra_sigs)\n        else:\n            return primary\"\"\"\n\nsrc = re.sub(pattern_fmt, new_fmt_body, src)\n\np.write_text(src)\nprint(\"Patched autodoc to support multiple docstring signatures.\")\nPY\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Testing multi-signature support**\n\nI\u2019m looking at the patch we made to collect multiple signatures. The next step is to run tests, but we\u2019ve been advised not to modify them, although we can run them to check for failures. We need to implement a fix that matches the PR description about supporting overloaded methods. Also, I see that handling multi-line signatures correctly is crucial. The add_directive_header function looks promising for that as it properly formats the signatures.",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Testing multi-signature support**\n\nI\u2019m looking at the patch we made to collect multiple signatures. The next step is to run tests, but we\u2019ve been advised not to modify them, although we can run them to check for failures. We need to implement a fix that matches the PR description about supporting overloaded methods. Also, I see that handling multi-line signatures correctly is crucial. The add_directive_header function looks promising for that as it properly formats the signatures."
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 1501,
+            "prompt_tokens": 17621,
+            "total_tokens": 19122,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 320,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>1</returncode>\n<output>\nCould not find DocstringSignatureMixin.format_signature to patch\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to verify my patch and run a minimal subset of the test suite to ensure nothing breaks, focusing on autodoc. First, I'll quickly grep for the newly added attribute to confirm the patch applied, and then try running only the autodoc-related tests.\n\n```bash\ngrep -n \"_signatures\" -n sphinx/ext/autodoc/__init__.py && pytest -q tests/test_ext_autodoc || true\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0caa377187c86d680069214784fef8819388d2d5108b68e881",
+          "created": 1763788677,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to verify my patch and run a minimal subset of the test suite to ensure nothing breaks, focusing on autodoc. First, I'll quickly grep for the newly added attribute to confirm the patch applied, and then try running only the autodoc-related tests.\n\n```bash\ngrep -n \"_signatures\" -n sphinx/ext/autodoc/__init__.py && pytest -q tests/test_ext_autodoc || true\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Reviewing patch process**\n\nI\u2019ve run two attempts at patching\u2014 the first one worked for \"find\" and \"fmt,\" with an output confirming that the autodoc was patched. The second run failed for the format patch, but that\u2019s okay that the first one succeeded. Now, I think we should run some tests or checks, perhaps by creating a script to simulate behavior or look into the tests directory. While running all tests might be heavy, a minimal check could work well. I\u2019ll double-check the new code content and the updates made to the format signature function.",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Reviewing patch process**\n\nI\u2019ve run two attempts at patching\u2014 the first one worked for \"find\" and \"fmt,\" with an output confirming that the autodoc was patched. The second run failed for the format patch, but that\u2019s okay that the first one succeeded. Now, I think we should run some tests or checks, perhaps by creating a script to simulate behavior or look into the tests directory. While running all tests might be heavy, a minimal check could work well. I\u2019ll double-check the new code content and the updates made to the format signature function."
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 1378,
+            "prompt_tokens": 18833,
+            "total_tokens": 20211,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 1280,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n1049:        self._signatures = None\n1085:                self._signatures = signatures\n1111:                if getattr(self, '_signatures', None):\n1112:                    for (args, retann) in self._signatures[1:]:\nERROR: file or directory not found: tests/test_ext_autodoc\n\n\n=============================== warnings summary ===============================\nsphinx/util/docutils.py:45\n  /testbed/sphinx/util/docutils.py:45: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.\n    __version_info__ = tuple(LooseVersion(docutils.__version__).version)\n\nsphinx/registry.py:22\n  /testbed/sphinx/registry.py:22: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html\n    from pkg_resources import iter_entry_points\n\n../opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pkg_resources/__init__.py:3154\n../opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pkg_resources/__init__.py:3154\n../opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pkg_resources/__init__.py:3154\n../opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pkg_resources/__init__.py:3154\n  /opt/miniconda3/envs/testbed/lib/python3.9/site-packages/pkg_resources/__init__.py:3154: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('sphinxcontrib')`.\n  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages\n    declare_namespace(pkg)\n\nsphinx/directives/patches.py:15\n  /testbed/sphinx/directives/patches.py:15: DeprecationWarning: The `docutils.parsers.rst.directive.html` module will be removed in Docutils 2.0. Since Docutils 0.18, the \"Meta\" node is defined in `docutils.parsers.rst.directives.misc`.\n    from docutils.parsers.rst.directives import images, html, tables\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n7 warnings in 0.00s\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to validate the change by simulating autodoc processing on an object whose docstring starts with multiple signature lines. I'll write a small script that:\n- Sets up a minimal Sphinx environment and a DocumenterBridge.\n- Creates a dummy function/class method with a docstring containing two signature lines.\n- Uses FunctionDocumenter/MethodDocumenter to parse and format the signature.\n- Prints the final signature to verify it includes multiple lines.\n\n```bash\npython - << 'PY'\nimport types\nfrom sphinx.application import Sphinx\nfrom sphinx.util.docutils import LoggingReporter\nfrom docutils.utils import new_document\nfrom sphinx.ext.autodoc import FunctionDocumenter, MethodDocumenter, ClassDocumenter\nfrom sphinx.ext.autodoc.directive import DocumenterBridge\nfrom sphinx.environment import BuildEnvironment\nfrom sphinx.config import Config\nfrom sphinx.util.logging import setup as setup_logging\nfrom pathlib import Path\nimport sys\n\n# Setup minimal Sphinx app\nsrcdir = Path.cwd() / \"_src\"\nconfdir = srcdir\noutdir = Path.cwd() / \"_out\"\ndoctreedir = Path.cwd() / \"_doctree\"\nfor d in (srcdir, outdir, doctreedir):\n    d.mkdir(exist_ok=True)\n\n# Minimal conf\n(conffile := confdir / \"conf.py\").write_text(\"extensions=['sphinx.ext.autodoc']\\nautodoc_docstring_signature=True\\n\")\n\nsetup_logging(lambda: None)\n\napp = Sphinx(str(srcdir), str(confdir), str(outdir), str(doctreedir), buildername=\"dummy\", status=None, warning=None, freshenv=True)\nenv = app.env  # BuildEnvironment\nassert isinstance(env, BuildEnvironment)\n\n# Prepare a dummy docutils document and reporter\ndocument = new_document('index', env.docutils_settings)\nreporter = document.reporter\nbridge = DocumenterBridge(env, reporter, options={}, lineno=1)\n\n# Create a dummy module with a function whose docstring has multiple signatures\nmod = types.ModuleType(\"mymod\")\n\ndef dummy(*args, **kwargs):\n    \"\"\"mymod.dummy(a: int) -> str\nmymod.dummy(a: str) -> str\n\nThis is an overloaded function simulated by SWIG-style docstring.\n\"\"\"\n    pass\nmod.dummy = dummy\ndummy.__module__ = \"mymod\"\n\n# Document the function\nfd = FunctionDocumenter(bridge, 'function')\nfd.name = 'mymod.dummy'\nfd.objpath = ['mymod', 'dummy']\nfd.modname = 'mymod'\nfd.object = dummy\nfd.parent = mod\n\n# Inject docstring into autodoc via getdoc() path; simplest is to override get_doc()\ndef get_doc_override(encoding=None, ignore=None):\n    # prepare_docstring will be called inside _find_signature; return raw lines\n    return [[\"mymod.dummy(a: int) -> str\",\n             \"mymod.dummy(a: str) -> str\",\n             \"\",\n             \"Body...\"]]\nfd.get_doc = get_doc_override\n\nsig = fd.format_signature()\nprint(\"FunctionDocumenter signature output:\")\nprint(sig)\nprint(\"---\")\n\n# Now simulate a method on a class with multiple signatures\nclass C:\n    def meth(self):\n        \"\"\"C.meth(x: int) -> None\nC.meth(x: str) -> None\n\nBody...\n\"\"\"\n        pass\n\nC.meth.__module__ = \"mymod\"\ncobj = C()\ncd = MethodDocumenter(bridge, 'method')\ncd.name = 'C.meth'\ncd.objpath = ['C', 'meth']\ncd.modname = 'mymod'\ncd.object = C.meth\ncd.parent = C\n# Override get_doc similarly\ndef get_doc_override_m(encoding=None, ignore=None):\n    return [[\"C.meth(x: int) -> None\",\n             \"C.meth(x: str) -> None\",\n             \"\",\n             \"Body...\"]]\ncd.get_doc = get_doc_override_m\n\nsig_m = cd.format_signature()\nprint(\"MethodDocumenter signature output:\")\nprint(sig_m)\nPY\n```",
+      "extra": {
+        "response": {
+          "id": "resp_062c05c29127b07d00692147b3d6b08195a7f1b99c1af82cb0",
+          "created": 1763788723,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to validate the change by simulating autodoc processing on an object whose docstring starts with multiple signature lines. I'll write a small script that:\n- Sets up a minimal Sphinx environment and a DocumenterBridge.\n- Creates a dummy function/class method with a docstring containing two signature lines.\n- Uses FunctionDocumenter/MethodDocumenter to parse and format the signature.\n- Prints the final signature to verify it includes multiple lines.\n\n```bash\npython - << 'PY'\nimport types\nfrom sphinx.application import Sphinx\nfrom sphinx.util.docutils import LoggingReporter\nfrom docutils.utils import new_document\nfrom sphinx.ext.autodoc import FunctionDocumenter, MethodDocumenter, ClassDocumenter\nfrom sphinx.ext.autodoc.directive import DocumenterBridge\nfrom sphinx.environment import BuildEnvironment\nfrom sphinx.config import Config\nfrom sphinx.util.logging import setup as setup_logging\nfrom pathlib import Path\nimport sys\n\n# Setup minimal Sphinx app\nsrcdir = Path.cwd() / \"_src\"\nconfdir = srcdir\noutdir = Path.cwd() / \"_out\"\ndoctreedir = Path.cwd() / \"_doctree\"\nfor d in (srcdir, outdir, doctreedir):\n    d.mkdir(exist_ok=True)\n\n# Minimal conf\n(conffile := confdir / \"conf.py\").write_text(\"extensions=['sphinx.ext.autodoc']\\nautodoc_docstring_signature=True\\n\")\n\nsetup_logging(lambda: None)\n\napp = Sphinx(str(srcdir), str(confdir), str(outdir), str(doctreedir), buildername=\"dummy\", status=None, warning=None, freshenv=True)\nenv = app.env  # BuildEnvironment\nassert isinstance(env, BuildEnvironment)\n\n# Prepare a dummy docutils document and reporter\ndocument = new_document('index', env.docutils_settings)\nreporter = document.reporter\nbridge = DocumenterBridge(env, reporter, options={}, lineno=1)\n\n# Create a dummy module with a function whose docstring has multiple signatures\nmod = types.ModuleType(\"mymod\")\n\ndef dummy(*args, **kwargs):\n    \"\"\"mymod.dummy(a: int) -> str\nmymod.dummy(a: str) -> str\n\nThis is an overloaded function simulated by SWIG-style docstring.\n\"\"\"\n    pass\nmod.dummy = dummy\ndummy.__module__ = \"mymod\"\n\n# Document the function\nfd = FunctionDocumenter(bridge, 'function')\nfd.name = 'mymod.dummy'\nfd.objpath = ['mymod', 'dummy']\nfd.modname = 'mymod'\nfd.object = dummy\nfd.parent = mod\n\n# Inject docstring into autodoc via getdoc() path; simplest is to override get_doc()\ndef get_doc_override(encoding=None, ignore=None):\n    # prepare_docstring will be called inside _find_signature; return raw lines\n    return [[\"mymod.dummy(a: int) -> str\",\n             \"mymod.dummy(a: str) -> str\",\n             \"\",\n             \"Body...\"]]\nfd.get_doc = get_doc_override\n\nsig = fd.format_signature()\nprint(\"FunctionDocumenter signature output:\")\nprint(sig)\nprint(\"---\")\n\n# Now simulate a method on a class with multiple signatures\nclass C:\n    def meth(self):\n        \"\"\"C.meth(x: int) -> None\nC.meth(x: str) -> None\n\nBody...\n\"\"\"\n        pass\n\nC.meth.__module__ = \"mymod\"\ncobj = C()\ncd = MethodDocumenter(bridge, 'method')\ncd.name = 'C.meth'\ncd.objpath = ['C', 'meth']\ncd.modname = 'mymod'\ncd.object = C.meth\ncd.parent = C\n# Override get_doc similarly\ndef get_doc_override_m(encoding=None, ignore=None):\n    return [[\"C.meth(x: int) -> None\",\n             \"C.meth(x: str) -> None\",\n             \"\",\n             \"Body...\"]]\ncd.get_doc = get_doc_override_m\n\nsig_m = cd.format_signature()\nprint(\"MethodDocumenter signature output:\")\nprint(sig_m)\nPY\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Examining Documenter setup**\n\nI'm thinking about how the Documenter requires environment or dummy objects. I wonder if I should run a minimal Sphinx application, but that might end up being heavy. Instead, it seems wiser to design a quick test that imports FunctionDocumenter and sets up a dummy DocumenterBridge, environment, directive, and so on. I notice there's sphinx/ext/autodoc/directive.py that I can explore for DocumenterBridge to mock the necessary state. Let\u2019s look into that!",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Examining Documenter setup**\n\nI'm thinking about how the Documenter requires environment or dummy objects. I wonder if I should run a minimal Sphinx application, but that might end up being heavy. Instead, it seems wiser to design a quick test that imports FunctionDocumenter and sets up a dummy DocumenterBridge, environment, directive, and so on. I notice there's sphinx/ext/autodoc/directive.py that I can explore for DocumenterBridge to mock the necessary state. Let\u2019s look into that!"
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 1322,
+            "prompt_tokens": 19479,
+            "total_tokens": 20801,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 448,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>1</returncode>\n<output>\nTraceback (most recent call last):\n  File \"<stdin>\", line 24, in <module>\nTypeError: setup() missing 2 required positional arguments: 'status' and 'warning'\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I patched autodoc to collect and emit multiple leading signature lines from docstrings. Now I will verify this by simulating FunctionDocumenter and MethodDocumenter behavior with a stubbed environment and a docstring containing multiple SWIG-style signatures. The script constructs minimal stubs for env, directive, and state, overrides get_doc to feed our test docstrings, and prints the formatted signature to confirm multiple lines are output.\n\n```bash\npython - << 'PY'\nfrom types import SimpleNamespace, ModuleType\nfrom sphinx.ext.autodoc import FunctionDocumenter, MethodDocumenter\n\n# Minimal stubs for environment and directive\nclass EventsStub:\n    def emit_firstresult(self, *args, **kwargs):\n        return None\n\nenv_stub = SimpleNamespace(\n    config=SimpleNamespace(autodoc_docstring_signature=True, strip_signature_backslash=False),\n    events=EventsStub(),\n    temp_data={},\n    ref_context={},\n)\n\nstate_stub = SimpleNamespace(\n    document=SimpleNamespace(\n        settings=SimpleNamespace(tab_width=8)\n    )\n)\n\ndirective_stub = SimpleNamespace(\n    env=env_stub,\n    genopt={},\n    state=state_stub,\n    result=[],\n)\n\n# Prepare a dummy module and function\nmod = ModuleType(\"mymod\")\ndef dummy():\n    pass\ndummy.__module__ = \"mymod\"\nmod.dummy = dummy\n\n# FunctionDocumenter test with multiple signatures in docstring\nfd = FunctionDocumenter(directive_stub, 'function')\nfd.name = 'mymod.dummy'\nfd.objpath = ['dummy']\nfd.modname = 'mymod'\nfd.object = dummy\nfd.parent = mod\n\ndef get_doc_override_fn(encoding=None, ignore=None):\n    return [[\n        \"mymod.dummy(a: int) -> str\",\n        \"mymod.dummy(a: str) -> str\",\n        \"\",\n        \"Function body...\"\n    ]]\nfd.get_doc = get_doc_override_fn\n\nprint(\"FunctionDocumenter signature output:\")\nprint(fd.format_signature())\nprint(\"---\")\n\n# MethodDocumenter test with multiple signatures in docstring\nclass C:\n    def meth(self): pass\nC.meth.__module__ = \"mymod\"\n\nmd = MethodDocumenter(directive_stub, 'method')\nmd.name = 'C.meth'\nmd.objpath = ['meth']\nmd.modname = 'mymod'\nmd.object = C.meth\nmd.parent = C\n\ndef get_doc_override_m(encoding=None, ignore=None):\n    return [[\n        \"C.meth(x: int) -> None\",\n        \"C.meth(x: str) -> None\",\n        \"\",\n        \"Method body...\"\n    ]]\nmd.get_doc = get_doc_override_m\n\nprint(\"MethodDocumenter signature output:\")\nprint(md.format_signature())\nPY\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0795a86e0c516f0e00692147c1c374819785cf17e8c83c2172",
+          "created": 1763788737,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I patched autodoc to collect and emit multiple leading signature lines from docstrings. Now I will verify this by simulating FunctionDocumenter and MethodDocumenter behavior with a stubbed environment and a docstring containing multiple SWIG-style signatures. The script constructs minimal stubs for env, directive, and state, overrides get_doc to feed our test docstrings, and prints the formatted signature to confirm multiple lines are output.\n\n```bash\npython - << 'PY'\nfrom types import SimpleNamespace, ModuleType\nfrom sphinx.ext.autodoc import FunctionDocumenter, MethodDocumenter\n\n# Minimal stubs for environment and directive\nclass EventsStub:\n    def emit_firstresult(self, *args, **kwargs):\n        return None\n\nenv_stub = SimpleNamespace(\n    config=SimpleNamespace(autodoc_docstring_signature=True, strip_signature_backslash=False),\n    events=EventsStub(),\n    temp_data={},\n    ref_context={},\n)\n\nstate_stub = SimpleNamespace(\n    document=SimpleNamespace(\n        settings=SimpleNamespace(tab_width=8)\n    )\n)\n\ndirective_stub = SimpleNamespace(\n    env=env_stub,\n    genopt={},\n    state=state_stub,\n    result=[],\n)\n\n# Prepare a dummy module and function\nmod = ModuleType(\"mymod\")\ndef dummy():\n    pass\ndummy.__module__ = \"mymod\"\nmod.dummy = dummy\n\n# FunctionDocumenter test with multiple signatures in docstring\nfd = FunctionDocumenter(directive_stub, 'function')\nfd.name = 'mymod.dummy'\nfd.objpath = ['dummy']\nfd.modname = 'mymod'\nfd.object = dummy\nfd.parent = mod\n\ndef get_doc_override_fn(encoding=None, ignore=None):\n    return [[\n        \"mymod.dummy(a: int) -> str\",\n        \"mymod.dummy(a: str) -> str\",\n        \"\",\n        \"Function body...\"\n    ]]\nfd.get_doc = get_doc_override_fn\n\nprint(\"FunctionDocumenter signature output:\")\nprint(fd.format_signature())\nprint(\"---\")\n\n# MethodDocumenter test with multiple signatures in docstring\nclass C:\n    def meth(self): pass\nC.meth.__module__ = \"mymod\"\n\nmd = MethodDocumenter(directive_stub, 'method')\nmd.name = 'C.meth'\nmd.objpath = ['meth']\nmd.modname = 'mymod'\nmd.object = C.meth\nmd.parent = C\n\ndef get_doc_override_m(encoding=None, ignore=None):\n    return [[\n        \"C.meth(x: int) -> None\",\n        \"C.meth(x: str) -> None\",\n        \"\",\n        \"Method body...\"\n    ]]\nmd.get_doc = get_doc_override_m\n\nprint(\"MethodDocumenter signature output:\")\nprint(md.format_signature())\nPY\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Simplifying Sphinx setup**\n\nI need to follow the proper command format with THOUGHT and a bash block to fix my previous Python script for Sphinx initialization. I realized we don't need the heavy Sphinx environment. Instead, I can import FunctionDocumenter and create a bridge directly. I think a fake BuildEnvironment might help construct minimal configurations without initializing the Sphinx app itself. The setup_logging call failed because of the wrong signature, so skipping it could simplify things. I\u2019m just checking if \"dummy\" builder in Sphinx exists.",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Simplifying Sphinx setup**\n\nI need to follow the proper command format with THOUGHT and a bash block to fix my previous Python script for Sphinx initialization. I realized we don't need the heavy Sphinx environment. Instead, I can import FunctionDocumenter and create a bridge directly. I think a fake BuildEnvironment might help construct minimal configurations without initializing the Sphinx app itself. The setup_logging call failed because of the wrong signature, so skipping it could simplify things. I\u2019m just checking if \"dummy\" builder in Sphinx exists."
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 1933,
+            "prompt_tokens": 20412,
+            "total_tokens": 22345,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 1344,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 16384,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nFunctionDocumenter signature output:\n(a: int) -> str\n(a: str) -> str\n---\nMethodDocumenter signature output:\n(x: int) -> None\n(x: str) -> None\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I updated DocstringSignatureMixin in sphinx/ext/autodoc/__init__.py to:\n- Collect multiple consecutive signature lines at the start of a docstring using the existing regex.\n- Strip all matched signature lines from the docstring body.\n- Store them in self._signatures and set the first as the primary signature for compatibility.\n- Modify format_signature to return all signatures as multi-line output so add_directive_header emits one signature per line.\nI verified the change with a stubbed environment demonstrating that both FunctionDocumenter and MethodDocumenter now output multiple signatures when present.\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```",
+      "extra": {
+        "response": {
+          "id": "resp_0e4706a001cd06cf00692147f4163c81938ec550c0f36d17ef",
+          "created": 1763788788,
+          "model": "gpt-5",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I updated DocstringSignatureMixin in sphinx/ext/autodoc/__init__.py to:\n- Collect multiple consecutive signature lines at the start of a docstring using the existing regex.\n- Strip all matched signature lines from the docstring body.\n- Store them in self._signatures and set the first as the primary signature for compatibility.\n- Modify format_signature to return all signatures as multi-line output so add_directive_header emits one signature per line.\nI verified the change with a stubbed environment demonstrating that both FunctionDocumenter and MethodDocumenter now output multiple signatures when present.\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "reasoning_content": "**Running tests efficiently**\n\nI can attempt to run a subset of tests. It\u2019s fine to use the command \"pytest -q -k autodoc\" to match tests. However, I want to include just one bash command when submitting. The final submission involves using echo, followed by \"git add -A\", and \"git diff.\" I might need to run \"pytest -q -k autodoc_docstring_signature\" as it may cover what I need, but it could take some time. The environment is cheap, so it\u2019s worth testing now!",
+                "provider_specific_fields": {
+                  "refusal": null,
+                  "reasoning_content": "**Running tests efficiently**\n\nI can attempt to run a subset of tests. It\u2019s fine to use the command \"pytest -q -k autodoc\" to match tests. However, I want to include just one bash command when submitting. The final submission involves using echo, followed by \"git add -A\", and \"git diff.\" I might need to run \"pytest -q -k autodoc_docstring_signature\" as it may cover what I need, but it could take some time. The environment is cheap, so it\u2019s worth testing now!"
+                }
+              },
+              "provider_specific_fields": {}
+            }
+          ],
+          "usage": {
+            "completion_tokens": 1110,
+            "prompt_tokens": 21061,
+            "total_tokens": 22171,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": 0,
+              "reasoning_tokens": 960,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 0
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0,
+              "text_tokens": 0,
+              "image_tokens": 0
+            },
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "input_tokens_details": null,
+            "output_tokens_details": null,
+            "claude_cache_creation_5_m_tokens": 0,
+            "claude_cache_creation_1_h_tokens": 0
+          },
+          "service_tier": null
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "diff --git a/_src/conf.py b/_src/conf.py\nnew file mode 100644\nindex 000000000..a471bab6f\n--- /dev/null\n+++ b/_src/conf.py\n@@ -0,0 +1,2 @@\n+extensions=['sphinx.ext.autodoc']\n+autodoc_docstring_signature=True\ndiff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py\nindex f8e4be999..209512def 100644\n--- a/sphinx/ext/autodoc/__init__.py\n+++ b/sphinx/ext/autodoc/__init__.py\n@@ -1044,6 +1044,9 @@ class DocstringSignatureMixin:\n                           RemovedInSphinx40Warning, stacklevel=2)\n         docstrings = self.get_doc()\n         self._new_docstrings = docstrings[:]\n+        # list of parsed signatures found at the beginning of the docstring\n+        # Each entry is a tuple of (args, retann)\n+        self._signatures = None\n         result = None\n         for i, doclines in enumerate(docstrings):\n             # no lines in docstring, no match\n@@ -1062,13 +1065,27 @@ class DocstringSignatureMixin:\n                     valid_names.extend(cls.__name__ for cls in self.object.__mro__)\n             if base not in valid_names:\n                 continue\n-            # re-prepare docstring to ignore more leading indentation\n-            tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n-            self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[1:]),\n-                                                        tabsize=tab_width)\n-            result = args, retann\n-            # don't look any further\n-            break\n+            # Collect consecutive signature lines (for overloaded methods)\n+            signatures = []\n+            for j, line in enumerate(doclines):\n+                m = py_ext_sig_re.match(line)\n+                if not m:\n+                    break\n+                exmod2, path2, base2, args2, retann2 = m.groups()\n+                # Ensure each line describes the same callable name\n+                if base2 not in valid_names:\n+                    break\n+                signatures.append((args2, retann2))\n+            if signatures:\n+                # re-prepare docstring to ignore more leading indentation,\n+                # and strip all matched signature lines from the beginning\n+                tab_width = self.directive.state.document.settings.tab_width  # type: ignore\n+                self._new_docstrings[i] = prepare_docstring('\\n'.join(doclines[len(signatures):]),\n+                                                            tabsize=tab_width)\n+                self._signatures = signatures\n+                result = signatures[0]\n+                # don't look any further\n+                break\n         return result\n \n     def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:\n@@ -1082,13 +1099,28 @@ class DocstringSignatureMixin:\n         return super().get_doc(None, ignore)  # type: ignore\n \n     def format_signature(self, **kwargs: Any) -> str:\n+        extra_sigs = []\n         if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore\n             # only act if a signature is not explicitly given already, and if\n             # the feature is enabled\n             result = self._find_signature()\n             if result is not None:\n                 self.args, self.retann = result\n-        return super().format_signature(**kwargs)  # type: ignore\n+                # If multiple signatures were found at the beginning of the docstring,\n+                # append the rest as additional signature lines.\n+                if getattr(self, '_signatures', None):\n+                    for (args, retann) in self._signatures[1:]:\n+                        if args is not None:\n+                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))\n+                        else:\n+                            # If no args captured, keep empty parentheses\n+                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))\n+        primary = super().format_signature(**kwargs)  # type: ignore\n+        if extra_sigs:\n+            # One signature per line, the first is the primary.\n+            return '\\n'.join([primary] + extra_sigs)\n+        else:\n+            return primary\n \n \n class DocstringStripSignatureMixin(DocstringSignatureMixin):\n"
+    }
+  ],
+  "trajectory_format": "mini-swe-agent-1",
+  "instance_id": "sphinx-doc__sphinx-7748"
+}

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: gbk -*-
 import argparse
 import json
 import os
@@ -16,7 +16,12 @@ def get_swebench_data():
 
 def show_patch_window(gold_patch, model_patch, is_correct, instance_id):
     # Create main window with modern style
-    root = tk.Tk()
+    # Use a safer initialization to reduce white-screen issues
+    try:
+        root = tk.Tk()
+    except Exception as e:
+        print(f"Failed to create Tk window: {e}")
+        return
     root.title(f'Patch Comparison - {instance_id}')
     root.geometry('1400x900')  # Larger initial window size
     root.minsize(1200, 800)    # Minimum window size
@@ -31,6 +36,12 @@ def show_patch_window(gold_patch, model_patch, is_correct, instance_id):
     correct_color = '#00b894'
     incorrect_color = '#d63031'
     
+    # Try to withdraw during heavy setup to avoid white screen
+    try:
+        root.withdraw()
+    except Exception:
+        pass
+
     root.configure(bg=bg_color)
     
     # Configure grid weights for responsive layout
@@ -200,9 +211,26 @@ def show_patch_window(gold_patch, model_patch, is_correct, instance_id):
     
     # Configure modern button style
     style = ttk.Style()
-    style.configure("Modern.TButton", 
-                   font=('Segoe UI', 12),
-                   padding=10)
+    try:
+        # Use a theme that usually exists on Linux
+        if platform.system() == 'Linux':
+            try:
+                style.theme_use('clam')
+            except Exception:
+                pass
+        style.configure(
+            "Modern.TButton",
+            font=('Segoe UI', 12),
+            padding=10,
+        )
+    except Exception:
+        pass
+
+    # Deiconify after layout so first paint²»ÖÁÓÚ´¿°×
+    try:
+        root.deiconify()
+    except Exception:
+        pass
 
     root.mainloop()
 
@@ -219,9 +247,8 @@ def main():
     if not os.path.exists(result_path):
         print(f"Result file not found: {result_path}")
         return
-    with open(result_path, 'r', encoding='utf-8') as f:
+    with open(result_path, 'r', encoding='utf-8', errors='replace') as f:
         result_data = json.load(f)
-    
     instance_obj = result_data.get(args.i)
     if not instance_obj:
         print(f"Instance '{args.i}' not found in result file.")
