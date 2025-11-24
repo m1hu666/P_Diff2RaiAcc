@@ -1,0 +1,1678 @@
+{
+  "info": {
+    "exit_status": "Submitted",
+    "submission": "diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py\nindex abdeba8ef..0e0bdd60b 100644\n--- a/astropy/io/ascii/rst.py\n+++ b/astropy/io/ascii/rst.py\n@@ -57,10 +57,17 @@ class RST(FixedWidth):\n     data_class = SimpleRSTData\n     header_class = SimpleRSTHeader\n \n-    def __init__(self):\n-        super().__init__(delimiter_pad=None, bookend=False)\n+    def __init__(self, header_rows=None):\n+        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n+        # Adjust data start line based on number of header rows\n+        # RST format: position_line (=), header_rows, separator (=), data\n+        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n+        self.data.start_line = 2 + len(self.header.header_rows)\n \n     def write(self, lines):\n         lines = super().write(lines)\n-        lines = [lines[1]] + lines + [lines[1]]\n+        # The position line is at index len(header_rows) in the lines list\n+        # (after all header rows and before data rows)\n+        position_line_index = len(self.header.header_rows)\n+        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]\n         return lines\ndiff --git a/test_final_validation.py b/test_final_validation.py\nnew file mode 100644\nindex 000000000..fca6c1e04\n--- /dev/null\n+++ b/test_final_validation.py\n@@ -0,0 +1,82 @@\n+\"\"\"Final validation test for RST header_rows support\"\"\"\n+from astropy.table import QTable, Table\n+import astropy.units as u\n+from io import StringIO\n+\n+def test_rst_header_rows():\n+    \"\"\"Test RST format with various header_rows configurations\"\"\"\n+    \n+    # Test with QTable (has units)\n+    tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+    \n+    # Test 1: Default (only name)\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\")\n+    result = output.getvalue()\n+    assert \"====\" in result\n+    assert \"wave\" in result\n+    assert \"response\" in result\n+    assert \"350.0\" in result\n+    print(\"\u2713 Test 1 passed: Default header_rows\")\n+    \n+    # Test 2: Explicit name only\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\n+    result = output.getvalue()\n+    assert \"====\" in result\n+    assert \"wave\" in result\n+    assert \"response\" in result\n+    assert \"nm\" not in result  # unit should not be present\n+    print(\"\u2713 Test 2 passed: Explicit header_rows=['name']\")\n+    \n+    # Test 3: Name and unit\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert lines[0].startswith(\"=====\")  # First line is position line\n+    assert \"wave\" in lines[1]  # Second line is name\n+    assert \"nm\" in lines[2]  # Third line is unit\n+    assert lines[3].startswith(\"=====\")  # Fourth line is separator\n+    assert \"350.0\" in lines[4]  # Fifth line is data\n+    print(\"\u2713 Test 3 passed: header_rows=['name', 'unit']\")\n+    \n+    # Test 4: Multiple header rows\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert lines[0].startswith(\"=====\")  # Position line\n+    assert \"wave\" in lines[1]  # Name\n+    assert \"nm\" in lines[2]  # Unit\n+    assert \"float64\" in lines[3]  # Dtype\n+    assert lines[4].startswith(\"=====\")  # Separator\n+    print(\"\u2713 Test 4 passed: header_rows=['name', 'unit', 'dtype']\")\n+    \n+    # Test 5: Empty header_rows\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert lines[0].startswith(\"=====\")  # Position line\n+    assert lines[1].startswith(\"=====\")  # Separator (no header rows in between)\n+    assert \"350.0\" in lines[2]  # Data starts immediately\n+    print(\"\u2713 Test 5 passed: header_rows=[]\")\n+    \n+    # Test 6: Table without units\n+    tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\n+    output = StringIO()\n+    tbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert \"col1\" in lines[1]  # Name row\n+    # Unit row should be empty or contain spaces\n+    assert lines[2].strip() == \"\" or all(c in \" =\" for c in lines[2])\n+    print(\"\u2713 Test 6 passed: Table without units\")\n+    \n+    print(\"\\n\" + \"=\" * 70)\n+    print(\"All tests passed! RST format now supports header_rows parameter.\")\n+    print(\"=\" * 70)\n+\n+if __name__ == \"__main__\":\n+    test_rst_header_rows()\ndiff --git a/test_pr_example.py b/test_pr_example.py\nnew file mode 100644\nindex 000000000..ac6ebbbee\n--- /dev/null\n+++ b/test_pr_example.py\n@@ -0,0 +1,32 @@\n+\"\"\"Test the exact example from the PR description\"\"\"\n+from astropy.table import QTable\n+import astropy.units as u\n+import sys\n+from io import StringIO\n+\n+print(\"Testing the exact example from the PR description:\")\n+print(\"=\" * 70)\n+\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"\\n1. Basic RST output:\")\n+print(\"-\" * 70)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\")\n+print(output.getvalue())\n+\n+print(\"\\n2. Fixed width with header_rows:\")\n+print(\"-\" * 70)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n+print(output.getvalue())\n+\n+print(\"\\n3. RST with header_rows (this was failing before):\")\n+print(\"-\" * 70)\n+try:\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    print(output.getvalue())\n+    print(\"SUCCESS! No error occurred.\")\n+except TypeError as e:\n+    print(f\"FAILED with error: {e}\")\ndiff --git a/test_pr_scenario.py b/test_pr_scenario.py\nnew file mode 100644\nindex 000000000..97eabcc03\n--- /dev/null\n+++ b/test_pr_scenario.py\n@@ -0,0 +1,26 @@\n+\"\"\"Test the exact scenario from the PR description\"\"\"\n+from astropy.table import QTable\n+import astropy.units as u\n+import sys\n+from io import StringIO\n+\n+print(\"Reproducing the exact scenario from the PR description:\")\n+print(\"=\" * 70)\n+\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst')\")\n+tbl.write(sys.stdout, format=\"ascii.rst\")\n+\n+print(\"\\n>>> tbl.write(sys.stdout, format='ascii.fixed_width', header_rows=['name', 'unit'])\")\n+tbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n+\n+print(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst', header_rows=['name', 'unit'])\")\n+print(\"(This was failing before with TypeError)\")\n+try:\n+    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    print(\"\\n\u2713 SUCCESS! No TypeError occurred.\")\n+    print(\"\u2713 The RST format now supports the header_rows parameter.\")\n+except TypeError as e:\n+    print(f\"\\n\u2717 FAILED: {e}\")\n+    sys.exit(1)\ndiff --git a/test_rst_comprehensive.py b/test_rst_comprehensive.py\nnew file mode 100644\nindex 000000000..103639874\n--- /dev/null\n+++ b/test_rst_comprehensive.py\n@@ -0,0 +1,54 @@\n+import sys\n+from astropy.table import QTable\n+import astropy.units as u\n+from io import StringIO\n+\n+# Create a test table\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"=\" * 60)\n+print(\"Test 1: Basic RST output (default, only name)\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\")\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 2: RST with header_rows=['name']\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 3: RST with header_rows=['name', 'unit']\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 4: RST with header_rows=['unit', 'name'] (reversed)\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"unit\", \"name\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 5: RST with header_rows=['name', 'unit', 'dtype']\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 6: Verify reading still works\")\n+print(\"=\" * 60)\n+from astropy.io import ascii\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+output.seek(0)\n+print(\"Written table:\")\n+print(output.getvalue())\n+# Note: Reading with multiple header rows is not supported yet, \n+# but basic reading should still work\ndiff --git a/test_rst_edge_cases.py b/test_rst_edge_cases.py\nnew file mode 100644\nindex 000000000..7b94dc916\n--- /dev/null\n+++ b/test_rst_edge_cases.py\n@@ -0,0 +1,33 @@\n+import sys\n+from astropy.table import QTable\n+import astropy.units as u\n+from io import StringIO\n+\n+# Create a test table\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"=\" * 60)\n+print(\"Test 1: RST with header_rows=[] (no header)\")\n+print(\"=\" * 60)\n+try:\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n+    print(output.getvalue())\n+except Exception as e:\n+    print(f\"Error: {e}\")\n+\n+print(\"=\" * 60)\n+print(\"Test 2: RST with None (should use default)\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=None)\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 3: Table without units\")\n+print(\"=\" * 60)\n+from astropy.table import Table\n+tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\n+output = StringIO()\n+tbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+print(output.getvalue())\ndiff --git a/test_rst_header_rows.py b/test_rst_header_rows.py\nnew file mode 100644\nindex 000000000..926fadb95\n--- /dev/null\n+++ b/test_rst_header_rows.py\n@@ -0,0 +1,20 @@\n+import sys\n+from astropy.table import QTable\n+import astropy.units as u\n+\n+# Create a test table\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"Test 1: Basic RST output (should work)\")\n+tbl.write(sys.stdout, format=\"ascii.rst\")\n+print()\n+\n+print(\"Test 2: Fixed width with header_rows (should work)\")\n+tbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n+print()\n+\n+print(\"Test 3: RST with header_rows (currently fails)\")\n+try:\n+    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+except TypeError as e:\n+    print(f\"Error: {e}\")\ndiff --git a/test_rst_read.py b/test_rst_read.py\nnew file mode 100644\nindex 000000000..ce92cf815\n--- /dev/null\n+++ b/test_rst_read.py\n@@ -0,0 +1,32 @@\n+\"\"\"Test that RST reading still works after our changes\"\"\"\n+from astropy.io import ascii\n+from io import StringIO\n+\n+# Test reading a basic RST table\n+rst_table = \"\"\"\n+===== ========\n+ wave response\n+===== ========\n+350.0      0.7\n+950.0      1.2\n+===== ========\n+\"\"\"\n+\n+print(\"Testing RST reading functionality:\")\n+print(\"=\" * 70)\n+\n+# Read the table\n+tbl = ascii.read(rst_table, format='rst')\n+print(\"Successfully read RST table:\")\n+print(tbl)\n+print()\n+\n+# Verify the data\n+assert len(tbl) == 2\n+assert tbl['wave'][0] == 350.0\n+assert tbl['wave'][1] == 950.0\n+assert tbl['response'][0] == 0.7\n+assert tbl['response'][1] == 1.2\n+\n+print(\"\u2713 All assertions passed!\")\n+print(\"\u2713 RST reading functionality is intact\")\n",
+    "model_stats": {
+      "instance_cost": 0.3695319,
+      "api_calls": 31
+    },
+    "mini_version": "1.15.0",
+    "config": {
+      "agent": {
+        "system_template": "You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).\n\nInclude a THOUGHT section before your command where you explain your reasoning process.\nFormat your response as shown in <format_example>.\n\n<format_example>\nTHOUGHT: Your reasoning and analysis here\n\n```bash\nyour_command_here\n```\n</format_example>\n\nFailure to follow these rules will cause your response to be rejected.\n",
+        "instance_template": "<pr_description>\nConsider the following PR description:\n{{task}}\n</pr_description>\n\n<instructions>\n# Task Instructions\n\n## Overview\nYou're a software engineer interacting continuously with a computer by submitting commands.\nYou'll be helping implement necessary changes to meet requirements in the PR description.\nYour task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.\n\nIMPORTANT: This is an interactive process where you will think and issue ONE command, see its result, then think and issue your next command.\n\nFor each response:\n1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish\n2. Provide exactly ONE bash command to execute\n\n## Important Boundaries\n- MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)\n- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)\n\n## Recommended Workflow\n1. Analyze the codebase by finding and reading relevant files\n2. Create a script to reproduce the issue\n3. Edit the source code to resolve the issue\n4. Verify your fix works by running your script again\n5. Test edge cases to ensure your fix is robust\n\n## Command Execution Rules\nYou are operating in an environment where\n1. You write a single command\n2. The system executes that command in a subshell\n3. You see the result\n4. You write your next command\n\nEach response should include:\n1. A **THOUGHT** section where you explain your reasoning and plan\n2. A single bash code block with your command\n\nFormat your responses like this:\n\n<format_example>\nTHOUGHT: Here I explain my reasoning process, analysis of the current situation,\nand what I'm trying to accomplish with the command below.\n\n```bash\nyour_command_here\n```\n</format_example>\n\nCommands must be specified in a single bash code block:\n\n```bash\nyour_command_here\n```\n\n**CRITICAL REQUIREMENTS:**\n- Your response SHOULD include a THOUGHT section explaining your reasoning\n- Your response MUST include EXACTLY ONE bash code block\n- This bash block MUST contain EXACTLY ONE command (or a set of commands connected with && or ||)\n- If you include zero or multiple bash blocks, or no command at all, YOUR RESPONSE WILL FAIL\n- Do NOT try to run multiple independent commands in separate blocks in one response\n- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.\n- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files\n\nExample of a CORRECT response:\n<example_response>\nTHOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.\n\n```bash\nls -la\n```\n</example_response>\n\nExample of an INCORRECT response:\n<example_response>\nTHOUGHT: I need to examine the codebase and then look at a specific file. I'll run multiple commands to do this.\n\n```bash\nls -la\n```\n\nNow I'll read the file:\n\n```bash\ncat file.txt\n```\n</example_response>\n\nIf you need to run multiple commands, either:\n1. Combine them in one block using && or ||\n```bash\ncommand1 && command2 || echo \"Error occurred\"\n```\n\n2. Wait for the first command to complete, see its output, then issue the next command in your following response.\n\n## Environment Details\n- You have a full Linux shell environment\n- Always use non-interactive flags (-y, -f) for commands\n- Avoid interactive tools like vi, nano, or any that require user input\n- If a command isn't available, you can install it\n\n## Useful Command Examples\n\n### Create a new file:\n```bash\ncat <<'EOF' > newfile.py\nimport numpy as np\nhello = \"world\"\nprint(hello)\nEOF\n```\n\n### Edit files with sed:\n```bash\n# Replace all occurrences\nsed -i 's/old_string/new_string/g' filename.py\n\n# Replace only first occurrence\nsed -i 's/old_string/new_string/' filename.py\n\n# Replace first occurrence on line 1\nsed -i '1s/old_string/new_string/' filename.py\n\n# Replace all occurrences in lines 1-10\nsed -i '1,10s/old_string/new_string/g' filename.py\n```\n\n### View file content:\n```bash\n# View specific lines with numbers\nnl -ba filename.py | sed -n '10,20p'\n```\n\n### Any other command you want to run\n```bash\nanything\n```\n\n## Submission\nWhen you've completed your work (reading, editing, testing), and cannot make further progress\nissue exactly the following command:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```\n\nThis command will submit your work.\nYou cannot continue working (reading, editing, testing) in any way on this task after submitting.\n</instructions>\n",
+        "timeout_template": "The last command <command>{{action['action']}}</command> timed out and has been killed.\nThe output of the command was:\n <output>\n{{output}}\n</output>\nPlease try another command and make sure to avoid those requiring interactive input.",
+        "format_error_template": "Please always provide EXACTLY ONE action in triple backticks, found {{actions|length}} actions.\n\nPlease format your action in triple backticks as shown in <response_example>.\n\n<response_example>\nHere are some thoughts about why you want to perform the action.\n\n```bash\n<action>\n```\n</response_example>\n\nIf you have completed your assignment, please consult the first message about how to\nsubmit your solution (you will not be able to continue working on this task after that).\n",
+        "action_observation_template": "<returncode>{{output.returncode}}</returncode>\n{% if output.output | length < 10000 -%}\n<output>\n{{ output.output -}}\n</output>\n{%- else -%}\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning>\n{%- set elided_chars = output.output | length - 10000 -%}\n<output_head>\n{{ output.output[:5000] }}\n</output_head>\n<elided_chars>\n{{ elided_chars }} characters elided\n</elided_chars>\n<output_tail>\n{{ output.output[-5000:] }}\n</output_tail>\n{%- endif -%}\n",
+        "step_limit": 250,
+        "cost_limit": 3.0
+      },
+      "model": {
+        "model_name": "claude-sonnet-4-5-20250929",
+        "model_kwargs": {
+          "drop_params": true,
+          "temperature": 0.0
+        },
+        "litellm_model_registry": null,
+        "set_cache_control": "default_end",
+        "cost_tracking": "ignore_errors"
+      },
+      "environment": {
+        "image": "docker.io/swebench/sweb.eval.x86_64.astropy_1776_astropy-14182:latest",
+        "cwd": "/testbed",
+        "env": {
+          "PAGER": "cat",
+          "MANPAGER": "cat",
+          "LESS": "-R",
+          "PIP_PROGRESS_BAR": "off",
+          "TQDM_DISABLE": "1"
+        },
+        "forward_env": [],
+        "timeout": 60,
+        "executable": "docker",
+        "run_args": [
+          "--rm"
+        ],
+        "container_timeout": "2h",
+        "pull_timeout": 3600
+      },
+      "agent_type": "minisweagent.run.extra.swebench.ProgressTrackingAgent",
+      "model_type": "minisweagent.models.litellm_model.LitellmModel",
+      "environment_type": "minisweagent.environments.docker.DockerEnvironment"
+    }
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).\n\nInclude a THOUGHT section before your command where you explain your reasoning process.\nFormat your response as shown in <format_example>.\n\n<format_example>\nTHOUGHT: Your reasoning and analysis here\n\n```bash\nyour_command_here\n```\n</format_example>\n\nFailure to follow these rules will cause your response to be rejected."
+    },
+    {
+      "role": "user",
+      "content": "<pr_description>\nConsider the following PR description:\nPlease support header rows in RestructuredText output\n### Description\r\n\r\nIt would be great if the following would work:\r\n\r\n```Python\r\n>>> from astropy.table import QTable\r\n>>> import astropy.units as u\r\n>>> import sys\r\n>>> tbl = QTable({'wave': [350,950]*u.nm, 'response': [0.7, 1.2]*u.count})\r\n>>> tbl.write(sys.stdout,  format=\"ascii.rst\")\r\n===== ========\r\n wave response\r\n===== ========\r\n350.0      0.7\r\n950.0      1.2\r\n===== ========\r\n>>> tbl.write(sys.stdout,  format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\r\n|  wave | response |\r\n|    nm |       ct |\r\n| 350.0 |      0.7 |\r\n| 950.0 |      1.2 |\r\n>>> tbl.write(sys.stdout,  format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/usr/lib/python3/dist-packages/astropy/table/connect.py\", line 129, in __call__\r\n    self.registry.write(instance, *args, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/registry/core.py\", line 369, in write\r\n    return writer(data, *args, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/connect.py\", line 26, in io_write\r\n    return write(table, filename, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/ui.py\", line 856, in write\r\n    writer = get_writer(Writer=Writer, fast_writer=fast_writer, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/ui.py\", line 800, in get_writer\r\n    writer = core._get_writer(Writer, fast_writer, **kwargs)\r\n  File \"/usr/lib/python3/dist-packages/astropy/io/ascii/core.py\", line 1719, in _get_writer\r\n    writer = Writer(**writer_kwargs)\r\nTypeError: RST.__init__() got an unexpected keyword argument 'header_rows'\r\n```\r\n\r\n\r\n### Additional context\r\n\r\nRestructuredText output is a great way to fill autogenerated documentation with content, so having this flexible makes the life easier `:-)`\r\n\r\n\n\n</pr_description>\n\n<instructions>\n# Task Instructions\n\n## Overview\nYou're a software engineer interacting continuously with a computer by submitting commands.\nYou'll be helping implement necessary changes to meet requirements in the PR description.\nYour task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.\n\nIMPORTANT: This is an interactive process where you will think and issue ONE command, see its result, then think and issue your next command.\n\nFor each response:\n1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish\n2. Provide exactly ONE bash command to execute\n\n## Important Boundaries\n- MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)\n- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)\n\n## Recommended Workflow\n1. Analyze the codebase by finding and reading relevant files\n2. Create a script to reproduce the issue\n3. Edit the source code to resolve the issue\n4. Verify your fix works by running your script again\n5. Test edge cases to ensure your fix is robust\n\n## Command Execution Rules\nYou are operating in an environment where\n1. You write a single command\n2. The system executes that command in a subshell\n3. You see the result\n4. You write your next command\n\nEach response should include:\n1. A **THOUGHT** section where you explain your reasoning and plan\n2. A single bash code block with your command\n\nFormat your responses like this:\n\n<format_example>\nTHOUGHT: Here I explain my reasoning process, analysis of the current situation,\nand what I'm trying to accomplish with the command below.\n\n```bash\nyour_command_here\n```\n</format_example>\n\nCommands must be specified in a single bash code block:\n\n```bash\nyour_command_here\n```\n\n**CRITICAL REQUIREMENTS:**\n- Your response SHOULD include a THOUGHT section explaining your reasoning\n- Your response MUST include EXACTLY ONE bash code block\n- This bash block MUST contain EXACTLY ONE command (or a set of commands connected with && or ||)\n- If you include zero or multiple bash blocks, or no command at all, YOUR RESPONSE WILL FAIL\n- Do NOT try to run multiple independent commands in separate blocks in one response\n- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.\n- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files\n\nExample of a CORRECT response:\n<example_response>\nTHOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.\n\n```bash\nls -la\n```\n</example_response>\n\nExample of an INCORRECT response:\n<example_response>\nTHOUGHT: I need to examine the codebase and then look at a specific file. I'll run multiple commands to do this.\n\n```bash\nls -la\n```\n\nNow I'll read the file:\n\n```bash\ncat file.txt\n```\n</example_response>\n\nIf you need to run multiple commands, either:\n1. Combine them in one block using && or ||\n```bash\ncommand1 && command2 || echo \"Error occurred\"\n```\n\n2. Wait for the first command to complete, see its output, then issue the next command in your following response.\n\n## Environment Details\n- You have a full Linux shell environment\n- Always use non-interactive flags (-y, -f) for commands\n- Avoid interactive tools like vi, nano, or any that require user input\n- If a command isn't available, you can install it\n\n## Useful Command Examples\n\n### Create a new file:\n```bash\ncat <<'EOF' > newfile.py\nimport numpy as np\nhello = \"world\"\nprint(hello)\nEOF\n```\n\n### Edit files with sed:\n```bash\n# Replace all occurrences\nsed -i 's/old_string/new_string/g' filename.py\n\n# Replace only first occurrence\nsed -i 's/old_string/new_string/' filename.py\n\n# Replace first occurrence on line 1\nsed -i '1s/old_string/new_string/' filename.py\n\n# Replace all occurrences in lines 1-10\nsed -i '1,10s/old_string/new_string/g' filename.py\n```\n\n### View file content:\n```bash\n# View specific lines with numbers\nnl -ba filename.py | sed -n '10,20p'\n```\n\n### Any other command you want to run\n```bash\nanything\n```\n\n## Submission\nWhen you've completed your work (reading, editing, testing), and cannot make further progress\nissue exactly the following command:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```\n\nThis command will submit your work.\nYou cannot continue working (reading, editing, testing) in any way on this task after submitting.\n</instructions>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Let me start by understanding the codebase structure and finding the relevant files related to the RST (RestructuredText) output format in astropy. The error message mentions `/usr/lib/python3/dist-packages/astropy/io/ascii/core.py` and the RST class, so I should look for the RST class implementation.\n\n```bash\nfind /testbed -type f -name \"*.py\" | xargs grep -l \"class RST\" 2>/dev/null | head -20\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-97586f24-01dc-45b9-9b4b-03963b2147f0",
+          "created": 1763903318,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Let me start by understanding the codebase structure and finding the relevant files related to the RST (RestructuredText) output format in astropy. The error message mentions `/usr/lib/python3/dist-packages/astropy/io/ascii/core.py` and the RST class, so I should look for the RST class implementation.\n\n```bash\nfind /testbed -type f -name \"*.py\" | xargs grep -l \"class RST\" 2>/dev/null | head -20\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 122,
+            "prompt_tokens": 1959,
+            "total_tokens": 2081,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 0,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 0,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n/testbed/astropy/io/ascii/rst.py\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Found the RST class in `/testbed/astropy/io/ascii/rst.py`. Let me examine this file to understand its current implementation.\n\n```bash\ncat /testbed/astropy/io/ascii/rst.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-c605c4d0-2a5a-4cdc-bfb6-77f90bce1755",
+          "created": 1763903325,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Found the RST class in `/testbed/astropy/io/ascii/rst.py`. Let me examine this file to understand its current implementation.\n\n```bash\ncat /testbed/astropy/io/ascii/rst.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 59,
+            "prompt_tokens": 2116,
+            "total_tokens": 2175,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 0,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 0,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n# Licensed under a 3-clause BSD style license\n\"\"\"\n:Author: Simon Gibbons (simongibbons@gmail.com)\n\"\"\"\n\n\nfrom .core import DefaultSplitter\nfrom .fixedwidth import (\n    FixedWidth,\n    FixedWidthData,\n    FixedWidthHeader,\n    FixedWidthTwoLineDataSplitter,\n)\n\n\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass RST(FixedWidth):\n    \"\"\"reStructuredText simple format table.\n\n    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional\n    line of dashes in the header.\n\n    \"\"\"\n\n    _format_name = \"rst\"\n    _description = \"reStructuredText simple table\"\n    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self):\n        super().__init__(delimiter_pad=None, bookend=False)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        lines = [lines[1]] + lines + [lines[1]]\n        return lines\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I need to understand how the `FixedWidth` class handles `header_rows` since the PR description mentions that `ascii.fixed_width` already supports `header_rows`. Let me look at the FixedWidth class implementation.\n\n```bash\ncat /testbed/astropy/io/ascii/fixedwidth.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-043c4acd-3d87-41a0-8fc5-99f280773ad2",
+          "created": 1763903329,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I need to understand how the `FixedWidth` class handles `header_rows` since the PR description mentions that `ascii.fixed_width` already supports `header_rows`. Let me look at the FixedWidth class implementation.\n\n```bash\ncat /testbed/astropy/io/ascii/fixedwidth.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 81,
+            "prompt_tokens": 2712,
+            "total_tokens": 2793,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 0,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 0,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning><output_head>\n# Licensed under a 3-clause BSD style license - see LICENSE.rst\n\"\"\"An extensible ASCII table reader and writer.\n\nfixedwidth.py:\n  Read or write a table with fixed width columns.\n\n:Copyright: Smithsonian Astrophysical Observatory (2011)\n:Author: Tom Aldcroft (aldcroft@head.cfa.harvard.edu)\n\"\"\"\n\n\nfrom . import basic, core\nfrom .core import DefaultSplitter, InconsistentTableError\n\n\nclass FixedWidthSplitter(core.BaseSplitter):\n    \"\"\"\n    Split line based on fixed start and end positions for each ``col`` in\n    ``self.cols``.\n\n    This class requires that the Header class will have defined ``col.start``\n    and ``col.end`` for each column.  The reference to the ``header.cols`` gets\n    put in the splitter object by the base Reader.read() function just in time\n    for splitting data lines by a ``data`` object.\n\n    Note that the ``start`` and ``end`` positions are defined in the pythonic\n    style so line[start:end] is the desired substring for a column.  This splitter\n    class does not have a hook for ``process_lines`` since that is generally not\n    useful for fixed-width input.\n\n    \"\"\"\n\n    delimiter_pad = \"\"\n    bookend = False\n    delimiter = \"|\"\n\n    def __call__(self, lines):\n        for line in lines:\n            vals = [line[x.start : x.end] for x in self.cols]\n            if self.process_val:\n                yield [self.process_val(x) for x in vals]\n            else:\n                yield vals\n\n    def join(self, vals, widths):\n        pad = self.delimiter_pad or \"\"\n        delimiter = self.delimiter or \"\"\n        padded_delim = pad + delimiter + pad\n        if self.bookend:\n            bookend_left = delimiter + pad\n            bookend_right = pad + delimiter\n        else:\n            bookend_left = \"\"\n            bookend_right = \"\"\n        vals = [\" \" * (width - len(val)) + val for val, width in zip(vals, widths)]\n        return bookend_left + padded_delim.join(vals) + bookend_right\n\n\nclass FixedWidthHeaderSplitter(DefaultSplitter):\n    \"\"\"Splitter class that splits on ``|``.\"\"\"\n\n    delimiter = \"|\"\n\n\nclass FixedWidthHeader(basic.BasicHeader):\n    \"\"\"\n    Fixed width table header reader.\n    \"\"\"\n\n    splitter_class = FixedWidthHeaderSplitter\n    \"\"\" Splitter class for splitting data lines into columns \"\"\"\n    position_line = None  # secondary header line position\n    \"\"\" row index of line that specifies position (default = 1) \"\"\"\n    set_of_position_line_characters = set(r'`~!#$%^&*-_+=\\|\":' + \"'\")\n\n    def get_line(self, lines, index):\n        for i, line in enumerate(self.process_lines(lines)):\n            if i == index:\n                break\n        else:  # No header line matching\n            raise InconsistentTableError(\"No header line found in table\")\n        return line\n\n    def get_cols(self, lines):\n        \"\"\"\n        Initialize the header Column objects from the table ``lines``.\n\n        Based on the previously set Header attributes find or create the column names.\n        Sets ``self.cols`` with the list of Columns.\n\n        Parameters\n        ----------\n        lines : list\n            List of table lines\n\n        \"\"\"\n        header_rows = getattr(self, \"header_rows\", [\"name\"])\n\n        # See \"else\" clause below for explanation of start_line and position_line\n        start_line = core._get_line_index(self.start_line, self.process_lines(lines))\n        position_line = core._get_line_index(\n            self.position_line, self.process_lines(lines)\n        )\n\n        # If start_line is none then there is no header line.  Column positions are\n        # determined from first data line and column names are either supplied by user\n        # or auto-generated.\n        if start_line is None:\n            if position_line is not None:\n                raise ValueError(\n                    \"Cannot set position_line without also setting header_start\"\n                )\n\n            # data.data_lines attribute already set via self.data.get_data_lines(lines)\n            # in BaseReader.read().  This includes slicing for data_start / data_end.\n            data_lines = self.data.data_lines\n\n            if not data_lines:\n                raise InconsistentTableError(\n                    \"No data lines found so cannot autogenerate column names\"\n                )\n            vals, starts, ends = self.get_fixedwidth_params(data_lines[0])\n\n            self.names = [self.auto_format.format(i) for i in range(1, len(vals) + 1)]\n\n        else:\n            # This bit of code handles two cases:\n            # start_line = <index> and position_line = None\n            #    Single header line where that line is used to determine both the\n            #    column positions and names.\n            # start_line = <index> and position_line = <index2>\n            #    Two header lines where the first line defines the column names and\n            #    the second line defines the column positions\n\n            if position_line is not None:\n                # Define self.col_starts and self.col_ends so that the call to\n           \n</output_head>\n<elided_chars>\n7386 characters elided\n</elided_chars>\n<output_tail>\n     # Bar delimiter in header only\n\n      Col1 |   Col2      | Col3\n      1.2    hello there    3\n      2.4    many words     7\n\n      # No delimiter with column positions specified as input\n\n      Col1       Col2Col3\n       1.2hello there   3\n       2.4many words    7\n\n    See the :ref:`astropy:fixed_width_gallery` for specific usage examples.\n\n    \"\"\"\n\n    _format_name = \"fixed_width\"\n    _description = \"Fixed width\"\n\n    header_class = FixedWidthHeader\n    data_class = FixedWidthData\n\n    def __init__(\n        self,\n        col_starts=None,\n        col_ends=None,\n        delimiter_pad=\" \",\n        bookend=True,\n        header_rows=None,\n    ):\n        if header_rows is None:\n            header_rows = [\"name\"]\n        super().__init__()\n        self.data.splitter.delimiter_pad = delimiter_pad\n        self.data.splitter.bookend = bookend\n        self.header.col_starts = col_starts\n        self.header.col_ends = col_ends\n        self.header.header_rows = header_rows\n        self.data.header_rows = header_rows\n        if self.data.start_line is None:\n            self.data.start_line = len(header_rows)\n\n\nclass FixedWidthNoHeaderHeader(FixedWidthHeader):\n    \"\"\"Header reader for fixed with tables with no header line\"\"\"\n\n    start_line = None\n\n\nclass FixedWidthNoHeaderData(FixedWidthData):\n    \"\"\"Data reader for fixed width tables with no header line\"\"\"\n\n    start_line = 0\n\n\nclass FixedWidthNoHeader(FixedWidth):\n    \"\"\"Fixed width table which has no header line.\n\n    When reading, column names are either input (``names`` keyword) or\n    auto-generated.  Column positions are determined either by input\n    (``col_starts`` and ``col_stops`` keywords) or by splitting the first data\n    line.  In the latter case a ``delimiter`` is required to split the data\n    line.\n\n    Examples::\n\n      # Bar delimiter in header and data\n\n      |  1.2  | hello there |     3 |\n      |  2.4  | many words  |     7 |\n\n      # Compact table having no delimiter and column positions specified as input\n\n      1.2hello there3\n      2.4many words 7\n\n    This class is just a convenience wrapper around the ``FixedWidth`` reader\n    but with ``header_start=None`` and ``data_start=0``.\n\n    See the :ref:`astropy:fixed_width_gallery` for specific usage examples.\n\n    \"\"\"\n\n    _format_name = \"fixed_width_no_header\"\n    _description = \"Fixed width with no header\"\n    header_class = FixedWidthNoHeaderHeader\n    data_class = FixedWidthNoHeaderData\n\n    def __init__(self, col_starts=None, col_ends=None, delimiter_pad=\" \", bookend=True):\n        super().__init__(\n            col_starts,\n            col_ends,\n            delimiter_pad=delimiter_pad,\n            bookend=bookend,\n            header_rows=[],\n        )\n\n\nclass FixedWidthTwoLineHeader(FixedWidthHeader):\n    \"\"\"Header reader for fixed width tables splitting on whitespace.\n\n    For fixed width tables with several header lines, there is typically\n    a white-space delimited format line, so splitting on white space is\n    needed.\n    \"\"\"\n\n    splitter_class = DefaultSplitter\n\n\nclass FixedWidthTwoLineDataSplitter(FixedWidthSplitter):\n    \"\"\"Splitter for fixed width tables splitting on ``' '``.\"\"\"\n\n    delimiter = \" \"\n\n\nclass FixedWidthTwoLineData(FixedWidthData):\n    \"\"\"Data reader for fixed with tables with two header lines.\"\"\"\n\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass FixedWidthTwoLine(FixedWidth):\n    \"\"\"Fixed width table which has two header lines.\n\n    The first header line defines the column names and the second implicitly\n    defines the column positions.\n\n    Examples::\n\n      # Typical case with column extent defined by ---- under column names.\n\n       col1    col2         <== header_start = 0\n      -----  ------------   <== position_line = 1, position_char = \"-\"\n        1     bee flies     <== data_start = 2\n        2     fish swims\n\n      # Pretty-printed table\n\n      +------+------------+\n      | Col1 |   Col2     |\n      +------+------------+\n      |  1.2 | \"hello\"    |\n      |  2.4 | there world|\n      +------+------------+\n\n    See the :ref:`astropy:fixed_width_gallery` for specific usage examples.\n\n    \"\"\"\n\n    _format_name = \"fixed_width_two_line\"\n    _description = \"Fixed width with second header line\"\n    data_class = FixedWidthTwoLineData\n    header_class = FixedWidthTwoLineHeader\n\n    def __init__(\n        self,\n        position_line=None,\n        position_char=\"-\",\n        delimiter_pad=None,\n        bookend=False,\n        header_rows=None,\n    ):\n        if len(position_char) != 1:\n            raise ValueError(\n                f'Position_char=\"{position_char}\" must be a single character'\n            )\n        super().__init__(\n            delimiter_pad=delimiter_pad, bookend=bookend, header_rows=header_rows\n        )\n        if position_line is None:\n            position_line = len(self.header.header_rows)\n        self.header.position_line = position_line\n        self.header.position_char = position_char\n        self.data.start_line = position_line + 1\n\n</output_tail>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I understand the structure. The `FixedWidth` class accepts `header_rows` in its `__init__` method and passes it to both `self.header.header_rows` and `self.data.header_rows`. The `RST` class inherits from `FixedWidth` but its `__init__` method doesn't accept or pass `header_rows`. Let me look at how the header rows are used in the writing process to understand what needs to be modified.\n\n```bash\ngrep -n \"header_rows\" /testbed/astropy/io/ascii/fixedwidth.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-4a1b4108-5556-4798-9162-c9d182286aff",
+          "created": 1763903334,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I understand the structure. The `FixedWidth` class accepts `header_rows` in its `__init__` method and passes it to both `self.header.header_rows` and `self.data.header_rows`. The `RST` class inherits from `FixedWidth` but its `__init__` method doesn't accept or pass `header_rows`. Let me look at how the header rows are used in the writing process to understand what needs to be modified.\n\n```bash\ngrep -n \"header_rows\" /testbed/astropy/io/ascii/fixedwidth.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 143,
+            "prompt_tokens": 5731,
+            "total_tokens": 5874,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 0,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 5728,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 5728,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 5728,
+            "cache_read_input_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n97:        header_rows = getattr(self, \"header_rows\", [\"name\"])\n163:            line = self.get_line(lines, start_line + header_rows.index(\"name\"))\n168:        for ii, attr in enumerate(header_rows):\n262:        default_header_rows = [] if self.header.start_line is None else [\"name\"]\n263:        header_rows = getattr(self, \"header_rows\", default_header_rows)\n273:        for col_attr in header_rows:\n345:        header_rows=None,\n347:        if header_rows is None:\n348:            header_rows = [\"name\"]\n354:        self.header.header_rows = header_rows\n355:        self.data.header_rows = header_rows\n357:            self.data.start_line = len(header_rows)\n411:            header_rows=[],\n477:        header_rows=None,\n484:            delimiter_pad=delimiter_pad, bookend=bookend, header_rows=header_rows\n487:            position_line = len(self.header.header_rows)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I understand the pattern. The `FixedWidth.__init__` method accepts `header_rows` and sets it on both `self.header.header_rows` and `self.data.header_rows`. The `RST` class needs to be modified to also accept and pass `header_rows`. Let me look at the current RST `__init__` method again and understand what changes are needed.\n\n```bash\nnl -ba /testbed/astropy/io/ascii/rst.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-bc7905cc-b76a-4941-a943-2ef29aa86f85",
+          "created": 1763903343,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I understand the pattern. The `FixedWidth.__init__` method accepts `header_rows` and sets it on both `self.header.header_rows` and `self.data.header_rows`. The `RST` class needs to be modified to also accept and pass `header_rows`. Let me look at the current RST `__init__` method again and understand what changes are needed.\n\n```bash\nnl -ba /testbed/astropy/io/ascii/rst.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 118,
+            "prompt_tokens": 6160,
+            "total_tokens": 6278,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 5728,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 429,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 429,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 429,
+            "cache_read_input_tokens": 5728
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n     1\t# Licensed under a 3-clause BSD style license\n     2\t\"\"\"\n     3\t:Author: Simon Gibbons (simongibbons@gmail.com)\n     4\t\"\"\"\n     5\t\n     6\t\n     7\tfrom .core import DefaultSplitter\n     8\tfrom .fixedwidth import (\n     9\t    FixedWidth,\n    10\t    FixedWidthData,\n    11\t    FixedWidthHeader,\n    12\t    FixedWidthTwoLineDataSplitter,\n    13\t)\n    14\t\n    15\t\n    16\tclass SimpleRSTHeader(FixedWidthHeader):\n    17\t    position_line = 0\n    18\t    start_line = 1\n    19\t    splitter_class = DefaultSplitter\n    20\t    position_char = \"=\"\n    21\t\n    22\t    def get_fixedwidth_params(self, line):\n    23\t        vals, starts, ends = super().get_fixedwidth_params(line)\n    24\t        # The right hand column can be unbounded\n    25\t        ends[-1] = None\n    26\t        return vals, starts, ends\n    27\t\n    28\t\n    29\tclass SimpleRSTData(FixedWidthData):\n    30\t    start_line = 3\n    31\t    end_line = -1\n    32\t    splitter_class = FixedWidthTwoLineDataSplitter\n    33\t\n    34\t\n    35\tclass RST(FixedWidth):\n    36\t    \"\"\"reStructuredText simple format table.\n    37\t\n    38\t    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n    39\t\n    40\t    Example::\n    41\t\n    42\t        ==== ===== ======\n    43\t        Col1  Col2  Col3\n    44\t        ==== ===== ======\n    45\t          1    2.3  Hello\n    46\t          2    4.5  Worlds\n    47\t        ==== ===== ======\n    48\t\n    49\t    Currently there is no support for reading tables which utilize continuation lines,\n    50\t    or for ones which define column spans through the use of an additional\n    51\t    line of dashes in the header.\n    52\t\n    53\t    \"\"\"\n    54\t\n    55\t    _format_name = \"rst\"\n    56\t    _description = \"reStructuredText simple table\"\n    57\t    data_class = SimpleRSTData\n    58\t    header_class = SimpleRSTHeader\n    59\t\n    60\t    def __init__(self):\n    61\t        super().__init__(delimiter_pad=None, bookend=False)\n    62\t\n    63\t    def write(self, lines):\n    64\t        lines = super().write(lines)\n    65\t        lines = [lines[1]] + lines + [lines[1]]\n    66\t        return lines\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I understand the issue. The `RST.__init__` method doesn't accept `header_rows` parameter, so when users try to pass it, they get the error. I need to modify the `RST` class to:\n\n1. Accept `header_rows` parameter in `__init__`\n2. Pass it to the parent `FixedWidth.__init__` method\n\nLet me also check how `FixedWidthTwoLine` handles this since it's similar (it also has a position line like RST):\n\n```bash\nsed -n '470,490p' /testbed/astropy/io/ascii/fixedwidth.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-24fb5eee-49b2-4f39-b96d-6c039aacbbb2",
+          "created": 1763903349,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I understand the issue. The `RST.__init__` method doesn't accept `header_rows` parameter, so when users try to pass it, they get the error. I need to modify the `RST` class to:\n\n1. Accept `header_rows` parameter in `__init__`\n2. Pass it to the parent `FixedWidth.__init__` method\n\nLet me also check how `FixedWidthTwoLine` handles this since it's similar (it also has a position line like RST):\n\n```bash\nsed -n '470,490p' /testbed/astropy/io/ascii/fixedwidth.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 154,
+            "prompt_tokens": 7030,
+            "total_tokens": 7184,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 6157,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 870,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 870,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 870,
+            "cache_read_input_tokens": 6157
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n\n    def __init__(\n        self,\n        position_line=None,\n        position_char=\"-\",\n        delimiter_pad=None,\n        bookend=False,\n        header_rows=None,\n    ):\n        if len(position_char) != 1:\n            raise ValueError(\n                f'Position_char=\"{position_char}\" must be a single character'\n            )\n        super().__init__(\n            delimiter_pad=delimiter_pad, bookend=bookend, header_rows=header_rows\n        )\n        if position_line is None:\n            position_line = len(self.header.header_rows)\n        self.header.position_line = position_line\n        self.header.position_char = position_char\n        self.data.start_line = position_line + 1\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I see how `FixedWidthTwoLine` handles `header_rows`. It passes it to the parent `FixedWidth.__init__` and then adjusts `position_line` and `data.start_line` based on the number of header rows.\n\nFor the RST class, I need to:\n1. Accept `header_rows` parameter in `__init__`\n2. Pass it to the parent `FixedWidth.__init__` method\n3. Adjust the `position_line` and `data.start_line` based on the number of header rows (similar to `FixedWidthTwoLine`)\n\nLet me first create a test script to reproduce the issue:\n\n```bash\ncat <<'EOF' > /testbed/test_rst_header_rows.py\nimport sys\nfrom astropy.table import QTable\nimport astropy.units as u\n\n# Create a test table\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"Test 1: Basic RST output (should work)\")\ntbl.write(sys.stdout, format=\"ascii.rst\")\nprint()\n\nprint(\"Test 2: Fixed width with header_rows (should work)\")\ntbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\nprint()\n\nprint(\"Test 3: RST with header_rows (currently fails)\")\ntry:\n    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\nexcept TypeError as e:\n    print(f\"Error: {e}\")\nEOF\npython /testbed/test_rst_header_rows.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-585dcf01-8930-4eb6-b53c-72fa44725a13",
+          "created": 1763903358,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I see how `FixedWidthTwoLine` handles `header_rows`. It passes it to the parent `FixedWidth.__init__` and then adjusts `position_line` and `data.start_line` based on the number of header rows.\n\nFor the RST class, I need to:\n1. Accept `header_rows` parameter in `__init__`\n2. Pass it to the parent `FixedWidth.__init__` method\n3. Adjust the `position_line` and `data.start_line` based on the number of header rows (similar to `FixedWidthTwoLine`)\n\nLet me first create a test script to reproduce the issue:\n\n```bash\ncat <<'EOF' > /testbed/test_rst_header_rows.py\nimport sys\nfrom astropy.table import QTable\nimport astropy.units as u\n\n# Create a test table\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"Test 1: Basic RST output (should work)\")\ntbl.write(sys.stdout, format=\"ascii.rst\")\nprint()\n\nprint(\"Test 2: Fixed width with header_rows (should work)\")\ntbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\nprint()\n\nprint(\"Test 3: RST with header_rows (currently fails)\")\ntry:\n    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\nexcept TypeError as e:\n    print(f\"Error: {e}\")\nEOF\npython /testbed/test_rst_header_rows.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 413,
+            "prompt_tokens": 7396,
+            "total_tokens": 7809,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 7027,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 366,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 366,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 366,
+            "cache_read_input_tokens": 7027
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nTest 1: Basic RST output (should work)\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\nTest 2: Fixed width with header_rows (should work)\n|  wave | response |\n|    nm |       ct |\n| 350.0 |      0.7 |\n| 950.0 |      1.2 |\n\nTest 3: RST with header_rows (currently fails)\nError: __init__() got an unexpected keyword argument 'header_rows'\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I've confirmed the issue. Now let me modify the RST class to accept and handle `header_rows`. I need to:\n\n1. Add `header_rows` parameter to `RST.__init__`\n2. Pass it to the parent class\n3. Adjust `position_line` and `data.start_line` based on the number of header rows\n\nLet me look at how the RST class currently sets up the header and data classes:\n\n```bash\nsed -n '16,33p' /testbed/astropy/io/ascii/rst.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-5cea0d1e-2fa7-4336-aa6f-10b0cd02dd51",
+          "created": 1763903364,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I've confirmed the issue. Now let me modify the RST class to accept and handle `header_rows`. I need to:\n\n1. Add `header_rows` parameter to `RST.__init__`\n2. Pass it to the parent class\n3. Adjust `position_line` and `data.start_line` based on the number of header rows\n\nLet me look at how the RST class currently sets up the header and data classes:\n\n```bash\nsed -n '16,33p' /testbed/astropy/io/ascii/rst.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 133,
+            "prompt_tokens": 7968,
+            "total_tokens": 8101,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 7393,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 572,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 572,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 572,
+            "cache_read_input_tokens": 7393
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I see that `SimpleRSTHeader` has `position_line = 0` and `start_line = 1`, and `SimpleRSTData` has `start_line = 3`. These are the default values for a single header row (name only).\n\nFor RST format:\n- Line 0: `==== =====` (position line with `=` characters)\n- Line 1: `Col1 Col2` (header name)\n- Line 2: `==== =====` (separator)\n- Line 3+: data\n\nWhen we have multiple header rows (e.g., [\"name\", \"unit\"]):\n- Line 0: `==== =====` (position line)\n- Line 1: `Col1 Col2` (header name)\n- Line 2: `nm   ct` (header unit)\n- Line 3: `==== =====` (separator)\n- Line 4+: data\n\nSo I need to adjust:\n- `position_line` stays at 0 (the `=` line is always first)\n- `start_line` stays at 1 (header content starts after position line)\n- `data.start_line` needs to be `2 + len(header_rows)` (after position line, header rows, and separator)\n\nLet me now modify the RST class:\n\n```bash\ncat <<'EOF' > /testbed/astropy/io/ascii/rst.py\n# Licensed under a 3-clause BSD style license\n\"\"\"\n:Author: Simon Gibbons (simongibbons@gmail.com)\n\"\"\"\n\n\nfrom .core import DefaultSplitter\nfrom .fixedwidth import (\n    FixedWidth,\n    FixedWidthData,\n    FixedWidthHeader,\n    FixedWidthTwoLineDataSplitter,\n)\n\n\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass RST(FixedWidth):\n    \"\"\"reStructuredText simple format table.\n\n    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional\n    line of dashes in the header.\n\n    \"\"\"\n\n    _format_name = \"rst\"\n    _description = \"reStructuredText simple table\"\n    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self, header_rows=None):\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n        # Adjust data start line based on number of header rows\n        # RST format: position_line (=), header_rows, separator (=), data\n        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n        self.data.start_line = 2 + len(self.header.header_rows)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        lines = [lines[1]] + lines + [lines[1]]\n        return lines\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-49238a88-841c-4a04-982e-2134f1bb04e0",
+          "created": 1763903377,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I see that `SimpleRSTHeader` has `position_line = 0` and `start_line = 1`, and `SimpleRSTData` has `start_line = 3`. These are the default values for a single header row (name only).\n\nFor RST format:\n- Line 0: `==== =====` (position line with `=` characters)\n- Line 1: `Col1 Col2` (header name)\n- Line 2: `==== =====` (separator)\n- Line 3+: data\n\nWhen we have multiple header rows (e.g., [\"name\", \"unit\"]):\n- Line 0: `==== =====` (position line)\n- Line 1: `Col1 Col2` (header name)\n- Line 2: `nm   ct` (header unit)\n- Line 3: `==== =====` (separator)\n- Line 4+: data\n\nSo I need to adjust:\n- `position_line` stays at 0 (the `=` line is always first)\n- `start_line` stays at 1 (header content starts after position line)\n- `data.start_line` needs to be `2 + len(header_rows)` (after position line, header rows, and separator)\n\nLet me now modify the RST class:\n\n```bash\ncat <<'EOF' > /testbed/astropy/io/ascii/rst.py\n# Licensed under a 3-clause BSD style license\n\"\"\"\n:Author: Simon Gibbons (simongibbons@gmail.com)\n\"\"\"\n\n\nfrom .core import DefaultSplitter\nfrom .fixedwidth import (\n    FixedWidth,\n    FixedWidthData,\n    FixedWidthHeader,\n    FixedWidthTwoLineDataSplitter,\n)\n\n\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass RST(FixedWidth):\n    \"\"\"reStructuredText simple format table.\n\n    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional\n    line of dashes in the header.\n\n    \"\"\"\n\n    _format_name = \"rst\"\n    _description = \"reStructuredText simple table\"\n    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self, header_rows=None):\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n        # Adjust data start line based on number of header rows\n        # RST format: position_line (=), header_rows, separator (=), data\n        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n        self.data.start_line = 2 + len(self.header.header_rows)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        lines = [lines[1]] + lines + [lines[1]]\n        return lines\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 972,
+            "prompt_tokens": 8281,
+            "total_tokens": 9253,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 7965,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 313,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 313,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 313,
+            "cache_read_input_tokens": 7965
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now let me test if the fix works:\n\n```bash\npython /testbed/test_rst_header_rows.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-45b06392-4f58-4db3-a862-591d0c7fd743",
+          "created": 1763903383,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now let me test if the fix works:\n\n```bash\npython /testbed/test_rst_header_rows.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 35,
+            "prompt_tokens": 9273,
+            "total_tokens": 9308,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 8278,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 992,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 992,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 992,
+            "cache_read_input_tokens": 8278
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nTest 1: Basic RST output (should work)\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\nTest 2: Fixed width with header_rows (should work)\n|  wave | response |\n|    nm |       ct |\n| 350.0 |      0.7 |\n| 950.0 |      1.2 |\n\nTest 3: RST with header_rows (currently fails)\n   nm       ct\n wave response\n   nm       ct\n===== ========\n350.0      0.7\n950.0      1.2\n   nm       ct\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The error is gone, but the output is not correct. The RST format should have `=====` lines at the top and bottom, and the header rows should be between them. Let me look at how the `write` method works in the parent class to understand the output format better.\n\n```bash\ngrep -n \"def write\" /testbed/astropy/io/ascii/fixedwidth.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-16336a74-e8c5-4691-a438-cb2e3655fdee",
+          "created": 1763903390,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The error is gone, but the output is not correct. The RST format should have `=====` lines at the top and bottom, and the header rows should be between them. Let me look at how the `write` method works in the parent class to understand the output format better.\n\n```bash\ngrep -n \"def write\" /testbed/astropy/io/ascii/fixedwidth.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 95,
+            "prompt_tokens": 9489,
+            "total_tokens": 9584,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 9270,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 216,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 216,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 216,
+            "cache_read_input_tokens": 9270
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n246:    def write(self, lines):\n261:    def write(self, lines):\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Let me look at the write methods in the FixedWidth classes:\n\n```bash\nsed -n '246,290p' /testbed/astropy/io/ascii/fixedwidth.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-1bfe8dfe-ea51-4c84-b902-dfcfe26e3e2e",
+          "created": 1763903394,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Let me look at the write methods in the FixedWidth classes:\n\n```bash\nsed -n '246,290p' /testbed/astropy/io/ascii/fixedwidth.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 52,
+            "prompt_tokens": 9626,
+            "total_tokens": 9678,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 0,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 9623,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 9623,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 9623,
+            "cache_read_input_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n    def write(self, lines):\n        # Header line not written until data are formatted.  Until then it is\n        # not known how wide each column will be for fixed width.\n        pass\n\n\nclass FixedWidthData(basic.BasicData):\n    \"\"\"\n    Base table data reader.\n    \"\"\"\n\n    splitter_class = FixedWidthSplitter\n    \"\"\" Splitter class for splitting data lines into columns \"\"\"\n    start_line = None\n\n    def write(self, lines):\n        default_header_rows = [] if self.header.start_line is None else [\"name\"]\n        header_rows = getattr(self, \"header_rows\", default_header_rows)\n        # First part is getting the widths of each column.\n        # List (rows) of list (column values) for data lines\n        vals_list = []\n        col_str_iters = self.str_vals()\n        for vals in zip(*col_str_iters):\n            vals_list.append(vals)\n\n        # List (rows) of list (columns values) for header lines.\n        hdrs_list = []\n        for col_attr in header_rows:\n            vals = [\n                \"\" if (val := getattr(col.info, col_attr)) is None else str(val)\n                for col in self.cols\n            ]\n            hdrs_list.append(vals)\n\n        # Widths for data columns\n        widths = [\n            max(len(vals[i_col]) for vals in vals_list)\n            for i_col in range(len(self.cols))\n        ]\n        # Incorporate widths for header columns (if there are any)\n        if hdrs_list:\n            for i_col in range(len(self.cols)):\n                widths[i_col] = max(\n                    widths[i_col], max(len(vals[i_col]) for vals in hdrs_list)\n                )\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Let me see more of the write method and understand how the lines are constructed:\n\n```bash\nsed -n '261,320p' /testbed/astropy/io/ascii/fixedwidth.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-aed4baa6-4205-4e77-9432-15565a65bf33",
+          "created": 1763903399,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Let me see more of the write method and understand how the lines are constructed:\n\n```bash\nsed -n '261,320p' /testbed/astropy/io/ascii/fixedwidth.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 53,
+            "prompt_tokens": 10157,
+            "total_tokens": 10210,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 9623,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 531,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 531,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 531,
+            "cache_read_input_tokens": 9623
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n    def write(self, lines):\n        default_header_rows = [] if self.header.start_line is None else [\"name\"]\n        header_rows = getattr(self, \"header_rows\", default_header_rows)\n        # First part is getting the widths of each column.\n        # List (rows) of list (column values) for data lines\n        vals_list = []\n        col_str_iters = self.str_vals()\n        for vals in zip(*col_str_iters):\n            vals_list.append(vals)\n\n        # List (rows) of list (columns values) for header lines.\n        hdrs_list = []\n        for col_attr in header_rows:\n            vals = [\n                \"\" if (val := getattr(col.info, col_attr)) is None else str(val)\n                for col in self.cols\n            ]\n            hdrs_list.append(vals)\n\n        # Widths for data columns\n        widths = [\n            max(len(vals[i_col]) for vals in vals_list)\n            for i_col in range(len(self.cols))\n        ]\n        # Incorporate widths for header columns (if there are any)\n        if hdrs_list:\n            for i_col in range(len(self.cols)):\n                widths[i_col] = max(\n                    widths[i_col], max(len(vals[i_col]) for vals in hdrs_list)\n                )\n\n        # Now collect formatted header and data lines into the output lines\n        for vals in hdrs_list:\n            lines.append(self.splitter.join(vals, widths))\n\n        if self.header.position_line is not None:\n            vals = [self.header.position_char * width for width in widths]\n            lines.append(self.splitter.join(vals, widths))\n\n        for vals in vals_list:\n            lines.append(self.splitter.join(vals, widths))\n\n        return lines\n\n\nclass FixedWidth(basic.Basic):\n    \"\"\"Fixed width table with single header line defining column names and positions.\n\n    Examples::\n\n      # Bar delimiter in header and data\n\n      |  Col1 |   Col2      |  Col3 |\n      |  1.2  | hello there |     3 |\n      |  2.4  | many words  |     7 |\n\n      # Bar delimiter in header only\n\n      Col1 |   Col2      | Col3\n      1.2    hello there    3\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I understand the issue. The `FixedWidthData.write` method writes:\n1. Header rows (from `hdrs_list`)\n2. Position line (if `self.header.position_line is not None`)\n3. Data rows\n\nThen the `RST.write` method adds the position line at the beginning and end: `lines = [lines[1]] + lines + [lines[1]]`\n\nThe problem is that `lines[1]` is now the second header row (unit) instead of the position line. Let me trace through what happens:\n\nWith `header_rows=[\"name\", \"unit\"]`:\n- `lines[0]` = name header row\n- `lines[1]` = unit header row\n- `lines[2]` = position line (====)\n- `lines[3+]` = data rows\n\nSo the RST.write method should use the position line (which is at index `len(header_rows)`) instead of hardcoded `lines[1]`.\n\nLet me fix this:\n\n```bash\ncat <<'EOF' > /testbed/astropy/io/ascii/rst.py\n# Licensed under a 3-clause BSD style license\n\"\"\"\n:Author: Simon Gibbons (simongibbons@gmail.com)\n\"\"\"\n\n\nfrom .core import DefaultSplitter\nfrom .fixedwidth import (\n    FixedWidth,\n    FixedWidthData,\n    FixedWidthHeader,\n    FixedWidthTwoLineDataSplitter,\n)\n\n\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass RST(FixedWidth):\n    \"\"\"reStructuredText simple format table.\n\n    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional\n    line of dashes in the header.\n\n    \"\"\"\n\n    _format_name = \"rst\"\n    _description = \"reStructuredText simple table\"\n    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self, header_rows=None):\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n        # Adjust data start line based on number of header rows\n        # RST format: position_line (=), header_rows, separator (=), data\n        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n        self.data.start_line = 2 + len(self.header.header_rows)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        # The position line is at index len(header_rows) in the lines list\n        # (after all header rows and before data rows)\n        position_line_index = len(self.header.header_rows)\n        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]\n        return lines\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-9b0cebb6-c15c-494f-831d-3f376688c6ab",
+          "created": 1763903423,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I understand the issue. The `FixedWidthData.write` method writes:\n1. Header rows (from `hdrs_list`)\n2. Position line (if `self.header.position_line is not None`)\n3. Data rows\n\nThen the `RST.write` method adds the position line at the beginning and end: `lines = [lines[1]] + lines + [lines[1]]`\n\nThe problem is that `lines[1]` is now the second header row (unit) instead of the position line. Let me trace through what happens:\n\nWith `header_rows=[\"name\", \"unit\"]`:\n- `lines[0]` = name header row\n- `lines[1]` = unit header row\n- `lines[2]` = position line (====)\n- `lines[3+]` = data rows\n\nSo the RST.write method should use the position line (which is at index `len(header_rows)`) instead of hardcoded `lines[1]`.\n\nLet me fix this:\n\n```bash\ncat <<'EOF' > /testbed/astropy/io/ascii/rst.py\n# Licensed under a 3-clause BSD style license\n\"\"\"\n:Author: Simon Gibbons (simongibbons@gmail.com)\n\"\"\"\n\n\nfrom .core import DefaultSplitter\nfrom .fixedwidth import (\n    FixedWidth,\n    FixedWidthData,\n    FixedWidthHeader,\n    FixedWidthTwoLineDataSplitter,\n)\n\n\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass RST(FixedWidth):\n    \"\"\"reStructuredText simple format table.\n\n    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional\n    line of dashes in the header.\n\n    \"\"\"\n\n    _format_name = \"rst\"\n    _description = \"reStructuredText simple table\"\n    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self, header_rows=None):\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n        # Adjust data start line based on number of header rows\n        # RST format: position_line (=), header_rows, separator (=), data\n        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n        self.data.start_line = 2 + len(self.header.header_rows)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        # The position line is at index len(header_rows) in the lines list\n        # (after all header rows and before data rows)\n        position_line_index = len(self.header.header_rows)\n        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]\n        return lines\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 957,
+            "prompt_tokens": 10829,
+            "total_tokens": 11786,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 10154,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 672,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 672,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 672,
+            "cache_read_input_tokens": 10154
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now let me test the fix again:\n\n```bash\npython /testbed/test_rst_header_rows.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-3a2377a9-ad58-4421-a7ba-8ef5cbca177f",
+          "created": 1763903426,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now let me test the fix again:\n\n```bash\npython /testbed/test_rst_header_rows.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 34,
+            "prompt_tokens": 11806,
+            "total_tokens": 11840,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 10826,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 977,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 977,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 977,
+            "cache_read_input_tokens": 10826
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nTest 1: Basic RST output (should work)\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\nTest 2: Fixed width with header_rows (should work)\n|  wave | response |\n|    nm |       ct |\n| 350.0 |      0.7 |\n| 950.0 |      1.2 |\n\nTest 3: RST with header_rows (currently fails)\n===== ========\n wave response\n   nm       ct\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Great! The fix is working. Now the RST output with `header_rows=[\"name\", \"unit\"]` produces the correct format with the position lines (=====) at the top and bottom, and both header rows (name and unit) in between.\n\nLet me create a more comprehensive test to verify different scenarios:\n\n```bash\ncat <<'EOF' > /testbed/test_rst_comprehensive.py\nimport sys\nfrom astropy.table import QTable\nimport astropy.units as u\nfrom io import StringIO\n\n# Create a test table\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"=\" * 60)\nprint(\"Test 1: Basic RST output (default, only name)\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\")\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 2: RST with header_rows=['name']\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 3: RST with header_rows=['name', 'unit']\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 4: RST with header_rows=['unit', 'name'] (reversed)\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"unit\", \"name\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 5: RST with header_rows=['name', 'unit', 'dtype']\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 6: Verify reading still works\")\nprint(\"=\" * 60)\nfrom astropy.io import ascii\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\noutput.seek(0)\nprint(\"Written table:\")\nprint(output.getvalue())\n# Note: Reading with multiple header rows is not supported yet, \n# but basic reading should still work\nEOF\npython /testbed/test_rst_comprehensive.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-3bb3eda2-6d78-4483-8c6a-db7612f0406b",
+          "created": 1763903439,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Great! The fix is working. Now the RST output with `header_rows=[\"name\", \"unit\"]` produces the correct format with the position lines (=====) at the top and bottom, and both header rows (name and unit) in between.\n\nLet me create a more comprehensive test to verify different scenarios:\n\n```bash\ncat <<'EOF' > /testbed/test_rst_comprehensive.py\nimport sys\nfrom astropy.table import QTable\nimport astropy.units as u\nfrom io import StringIO\n\n# Create a test table\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"=\" * 60)\nprint(\"Test 1: Basic RST output (default, only name)\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\")\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 2: RST with header_rows=['name']\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 3: RST with header_rows=['name', 'unit']\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 4: RST with header_rows=['unit', 'name'] (reversed)\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"unit\", \"name\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 5: RST with header_rows=['name', 'unit', 'dtype']\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 6: Verify reading still works\")\nprint(\"=\" * 60)\nfrom astropy.io import ascii\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\noutput.seek(0)\nprint(\"Written table:\")\nprint(output.getvalue())\n# Note: Reading with multiple header rows is not supported yet, \n# but basic reading should still work\nEOF\npython /testbed/test_rst_comprehensive.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 655,
+            "prompt_tokens": 12021,
+            "total_tokens": 12676,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 11803,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 215,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 215,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 215,
+            "cache_read_input_tokens": 11803
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n============================================================\nTest 1: Basic RST output (default, only name)\n============================================================\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n============================================================\nTest 2: RST with header_rows=['name']\n============================================================\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n============================================================\nTest 3: RST with header_rows=['name', 'unit']\n============================================================\n===== ========\n wave response\n   nm       ct\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n============================================================\nTest 4: RST with header_rows=['unit', 'name'] (reversed)\n============================================================\n===== ========\n   nm       ct\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n============================================================\nTest 5: RST with header_rows=['name', 'unit', 'dtype']\n============================================================\n======= ========\n   wave response\n     nm       ct\nfloat64  float64\n======= ========\n  350.0      0.7\n  950.0      1.2\n======= ========\n\n============================================================\nTest 6: Verify reading still works\n============================================================\nWritten table:\n===== ========\n wave response\n   nm       ct\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Excellent! The fix is working correctly for all test cases. The RST format now properly supports the `header_rows` parameter, just like the `FixedWidth` format does. Let me also test edge cases like empty header_rows:\n\n```bash\ncat <<'EOF' > /testbed/test_rst_edge_cases.py\nimport sys\nfrom astropy.table import QTable\nimport astropy.units as u\nfrom io import StringIO\n\n# Create a test table\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"=\" * 60)\nprint(\"Test 1: RST with header_rows=[] (no header)\")\nprint(\"=\" * 60)\ntry:\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n    print(output.getvalue())\nexcept Exception as e:\n    print(f\"Error: {e}\")\n\nprint(\"=\" * 60)\nprint(\"Test 2: RST with None (should use default)\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=None)\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 3: Table without units\")\nprint(\"=\" * 60)\nfrom astropy.table import Table\ntbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\noutput = StringIO()\ntbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\nprint(output.getvalue())\nEOF\npython /testbed/test_rst_edge_cases.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-a34a92c7-75d7-4291-a9a7-615c1d362102",
+          "created": 1763903456,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Excellent! The fix is working correctly for all test cases. The RST format now properly supports the `header_rows` parameter, just like the `FixedWidth` format does. Let me also test edge cases like empty header_rows:\n\n```bash\ncat <<'EOF' > /testbed/test_rst_edge_cases.py\nimport sys\nfrom astropy.table import QTable\nimport astropy.units as u\nfrom io import StringIO\n\n# Create a test table\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"=\" * 60)\nprint(\"Test 1: RST with header_rows=[] (no header)\")\nprint(\"=\" * 60)\ntry:\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n    print(output.getvalue())\nexcept Exception as e:\n    print(f\"Error: {e}\")\n\nprint(\"=\" * 60)\nprint(\"Test 2: RST with None (should use default)\")\nprint(\"=\" * 60)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\", header_rows=None)\nprint(output.getvalue())\n\nprint(\"=\" * 60)\nprint(\"Test 3: Table without units\")\nprint(\"=\" * 60)\nfrom astropy.table import Table\ntbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\noutput = StringIO()\ntbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\nprint(output.getvalue())\nEOF\npython /testbed/test_rst_edge_cases.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 434,
+            "prompt_tokens": 13074,
+            "total_tokens": 13508,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 12018,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 1053,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 1053,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 1053,
+            "cache_read_input_tokens": 12018
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n============================================================\nTest 1: RST with header_rows=[] (no header)\n============================================================\n===== ===\n===== ===\n350.0 0.7\n950.0 1.2\n===== ===\n\n============================================================\nTest 2: RST with None (should use default)\n============================================================\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n============================================================\nTest 3: Table without units\n============================================================\n==== ====\ncol1 col2\n         \n==== ====\n   1    3\n   2    4\n==== ====\n\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Good! The edge cases work correctly:\n1. Empty header_rows produces a table with no header (just the position lines and data)\n2. None uses the default ([\"name\"])\n3. Tables without units show empty strings for the unit row\n\nNow let me run the existing tests to make sure I haven't broken anything:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_rst.py -xvs\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-a1890a18-c522-4a1f-8a39-a5c63a2c9cd7",
+          "created": 1763903463,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Good! The edge cases work correctly:\n1. Empty header_rows produces a table with no header (just the position lines and data)\n2. None uses the default ([\"name\"])\n3. Tables without units show empty strings for the unit row\n\nNow let me run the existing tests to make sure I haven't broken anything:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_rst.py -xvs\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 109,
+            "prompt_tokens": 13684,
+            "total_tokens": 13793,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 13071,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 610,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 610,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 610,
+            "cache_read_input_tokens": 13071
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\nInternet access disabled\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0 -- /opt/miniconda3/envs/testbed/bin/python\ncachedir: .pytest_cache\nhypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/test_rst.py.\n\nDate: 2025-11-23T13:11:04\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\nCython: not available\nScikit-image: not available\nasdf: not available\npyarrow: not available\n\nUsing Astropy options: remote_data: none.\n\nCI: undefined\nARCH_ON_CI: undefined\nIS_CRON: undefined\n\nrootdir: /testbed\nconfigfile: setup.cfg\nplugins: cov-4.1.0, openfiles-0.5.0, hypothesis-6.82.6, remotedata-0.4.0, astropy-0.10.0, astropy-header-0.2.2, xdist-3.3.1, doctestplus-1.0.0, filter-subpackage-0.1.2, mock-3.11.1, arraydiff-0.5.0\n\u001b[1mcollecting ... \u001b[0mcollected 9 items\n\nastropy/io/ascii/tests/test_rst.py::test_read_normal \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_normal_names \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_normal_names_include \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_normal_exclude \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_unbounded_right_column \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_unbounded_right_column_header \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_right_indented_table \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_trailing_spaces_in_row_definition \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_write_normal \u001b[32mPASSED\u001b[0m\n\n\u001b[32m============================== \u001b[32m\u001b[1m9 passed\u001b[0m\u001b[32m in 0.03s\u001b[0m\u001b[32m ===============================\u001b[0m\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Great! All existing tests pass. Now let me also run the broader ascii tests to make sure nothing else is broken:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_fixedwidth.py -xvs -k \"header_rows\"\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-93ba2742-3313-4bdc-99c0-ce5e6bee2f59",
+          "created": 1763903469,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Great! All existing tests pass. Now let me also run the broader ascii tests to make sure nothing else is broken:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_fixedwidth.py -xvs -k \"header_rows\"\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 72,
+            "prompt_tokens": 14765,
+            "total_tokens": 14837,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 13681,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 1081,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 1081,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 1081,
+            "cache_read_input_tokens": 13681
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\nInternet access disabled\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0 -- /opt/miniconda3/envs/testbed/bin/python\ncachedir: .pytest_cache\nhypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/test_fixedwidth.py.\n\nDate: 2025-11-23T13:11:10\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\nCython: not available\nScikit-image: not available\nasdf: not available\npyarrow: not available\n\nUsing Astropy options: remote_data: none.\n\nCI: undefined\nARCH_ON_CI: undefined\nIS_CRON: undefined\n\nrootdir: /testbed\nconfigfile: setup.cfg\nplugins: cov-4.1.0, openfiles-0.5.0, hypothesis-6.82.6, remotedata-0.4.0, astropy-0.10.0, astropy-header-0.2.2, xdist-3.3.1, doctestplus-1.0.0, filter-subpackage-0.1.2, mock-3.11.1, arraydiff-0.5.0\n\u001b[1mcollecting ... \u001b[0mcollected 35 items / 32 deselected / 3 selected\n\nastropy/io/ascii/tests/test_fixedwidth.py::test_fixed_width_header_rows \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_fixedwidth.py::test_fixed_width_two_line_header_rows \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_fixedwidth.py::test_fixed_width_no_header_header_rows \u001b[32mPASSED\u001b[0m\n\n\u001b[32m======================= \u001b[32m\u001b[1m3 passed\u001b[0m, \u001b[33m32 deselected\u001b[0m\u001b[32m in 0.02s\u001b[0m\u001b[32m =======================\u001b[0m\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Perfect! The existing header_rows tests for FixedWidth formats all pass. Now let me create a final comprehensive test that matches the exact example from the PR description:\n\n```bash\ncat <<'EOF' > /testbed/test_pr_example.py\n\"\"\"Test the exact example from the PR description\"\"\"\nfrom astropy.table import QTable\nimport astropy.units as u\nimport sys\nfrom io import StringIO\n\nprint(\"Testing the exact example from the PR description:\")\nprint(\"=\" * 70)\n\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"\\n1. Basic RST output:\")\nprint(\"-\" * 70)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\")\nprint(output.getvalue())\n\nprint(\"\\n2. Fixed width with header_rows:\")\nprint(\"-\" * 70)\noutput = StringIO()\ntbl.write(output, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\nprint(output.getvalue())\n\nprint(\"\\n3. RST with header_rows (this was failing before):\")\nprint(\"-\" * 70)\ntry:\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    print(output.getvalue())\n    print(\"SUCCESS! No error occurred.\")\nexcept TypeError as e:\n    print(f\"FAILED with error: {e}\")\nEOF\npython /testbed/test_pr_example.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-9d65c90a-ae4b-481b-b4c2-b70a633dad99",
+          "created": 1763903478,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Perfect! The existing header_rows tests for FixedWidth formats all pass. Now let me create a final comprehensive test that matches the exact example from the PR description:\n\n```bash\ncat <<'EOF' > /testbed/test_pr_example.py\n\"\"\"Test the exact example from the PR description\"\"\"\nfrom astropy.table import QTable\nimport astropy.units as u\nimport sys\nfrom io import StringIO\n\nprint(\"Testing the exact example from the PR description:\")\nprint(\"=\" * 70)\n\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"\\n1. Basic RST output:\")\nprint(\"-\" * 70)\noutput = StringIO()\ntbl.write(output, format=\"ascii.rst\")\nprint(output.getvalue())\n\nprint(\"\\n2. Fixed width with header_rows:\")\nprint(\"-\" * 70)\noutput = StringIO()\ntbl.write(output, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\nprint(output.getvalue())\n\nprint(\"\\n3. RST with header_rows (this was failing before):\")\nprint(\"-\" * 70)\ntry:\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    print(output.getvalue())\n    print(\"SUCCESS! No error occurred.\")\nexcept TypeError as e:\n    print(f\"FAILED with error: {e}\")\nEOF\npython /testbed/test_pr_example.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 382,
+            "prompt_tokens": 15642,
+            "total_tokens": 16024,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 14762,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 877,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 877,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 877,
+            "cache_read_input_tokens": 14762
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nTesting the exact example from the PR description:\n======================================================================\n\n1. Basic RST output:\n----------------------------------------------------------------------\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n\n2. Fixed width with header_rows:\n----------------------------------------------------------------------\n|  wave | response |\n|    nm |       ct |\n| 350.0 |      0.7 |\n| 950.0 |      1.2 |\n\n\n3. RST with header_rows (this was failing before):\n----------------------------------------------------------------------\n===== ========\n wave response\n   nm       ct\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\nSUCCESS! No error occurred.\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Perfect! The fix is working correctly. Now let me verify that the implementation is consistent with how other similar classes handle this. Let me check if there are any other tests I should run:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/ -xvs -k \"rst\" --collect-only | head -30\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-f494df46-3077-4636-af2f-403c047b3808",
+          "created": 1763903489,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Perfect! The fix is working correctly. Now let me verify that the implementation is consistent with how other similar classes handle this. Let me check if there are any other tests I should run:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/ -xvs -k \"rst\" --collect-only | head -30\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 85,
+            "prompt_tokens": 16224,
+            "total_tokens": 16309,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 15639,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 582,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 582,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 582,
+            "cache_read_input_tokens": 15639
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\nInternet access disabled\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0 -- /opt/miniconda3/envs/testbed/bin/python\ncachedir: .pytest_cache\nhypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/.\n\nDate: 2025-11-23T13:11:30\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Let me run all the RST-related tests to make sure everything is working:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_rst.py -xvs\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-e670ed8d-3713-4482-9947-0439020b257e",
+          "created": 1763903495,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Let me run all the RST-related tests to make sure everything is working:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_rst.py -xvs\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 56,
+            "prompt_tokens": 16724,
+            "total_tokens": 16780,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 16221,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 500,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 500,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 500,
+            "cache_read_input_tokens": 16221
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\nInternet access disabled\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0 -- /opt/miniconda3/envs/testbed/bin/python\ncachedir: .pytest_cache\nhypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/test_rst.py.\n\nDate: 2025-11-23T13:11:37\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\nCython: not available\nScikit-image: not available\nasdf: not available\npyarrow: not available\n\nUsing Astropy options: remote_data: none.\n\nCI: undefined\nARCH_ON_CI: undefined\nIS_CRON: undefined\n\nrootdir: /testbed\nconfigfile: setup.cfg\nplugins: cov-4.1.0, openfiles-0.5.0, hypothesis-6.82.6, remotedata-0.4.0, astropy-0.10.0, astropy-header-0.2.2, xdist-3.3.1, doctestplus-1.0.0, filter-subpackage-0.1.2, mock-3.11.1, arraydiff-0.5.0\n\u001b[1mcollecting ... \u001b[0mcollected 9 items\n\nastropy/io/ascii/tests/test_rst.py::test_read_normal \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_normal_names \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_normal_names_include \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_normal_exclude \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_unbounded_right_column \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_unbounded_right_column_header \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_read_right_indented_table \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_trailing_spaces_in_row_definition \u001b[32mPASSED\u001b[0m\nastropy/io/ascii/tests/test_rst.py::test_write_normal \u001b[32mPASSED\u001b[0m\n\n\u001b[32m============================== \u001b[32m\u001b[1m9 passed\u001b[0m\u001b[32m in 0.03s\u001b[0m\u001b[32m ===============================\u001b[0m\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Excellent! All tests pass. Let me also run a broader set of ascii tests to ensure I haven't broken anything:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_write.py -xvs -k \"rst or RST\" 2>&1 | head -100\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-39e4dd92-67b1-4927-b60c-0a5171302a91",
+          "created": 1763903506,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Excellent! All tests pass. Let me also run a broader set of ascii tests to ensure I haven't broken anything:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_write.py -xvs -k \"rst or RST\" 2>&1 | head -100\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 81,
+            "prompt_tokens": 17752,
+            "total_tokens": 17833,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 16721,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 1028,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 1028,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 1028,
+            "cache_read_input_tokens": 16721
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\nInternet access disabled\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0 -- /opt/miniconda3/envs/testbed/bin/python\ncachedir: .pytest_cache\nhypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/test_write.py.\n\nDate: 2025-11-23T13:11:47\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\nCython: not available\nScikit-image: not available\nasdf: not available\npyarrow: not available\n\nUsing Astropy options: remote_data: none.\n\nCI: undefined\nARCH_ON_CI: undefined\nIS_CRON: undefined\n\nrootdir: /testbed\nconfigfile: setup.cfg\nplugins: cov-4.1.0, openfiles-0.5.0, hypothesis-6.82.6, remotedata-0.4.0, astropy-0.10.0, astropy-header-0.2.2, xdist-3.3.1, doctestplus-1.0.0, filter-subpackage-0.1.2, mock-3.11.1, arraydiff-0.5.0\n\u001b[1mcollecting ... \u001b[0mcollected 158 items / 158 deselected / 0 selected\n\n\u001b[33m=========================== \u001b[33m\u001b[1m158 deselected\u001b[0m\u001b[33m in 0.02s\u001b[0m\u001b[33m ============================\u001b[0m\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: No tests matched the filter. Let me run a broader test to ensure the general write functionality still works:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_write.py::test_write_formats -xvs\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-72a6f671-3d88-422c-9dec-7a8780559a94",
+          "created": 1763903519,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: No tests matched the filter. Let me run a broader test to ensure the general write functionality still works:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_write.py::test_write_formats -xvs\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 66,
+            "prompt_tokens": 18509,
+            "total_tokens": 18575,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 17749,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 757,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 757,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 757,
+            "cache_read_input_tokens": 17749
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>4</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\nInternet access disabled\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0 -- /opt/miniconda3/envs/testbed/bin/python\ncachedir: .pytest_cache\nhypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/test_write.py::test_write_formats.\n\nDate: 2025-11-23T13:11:59\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\nCython: not available\nScikit-image: not available\nasdf: not available\npyarrow: not available\n\nUsing Astropy options: remote_data: none.\n\nCI: undefined\nARCH_ON_CI: undefined\nIS_CRON: undefined\n\nrootdir: /testbed\nconfigfile: setup.cfg\nplugins: cov-4.1.0, openfiles-0.5.0, hypothesis-6.82.6, remotedata-0.4.0, astropy-0.10.0, astropy-header-0.2.2, xdist-3.3.1, doctestplus-1.0.0, filter-subpackage-0.1.2, mock-3.11.1, arraydiff-0.5.0\n\u001b[1mcollecting ... \u001b[0mcollected 0 items\n\n\u001b[33m============================ \u001b[33mno tests ran\u001b[0m\u001b[33m in 0.03s\u001b[0m\u001b[33m =============================\u001b[0m\nERROR: not found: /testbed/astropy/io/ascii/tests/test_write.py::test_write_formats\n(no name '/testbed/astropy/io/ascii/tests/test_write.py::test_write_formats' in any of [<DocTestModulePlus astropy/io/ascii/tests/test_write.py>, <Module astropy/io/ascii/tests/test_write.py>])\n\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Let me just run a few general write tests to make sure nothing is broken:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_write.py -x --maxfail=5 2>&1 | head -150\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-7d3f58a5-b718-4c7d-8b41-f05920dc8bf7",
+          "created": 1763903526,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Let me just run a few general write tests to make sure nothing is broken:\n\n```bash\ncd /testbed && python -m pytest astropy/io/ascii/tests/test_write.py -x --maxfail=5 2>&1 | head -150\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 68,
+            "prompt_tokens": 19343,
+            "total_tokens": 19411,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 18506,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 834,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 834,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 834,
+            "cache_read_input_tokens": 18506
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n<frozen importlib._bootstrap>:228: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 80 from C header, got 96 from PyObject\n\u001b[1m============================= test session starts ==============================\u001b[0m\nplatform linux -- Python 3.9.20, pytest-7.4.0, pluggy-1.3.0\n\nRunning tests with Astropy version 5.3.dev133+ga5917978b.d20250910.\nRunning tests in astropy/io/ascii/tests/test_write.py.\n\nDate: 2025-11-23T13:12:07\n\nPlatform: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35\n\nExecutable: /opt/miniconda3/envs/testbed/bin/python\n\nFull Python Version: \n3.9.20 (main, Oct  3 2024, 07:27:41) \n[GCC 11.2.0]\n\nencodings: sys: utf-8, locale: UTF-8, filesystem: utf-8\nbyteorder: little\nfloat info: dig: 15, mant_dig: 15\n\nPackage versions: \nNumpy: 1.25.2\nScipy: not available\nMatplotlib: not available\nh5py: not available\nPandas: not available\nPyERFA: 2.0.0.3\nCython: not available\nScikit-image: not available\nasdf: not available\npyarrow: not available\n\nUsing Astropy options: remote_data: none.\n\nCI: undefined\nARCH_ON_CI: undefined\nIS_CRON: undefined\n\nrootdir: /testbed\nconfigfile: setup.cfg\nplugins: cov-4.1.0, openfiles-0.5.0, hypothesis-6.82.6, remotedata-0.4.0, astropy-0.10.0, astropy-header-0.2.2, xdist-3.3.1, doctestplus-1.0.0, filter-subpackage-0.1.2, mock-3.11.1, arraydiff-0.5.0\ncollected 158 items\n\nastropy/io/ascii/tests/test_write.py \u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m [ 22%]\n\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m [ 67%]\n\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                      [100%]\u001b[0m\n\n\u001b[32m============================= \u001b[32m\u001b[1m158 passed\u001b[0m\u001b[32m in 0.73s\u001b[0m\u001b[32m ==============================\u001b[0m\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Perfect! All 158 write tests pass. Now let me verify the implementation one more time by looking at the final code:\n\n```bash\ncat /testbed/astropy/io/ascii/rst.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-0f063c85-1f1c-4bb2-be87-e61f2f0ff12f",
+          "created": 1763903556,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Perfect! All 158 write tests pass. Now let me verify the implementation one more time by looking at the final code:\n\n```bash\ncat /testbed/astropy/io/ascii/rst.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 53,
+            "prompt_tokens": 21003,
+            "total_tokens": 21056,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 19340,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 1660,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 1660,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 1660,
+            "cache_read_input_tokens": 19340
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n# Licensed under a 3-clause BSD style license\n\"\"\"\n:Author: Simon Gibbons (simongibbons@gmail.com)\n\"\"\"\n\n\nfrom .core import DefaultSplitter\nfrom .fixedwidth import (\n    FixedWidth,\n    FixedWidthData,\n    FixedWidthHeader,\n    FixedWidthTwoLineDataSplitter,\n)\n\n\nclass SimpleRSTHeader(FixedWidthHeader):\n    position_line = 0\n    start_line = 1\n    splitter_class = DefaultSplitter\n    position_char = \"=\"\n\n    def get_fixedwidth_params(self, line):\n        vals, starts, ends = super().get_fixedwidth_params(line)\n        # The right hand column can be unbounded\n        ends[-1] = None\n        return vals, starts, ends\n\n\nclass SimpleRSTData(FixedWidthData):\n    start_line = 3\n    end_line = -1\n    splitter_class = FixedWidthTwoLineDataSplitter\n\n\nclass RST(FixedWidth):\n    \"\"\"reStructuredText simple format table.\n\n    See: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#simple-tables\n\n    Example::\n\n        ==== ===== ======\n        Col1  Col2  Col3\n        ==== ===== ======\n          1    2.3  Hello\n          2    4.5  Worlds\n        ==== ===== ======\n\n    Currently there is no support for reading tables which utilize continuation lines,\n    or for ones which define column spans through the use of an additional\n    line of dashes in the header.\n\n    \"\"\"\n\n    _format_name = \"rst\"\n    _description = \"reStructuredText simple table\"\n    data_class = SimpleRSTData\n    header_class = SimpleRSTHeader\n\n    def __init__(self, header_rows=None):\n        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n        # Adjust data start line based on number of header rows\n        # RST format: position_line (=), header_rows, separator (=), data\n        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n        self.data.start_line = 2 + len(self.header.header_rows)\n\n    def write(self, lines):\n        lines = super().write(lines)\n        # The position line is at index len(header_rows) in the lines list\n        # (after all header rows and before data rows)\n        position_line_index = len(self.header.header_rows)\n        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]\n        return lines\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The implementation looks good. Let me create one final comprehensive test to ensure everything works as expected, including testing that the output is valid RST format:\n\n```bash\ncat <<'EOF' > /testbed/test_final_validation.py\n\"\"\"Final validation test for RST header_rows support\"\"\"\nfrom astropy.table import QTable, Table\nimport astropy.units as u\nfrom io import StringIO\n\ndef test_rst_header_rows():\n    \"\"\"Test RST format with various header_rows configurations\"\"\"\n    \n    # Test with QTable (has units)\n    tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n    \n    # Test 1: Default (only name)\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\")\n    result = output.getvalue()\n    assert \"====\" in result\n    assert \"wave\" in result\n    assert \"response\" in result\n    assert \"350.0\" in result\n    print(\"\u2713 Test 1 passed: Default header_rows\")\n    \n    # Test 2: Explicit name only\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\n    result = output.getvalue()\n    assert \"====\" in result\n    assert \"wave\" in result\n    assert \"response\" in result\n    assert \"nm\" not in result  # unit should not be present\n    print(\"\u2713 Test 2 passed: Explicit header_rows=['name']\")\n    \n    # Test 3: Name and unit\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert lines[0].startswith(\"=====\")  # First line is position line\n    assert \"wave\" in lines[1]  # Second line is name\n    assert \"nm\" in lines[2]  # Third line is unit\n    assert lines[3].startswith(\"=====\")  # Fourth line is separator\n    assert \"350.0\" in lines[4]  # Fifth line is data\n    print(\"\u2713 Test 3 passed: header_rows=['name', 'unit']\")\n    \n    # Test 4: Multiple header rows\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert lines[0].startswith(\"=====\")  # Position line\n    assert \"wave\" in lines[1]  # Name\n    assert \"nm\" in lines[2]  # Unit\n    assert \"float64\" in lines[3]  # Dtype\n    assert lines[4].startswith(\"=====\")  # Separator\n    print(\"\u2713 Test 4 passed: header_rows=['name', 'unit', 'dtype']\")\n    \n    # Test 5: Empty header_rows\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert lines[0].startswith(\"=====\")  # Position line\n    assert lines[1].startswith(\"=====\")  # Separator (no header rows in between)\n    assert \"350.0\" in lines[2]  # Data starts immediately\n    print(\"\u2713 Test 5 passed: header_rows=[]\")\n    \n    # Test 6: Table without units\n    tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\n    output = StringIO()\n    tbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert \"col1\" in lines[1]  # Name row\n    # Unit row should be empty or contain spaces\n    assert lines[2].strip() == \"\" or all(c in \" =\" for c in lines[2])\n    print(\"\u2713 Test 6 passed: Table without units\")\n    \n    print(\"\\n\" + \"=\" * 70)\n    print(\"All tests passed! RST format now supports header_rows parameter.\")\n    print(\"=\" * 70)\n\nif __name__ == \"__main__\":\n    test_rst_header_rows()\nEOF\npython /testbed/test_final_validation.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-e2e5fb7c-0624-4c11-866a-f254f1369730",
+          "created": 1763903573,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The implementation looks good. Let me create one final comprehensive test to ensure everything works as expected, including testing that the output is valid RST format:\n\n```bash\ncat <<'EOF' > /testbed/test_final_validation.py\n\"\"\"Final validation test for RST header_rows support\"\"\"\nfrom astropy.table import QTable, Table\nimport astropy.units as u\nfrom io import StringIO\n\ndef test_rst_header_rows():\n    \"\"\"Test RST format with various header_rows configurations\"\"\"\n    \n    # Test with QTable (has units)\n    tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n    \n    # Test 1: Default (only name)\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\")\n    result = output.getvalue()\n    assert \"====\" in result\n    assert \"wave\" in result\n    assert \"response\" in result\n    assert \"350.0\" in result\n    print(\"\u2713 Test 1 passed: Default header_rows\")\n    \n    # Test 2: Explicit name only\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\n    result = output.getvalue()\n    assert \"====\" in result\n    assert \"wave\" in result\n    assert \"response\" in result\n    assert \"nm\" not in result  # unit should not be present\n    print(\"\u2713 Test 2 passed: Explicit header_rows=['name']\")\n    \n    # Test 3: Name and unit\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert lines[0].startswith(\"=====\")  # First line is position line\n    assert \"wave\" in lines[1]  # Second line is name\n    assert \"nm\" in lines[2]  # Third line is unit\n    assert lines[3].startswith(\"=====\")  # Fourth line is separator\n    assert \"350.0\" in lines[4]  # Fifth line is data\n    print(\"\u2713 Test 3 passed: header_rows=['name', 'unit']\")\n    \n    # Test 4: Multiple header rows\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert lines[0].startswith(\"=====\")  # Position line\n    assert \"wave\" in lines[1]  # Name\n    assert \"nm\" in lines[2]  # Unit\n    assert \"float64\" in lines[3]  # Dtype\n    assert lines[4].startswith(\"=====\")  # Separator\n    print(\"\u2713 Test 4 passed: header_rows=['name', 'unit', 'dtype']\")\n    \n    # Test 5: Empty header_rows\n    output = StringIO()\n    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert lines[0].startswith(\"=====\")  # Position line\n    assert lines[1].startswith(\"=====\")  # Separator (no header rows in between)\n    assert \"350.0\" in lines[2]  # Data starts immediately\n    print(\"\u2713 Test 5 passed: header_rows=[]\")\n    \n    # Test 6: Table without units\n    tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\n    output = StringIO()\n    tbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    result = output.getvalue()\n    lines = result.strip().split('\\n')\n    assert \"col1\" in lines[1]  # Name row\n    # Unit row should be empty or contain spaces\n    assert lines[2].strip() == \"\" or all(c in \" =\" for c in lines[2])\n    print(\"\u2713 Test 6 passed: Table without units\")\n    \n    print(\"\\n\" + \"=\" * 70)\n    print(\"All tests passed! RST format now supports header_rows parameter.\")\n    print(\"=\" * 70)\n\nif __name__ == \"__main__\":\n    test_rst_header_rows()\nEOF\npython /testbed/test_final_validation.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 1124,
+            "prompt_tokens": 21765,
+            "total_tokens": 22889,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 21000,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 762,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 762,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 762,
+            "cache_read_input_tokens": 21000
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n\u2713 Test 1 passed: Default header_rows\n\u2713 Test 2 passed: Explicit header_rows=['name']\n\u2713 Test 3 passed: header_rows=['name', 'unit']\n\u2713 Test 4 passed: header_rows=['name', 'unit', 'dtype']\n\u2713 Test 5 passed: header_rows=[]\n\u2713 Test 6 passed: Table without units\n\n======================================================================\nAll tests passed! RST format now supports header_rows parameter.\n======================================================================\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Excellent! All tests pass. Let me also verify that the reading functionality still works correctly (even though reading with multiple header rows is not supported, basic reading should still work):\n\n```bash\ncat <<'EOF' > /testbed/test_rst_read.py\n\"\"\"Test that RST reading still works after our changes\"\"\"\nfrom astropy.io import ascii\nfrom io import StringIO\n\n# Test reading a basic RST table\nrst_table = \"\"\"\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\"\"\"\n\nprint(\"Testing RST reading functionality:\")\nprint(\"=\" * 70)\n\n# Read the table\ntbl = ascii.read(rst_table, format='rst')\nprint(\"Successfully read RST table:\")\nprint(tbl)\nprint()\n\n# Verify the data\nassert len(tbl) == 2\nassert tbl['wave'][0] == 350.0\nassert tbl['wave'][1] == 950.0\nassert tbl['response'][0] == 0.7\nassert tbl['response'][1] == 1.2\n\nprint(\"\u2713 All assertions passed!\")\nprint(\"\u2713 RST reading functionality is intact\")\nEOF\npython /testbed/test_rst_read.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-ee996b85-06db-4ce3-8cd7-f6c2ca39d93f",
+          "created": 1763903595,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Excellent! All tests pass. Let me also verify that the reading functionality still works correctly (even though reading with multiple header rows is not supported, basic reading should still work):\n\n```bash\ncat <<'EOF' > /testbed/test_rst_read.py\n\"\"\"Test that RST reading still works after our changes\"\"\"\nfrom astropy.io import ascii\nfrom io import StringIO\n\n# Test reading a basic RST table\nrst_table = \"\"\"\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\"\"\"\n\nprint(\"Testing RST reading functionality:\")\nprint(\"=\" * 70)\n\n# Read the table\ntbl = ascii.read(rst_table, format='rst')\nprint(\"Successfully read RST table:\")\nprint(tbl)\nprint()\n\n# Verify the data\nassert len(tbl) == 2\nassert tbl['wave'][0] == 350.0\nassert tbl['wave'][1] == 950.0\nassert tbl['response'][0] == 0.7\nassert tbl['response'][1] == 1.2\n\nprint(\"\u2713 All assertions passed!\")\nprint(\"\u2713 RST reading functionality is intact\")\nEOF\npython /testbed/test_rst_read.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 310,
+            "prompt_tokens": 23034,
+            "total_tokens": 23344,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 21762,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 1269,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 1269,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 1269,
+            "cache_read_input_tokens": 21762
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nTesting RST reading functionality:\n======================================================================\nSuccessfully read RST table:\n wave response\n----- --------\n350.0      0.7\n950.0      1.2\n\n\u2713 All assertions passed!\n\u2713 RST reading functionality is intact\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Perfect! Everything is working correctly. Let me now create a summary of the changes and verify the git diff to make sure only the necessary changes were made:\n\n```bash\ncd /testbed && git diff astropy/io/ascii/rst.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-dc89ac5b-bb8f-49c0-9acc-b828484f0280",
+          "created": 1763903599,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Perfect! Everything is working correctly. Let me now create a summary of the changes and verify the git diff to make sure only the necessary changes were made:\n\n```bash\ncd /testbed && git diff astropy/io/ascii/rst.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 60,
+            "prompt_tokens": 23424,
+            "total_tokens": 23484,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 23031,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 390,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 390,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 390,
+            "cache_read_input_tokens": 23031
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\ndiff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py\nindex abdeba8ef..0e0bdd60b 100644\n--- a/astropy/io/ascii/rst.py\n+++ b/astropy/io/ascii/rst.py\n@@ -57,10 +57,17 @@ class RST(FixedWidth):\n     data_class = SimpleRSTData\n     header_class = SimpleRSTHeader\n \n-    def __init__(self):\n-        super().__init__(delimiter_pad=None, bookend=False)\n+    def __init__(self, header_rows=None):\n+        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n+        # Adjust data start line based on number of header rows\n+        # RST format: position_line (=), header_rows, separator (=), data\n+        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n+        self.data.start_line = 2 + len(self.header.header_rows)\n \n     def write(self, lines):\n         lines = super().write(lines)\n-        lines = [lines[1]] + lines + [lines[1]]\n+        # The position line is at index len(header_rows) in the lines list\n+        # (after all header rows and before data rows)\n+        position_line_index = len(self.header.header_rows)\n+        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]\n         return lines\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Perfect! The changes are minimal and focused. Let me run one more comprehensive test to ensure everything works as expected with the exact scenario from the PR description:\n\n```bash\ncat <<'EOF' > /testbed/test_pr_scenario.py\n\"\"\"Test the exact scenario from the PR description\"\"\"\nfrom astropy.table import QTable\nimport astropy.units as u\nimport sys\nfrom io import StringIO\n\nprint(\"Reproducing the exact scenario from the PR description:\")\nprint(\"=\" * 70)\n\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst')\")\ntbl.write(sys.stdout, format=\"ascii.rst\")\n\nprint(\"\\n>>> tbl.write(sys.stdout, format='ascii.fixed_width', header_rows=['name', 'unit'])\")\ntbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n\nprint(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst', header_rows=['name', 'unit'])\")\nprint(\"(This was failing before with TypeError)\")\ntry:\n    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    print(\"\\n\u2713 SUCCESS! No TypeError occurred.\")\n    print(\"\u2713 The RST format now supports the header_rows parameter.\")\nexcept TypeError as e:\n    print(f\"\\n\u2717 FAILED: {e}\")\n    sys.exit(1)\nEOF\npython /testbed/test_pr_scenario.py\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-c4ab134e-0510-48bf-b88f-edd7778d9d5f",
+          "created": 1763903608,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Perfect! The changes are minimal and focused. Let me run one more comprehensive test to ensure everything works as expected with the exact scenario from the PR description:\n\n```bash\ncat <<'EOF' > /testbed/test_pr_scenario.py\n\"\"\"Test the exact scenario from the PR description\"\"\"\nfrom astropy.table import QTable\nimport astropy.units as u\nimport sys\nfrom io import StringIO\n\nprint(\"Reproducing the exact scenario from the PR description:\")\nprint(\"=\" * 70)\n\ntbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n\nprint(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst')\")\ntbl.write(sys.stdout, format=\"ascii.rst\")\n\nprint(\"\\n>>> tbl.write(sys.stdout, format='ascii.fixed_width', header_rows=['name', 'unit'])\")\ntbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n\nprint(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst', header_rows=['name', 'unit'])\")\nprint(\"(This was failing before with TypeError)\")\ntry:\n    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n    print(\"\\n\u2713 SUCCESS! No TypeError occurred.\")\n    print(\"\u2713 The RST format now supports the header_rows parameter.\")\nexcept TypeError as e:\n    print(f\"\\n\u2717 FAILED: {e}\")\n    sys.exit(1)\nEOF\npython /testbed/test_pr_scenario.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 404,
+            "prompt_tokens": 23920,
+            "total_tokens": 24324,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 23421,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 496,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 496,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 496,
+            "cache_read_input_tokens": 23421
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nReproducing the exact scenario from the PR description:\n======================================================================\n\n>>> tbl.write(sys.stdout, format='ascii.rst')\n===== ========\n wave response\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n>>> tbl.write(sys.stdout, format='ascii.fixed_width', header_rows=['name', 'unit'])\n|  wave | response |\n|    nm |       ct |\n| 350.0 |      0.7 |\n| 950.0 |      1.2 |\n\n>>> tbl.write(sys.stdout, format='ascii.rst', header_rows=['name', 'unit'])\n(This was failing before with TypeError)\n===== ========\n wave response\n   nm       ct\n===== ========\n350.0      0.7\n950.0      1.2\n===== ========\n\n\u2713 SUCCESS! No TypeError occurred.\n\u2713 The RST format now supports the header_rows parameter.\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Perfect! Everything is working as expected. The implementation is complete and all tests pass. Let me now submit the final output:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```",
+      "extra": {
+        "response": {
+          "id": "chatcmpl-10d602e7-b6a1-41b9-8920-c46d08c8f1dd",
+          "created": 1763903621,
+          "model": "claude-sonnet-4-5-20250929",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Perfect! Everything is working as expected. The implementation is complete and all tests pass. Let me now submit the final output:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "provider_specific_fields": {
+                  "citations": null,
+                  "thinking_blocks": null
+                }
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 63,
+            "prompt_tokens": 24585,
+            "total_tokens": 24648,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": 23917,
+              "text_tokens": null,
+              "image_tokens": null,
+              "cache_creation_tokens": 665,
+              "cache_creation_token_details": {
+                "ephemeral_5m_input_tokens": 665,
+                "ephemeral_1h_input_tokens": 0
+              }
+            },
+            "cache_creation_input_tokens": 665,
+            "cache_read_input_tokens": 23917
+          }
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py\nindex abdeba8ef..0e0bdd60b 100644\n--- a/astropy/io/ascii/rst.py\n+++ b/astropy/io/ascii/rst.py\n@@ -57,10 +57,17 @@ class RST(FixedWidth):\n     data_class = SimpleRSTData\n     header_class = SimpleRSTHeader\n \n-    def __init__(self):\n-        super().__init__(delimiter_pad=None, bookend=False)\n+    def __init__(self, header_rows=None):\n+        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)\n+        # Adjust data start line based on number of header rows\n+        # RST format: position_line (=), header_rows, separator (=), data\n+        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)\n+        self.data.start_line = 2 + len(self.header.header_rows)\n \n     def write(self, lines):\n         lines = super().write(lines)\n-        lines = [lines[1]] + lines + [lines[1]]\n+        # The position line is at index len(header_rows) in the lines list\n+        # (after all header rows and before data rows)\n+        position_line_index = len(self.header.header_rows)\n+        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]\n         return lines\ndiff --git a/test_final_validation.py b/test_final_validation.py\nnew file mode 100644\nindex 000000000..fca6c1e04\n--- /dev/null\n+++ b/test_final_validation.py\n@@ -0,0 +1,82 @@\n+\"\"\"Final validation test for RST header_rows support\"\"\"\n+from astropy.table import QTable, Table\n+import astropy.units as u\n+from io import StringIO\n+\n+def test_rst_header_rows():\n+    \"\"\"Test RST format with various header_rows configurations\"\"\"\n+    \n+    # Test with QTable (has units)\n+    tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+    \n+    # Test 1: Default (only name)\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\")\n+    result = output.getvalue()\n+    assert \"====\" in result\n+    assert \"wave\" in result\n+    assert \"response\" in result\n+    assert \"350.0\" in result\n+    print(\"\u2713 Test 1 passed: Default header_rows\")\n+    \n+    # Test 2: Explicit name only\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\n+    result = output.getvalue()\n+    assert \"====\" in result\n+    assert \"wave\" in result\n+    assert \"response\" in result\n+    assert \"nm\" not in result  # unit should not be present\n+    print(\"\u2713 Test 2 passed: Explicit header_rows=['name']\")\n+    \n+    # Test 3: Name and unit\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert lines[0].startswith(\"=====\")  # First line is position line\n+    assert \"wave\" in lines[1]  # Second line is name\n+    assert \"nm\" in lines[2]  # Third line is unit\n+    assert lines[3].startswith(\"=====\")  # Fourth line is separator\n+    assert \"350.0\" in lines[4]  # Fifth line is data\n+    print(\"\u2713 Test 3 passed: header_rows=['name', 'unit']\")\n+    \n+    # Test 4: Multiple header rows\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert lines[0].startswith(\"=====\")  # Position line\n+    assert \"wave\" in lines[1]  # Name\n+    assert \"nm\" in lines[2]  # Unit\n+    assert \"float64\" in lines[3]  # Dtype\n+    assert lines[4].startswith(\"=====\")  # Separator\n+    print(\"\u2713 Test 4 passed: header_rows=['name', 'unit', 'dtype']\")\n+    \n+    # Test 5: Empty header_rows\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert lines[0].startswith(\"=====\")  # Position line\n+    assert lines[1].startswith(\"=====\")  # Separator (no header rows in between)\n+    assert \"350.0\" in lines[2]  # Data starts immediately\n+    print(\"\u2713 Test 5 passed: header_rows=[]\")\n+    \n+    # Test 6: Table without units\n+    tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\n+    output = StringIO()\n+    tbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    result = output.getvalue()\n+    lines = result.strip().split('\\n')\n+    assert \"col1\" in lines[1]  # Name row\n+    # Unit row should be empty or contain spaces\n+    assert lines[2].strip() == \"\" or all(c in \" =\" for c in lines[2])\n+    print(\"\u2713 Test 6 passed: Table without units\")\n+    \n+    print(\"\\n\" + \"=\" * 70)\n+    print(\"All tests passed! RST format now supports header_rows parameter.\")\n+    print(\"=\" * 70)\n+\n+if __name__ == \"__main__\":\n+    test_rst_header_rows()\ndiff --git a/test_pr_example.py b/test_pr_example.py\nnew file mode 100644\nindex 000000000..ac6ebbbee\n--- /dev/null\n+++ b/test_pr_example.py\n@@ -0,0 +1,32 @@\n+\"\"\"Test the exact example from the PR description\"\"\"\n+from astropy.table import QTable\n+import astropy.units as u\n+import sys\n+from io import StringIO\n+\n+print(\"Testing the exact example from the PR description:\")\n+print(\"=\" * 70)\n+\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"\\n1. Basic RST output:\")\n+print(\"-\" * 70)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\")\n+print(output.getvalue())\n+\n+print(\"\\n2. Fixed width with header_rows:\")\n+print(\"-\" * 70)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n+print(output.getvalue())\n+\n+print(\"\\n3. RST with header_rows (this was failing before):\")\n+print(\"-\" * 70)\n+try:\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    print(output.getvalue())\n+    print(\"SUCCESS! No error occurred.\")\n+except TypeError as e:\n+    print(f\"FAILED with error: {e}\")\ndiff --git a/test_pr_scenario.py b/test_pr_scenario.py\nnew file mode 100644\nindex 000000000..97eabcc03\n--- /dev/null\n+++ b/test_pr_scenario.py\n@@ -0,0 +1,26 @@\n+\"\"\"Test the exact scenario from the PR description\"\"\"\n+from astropy.table import QTable\n+import astropy.units as u\n+import sys\n+from io import StringIO\n+\n+print(\"Reproducing the exact scenario from the PR description:\")\n+print(\"=\" * 70)\n+\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst')\")\n+tbl.write(sys.stdout, format=\"ascii.rst\")\n+\n+print(\"\\n>>> tbl.write(sys.stdout, format='ascii.fixed_width', header_rows=['name', 'unit'])\")\n+tbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n+\n+print(\"\\n>>> tbl.write(sys.stdout, format='ascii.rst', header_rows=['name', 'unit'])\")\n+print(\"(This was failing before with TypeError)\")\n+try:\n+    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+    print(\"\\n\u2713 SUCCESS! No TypeError occurred.\")\n+    print(\"\u2713 The RST format now supports the header_rows parameter.\")\n+except TypeError as e:\n+    print(f\"\\n\u2717 FAILED: {e}\")\n+    sys.exit(1)\ndiff --git a/test_rst_comprehensive.py b/test_rst_comprehensive.py\nnew file mode 100644\nindex 000000000..103639874\n--- /dev/null\n+++ b/test_rst_comprehensive.py\n@@ -0,0 +1,54 @@\n+import sys\n+from astropy.table import QTable\n+import astropy.units as u\n+from io import StringIO\n+\n+# Create a test table\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"=\" * 60)\n+print(\"Test 1: Basic RST output (default, only name)\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\")\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 2: RST with header_rows=['name']\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 3: RST with header_rows=['name', 'unit']\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 4: RST with header_rows=['unit', 'name'] (reversed)\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"unit\", \"name\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 5: RST with header_rows=['name', 'unit', 'dtype']\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\", \"dtype\"])\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 6: Verify reading still works\")\n+print(\"=\" * 60)\n+from astropy.io import ascii\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+output.seek(0)\n+print(\"Written table:\")\n+print(output.getvalue())\n+# Note: Reading with multiple header rows is not supported yet, \n+# but basic reading should still work\ndiff --git a/test_rst_edge_cases.py b/test_rst_edge_cases.py\nnew file mode 100644\nindex 000000000..7b94dc916\n--- /dev/null\n+++ b/test_rst_edge_cases.py\n@@ -0,0 +1,33 @@\n+import sys\n+from astropy.table import QTable\n+import astropy.units as u\n+from io import StringIO\n+\n+# Create a test table\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"=\" * 60)\n+print(\"Test 1: RST with header_rows=[] (no header)\")\n+print(\"=\" * 60)\n+try:\n+    output = StringIO()\n+    tbl.write(output, format=\"ascii.rst\", header_rows=[])\n+    print(output.getvalue())\n+except Exception as e:\n+    print(f\"Error: {e}\")\n+\n+print(\"=\" * 60)\n+print(\"Test 2: RST with None (should use default)\")\n+print(\"=\" * 60)\n+output = StringIO()\n+tbl.write(output, format=\"ascii.rst\", header_rows=None)\n+print(output.getvalue())\n+\n+print(\"=\" * 60)\n+print(\"Test 3: Table without units\")\n+print(\"=\" * 60)\n+from astropy.table import Table\n+tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})\n+output = StringIO()\n+tbl_no_units.write(output, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+print(output.getvalue())\ndiff --git a/test_rst_header_rows.py b/test_rst_header_rows.py\nnew file mode 100644\nindex 000000000..926fadb95\n--- /dev/null\n+++ b/test_rst_header_rows.py\n@@ -0,0 +1,20 @@\n+import sys\n+from astropy.table import QTable\n+import astropy.units as u\n+\n+# Create a test table\n+tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})\n+\n+print(\"Test 1: Basic RST output (should work)\")\n+tbl.write(sys.stdout, format=\"ascii.rst\")\n+print()\n+\n+print(\"Test 2: Fixed width with header_rows (should work)\")\n+tbl.write(sys.stdout, format=\"ascii.fixed_width\", header_rows=[\"name\", \"unit\"])\n+print()\n+\n+print(\"Test 3: RST with header_rows (currently fails)\")\n+try:\n+    tbl.write(sys.stdout, format=\"ascii.rst\", header_rows=[\"name\", \"unit\"])\n+except TypeError as e:\n+    print(f\"Error: {e}\")\ndiff --git a/test_rst_read.py b/test_rst_read.py\nnew file mode 100644\nindex 000000000..ce92cf815\n--- /dev/null\n+++ b/test_rst_read.py\n@@ -0,0 +1,32 @@\n+\"\"\"Test that RST reading still works after our changes\"\"\"\n+from astropy.io import ascii\n+from io import StringIO\n+\n+# Test reading a basic RST table\n+rst_table = \"\"\"\n+===== ========\n+ wave response\n+===== ========\n+350.0      0.7\n+950.0      1.2\n+===== ========\n+\"\"\"\n+\n+print(\"Testing RST reading functionality:\")\n+print(\"=\" * 70)\n+\n+# Read the table\n+tbl = ascii.read(rst_table, format='rst')\n+print(\"Successfully read RST table:\")\n+print(tbl)\n+print()\n+\n+# Verify the data\n+assert len(tbl) == 2\n+assert tbl['wave'][0] == 350.0\n+assert tbl['wave'][1] == 950.0\n+assert tbl['response'][0] == 0.7\n+assert tbl['response'][1] == 1.2\n+\n+print(\"\u2713 All assertions passed!\")\n+print(\"\u2713 RST reading functionality is intact\")\n"
+    }
+  ],
+  "trajectory_format": "mini-swe-agent-1",
+  "instance_id": "astropy__astropy-14182"
+}
