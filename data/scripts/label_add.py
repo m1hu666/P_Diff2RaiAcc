@@ -5,8 +5,8 @@ from pathlib import Path
 def main() -> None:
 	base_dir = Path(__file__).resolve().parents[1]
 
-	report_path = base_dir / "traj" / "claude-sonnet-4-5-20250929" / "sb-cli-reports" / "swe-bench_verified__test__round3.json"
-	data_path = base_dir / "data" / "verified" / "claude-sonnet-4-5-20250929" / "round3.json"
+	report_path = base_dir / "traj" / "gemini-3-pro-preview" / "sb-cli-reports" / "swe-bench_verified__test__gemini3.json"
+	data_path = base_dir / "data" / "verified" / "gemini-3-pro-preview" / "round3.json"
 
 	with report_path.open("r", encoding="utf-8") as f:
 		report = json.load(f)

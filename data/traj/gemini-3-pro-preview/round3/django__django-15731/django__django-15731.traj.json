@@ -1,0 +1,1148 @@
+{
+  "info": {
+    "exit_status": "Submitted",
+    "submission": "diff --git a/django/db/models/manager.py b/django/db/models/manager.py\nindex e37e56cd17..f6f697299d 100644\n--- a/django/db/models/manager.py\n+++ b/django/db/models/manager.py\n@@ -1,3 +1,4 @@\n+import functools\n import copy\n import inspect\n from importlib import import_module\n@@ -81,11 +82,10 @@ class BaseManager:\n     @classmethod\n     def _get_queryset_methods(cls, queryset_class):\n         def create_method(name, method):\n+            @functools.wraps(method)\n             def manager_method(self, *args, **kwargs):\n                 return getattr(self.get_queryset(), name)(*args, **kwargs)\n \n-            manager_method.__name__ = method.__name__\n-            manager_method.__doc__ = method.__doc__\n             return manager_method\n \n         new_methods = {}\ndiff --git a/django/db/models/manager.py.orig b/django/db/models/manager.py.orig\nnew file mode 100644\nindex 0000000000..e5a5912299\n--- /dev/null\n+++ b/django/db/models/manager.py.orig\n@@ -0,0 +1,214 @@\n+import functools\n+import copy\n+import inspect\n+from importlib import import_module\n+\n+from django.db import router\n+from django.db.models.query import QuerySet\n+\n+\n+class BaseManager:\n+    # To retain order, track each time a Manager instance is created.\n+    creation_counter = 0\n+\n+    # Set to True for the 'objects' managers that are automatically created.\n+    auto_created = False\n+\n+    #: If set to True the manager will be serialized into migrations and will\n+    #: thus be available in e.g. RunPython operations.\n+    use_in_migrations = False\n+\n+    def __new__(cls, *args, **kwargs):\n+        # Capture the arguments to make returning them trivial.\n+        obj = super().__new__(cls)\n+        obj._constructor_args = (args, kwargs)\n+        return obj\n+\n+    def __init__(self):\n+        super().__init__()\n+        self._set_creation_counter()\n+        self.model = None\n+        self.name = None\n+        self._db = None\n+        self._hints = {}\n+\n+    def __str__(self):\n+        \"\"\"Return \"app_label.model_label.manager_name\".\"\"\"\n+        return \"%s.%s\" % (self.model._meta.label, self.name)\n+\n+    def __class_getitem__(cls, *args, **kwargs):\n+        return cls\n+\n+    def deconstruct(self):\n+        \"\"\"\n+        Return a 5-tuple of the form (as_manager (True), manager_class,\n+        queryset_class, args, kwargs).\n+\n+        Raise a ValueError if the manager is dynamically generated.\n+        \"\"\"\n+        qs_class = self._queryset_class\n+        if getattr(self, \"_built_with_as_manager\", False):\n+            # using MyQuerySet.as_manager()\n+            return (\n+                True,  # as_manager\n+                None,  # manager_class\n+                \"%s.%s\" % (qs_class.__module__, qs_class.__name__),  # qs_class\n+                None,  # args\n+                None,  # kwargs\n+            )\n+        else:\n+            module_name = self.__module__\n+            name = self.__class__.__name__\n+            # Make sure it's actually there and not an inner class\n+            module = import_module(module_name)\n+            if not hasattr(module, name):\n+                raise ValueError(\n+                    \"Could not find manager %s in %s.\\n\"\n+                    \"Please note that you need to inherit from managers you \"\n+                    \"dynamically generated with 'from_queryset()'.\"\n+                    % (name, module_name)\n+                )\n+            return (\n+                False,  # as_manager\n+                \"%s.%s\" % (module_name, name),  # manager_class\n+                None,  # qs_class\n+                self._constructor_args[0],  # args\n+                self._constructor_args[1],  # kwargs\n+            )\n+\n+    def check(self, **kwargs):\n+        return []\n+\n+    @classmethod\n+    def _get_queryset_methods(cls, queryset_class):\n+        def create_method(name, method):\n+            def manager_method(self, *args, **kwargs):\n+                return getattr(self.get_queryset(), name)(*args, **kwargs)\n+\n+            manager_method.__name__ = method.__name__\n+            manager_method.__doc__ = method.__doc__\n+            return manager_method\n+\n+        new_methods = {}\n+        for name, method in inspect.getmembers(\n+            queryset_class, predicate=inspect.isfunction\n+        ):\n+            # Only copy missing methods.\n+            if hasattr(cls, name):\n+                continue\n+            # Only copy public methods or methods with the attribute\n+            # queryset_only=False.\n+            queryset_only = getattr(method, \"queryset_only\", None)\n+            if queryset_only or (queryset_only is None and name.startswith(\"_\")):\n+                continue\n+            # Copy the method onto the manager.\n+            new_methods[name] = create_method(name, method)\n+        return new_methods\n+\n+    @classmethod\n+    def from_queryset(cls, queryset_class, class_name=None):\n+        if class_name is None:\n+            class_name = \"%sFrom%s\" % (cls.__name__, queryset_class.__name__)\n+        return type(\n+            class_name,\n+            (cls,),\n+            {\n+                \"_queryset_class\": queryset_class,\n+                **cls._get_queryset_methods(queryset_class),\n+            },\n+        )\n+\n+    def contribute_to_class(self, cls, name):\n+        self.name = self.name or name\n+        self.model = cls\n+\n+        setattr(cls, name, ManagerDescriptor(self))\n+\n+        cls._meta.add_manager(self)\n+\n+    def _set_creation_counter(self):\n+        \"\"\"\n+        Set the creation counter value for this instance and increment the\n+        class-level copy.\n+        \"\"\"\n+        self.creation_counter = BaseManager.creation_counter\n+        BaseManager.creation_counter += 1\n+\n+    def db_manager(self, using=None, hints=None):\n+        obj = copy.copy(self)\n+        obj._db = using or self._db\n+        obj._hints = hints or self._hints\n+        return obj\n+\n+    @property\n+    def db(self):\n+        return self._db or router.db_for_read(self.model, **self._hints)\n+\n+    #######################\n+    # PROXIES TO QUERYSET #\n+    #######################\n+\n+    def get_queryset(self):\n+        \"\"\"\n+        Return a new QuerySet object. Subclasses can override this method to\n+        customize the behavior of the Manager.\n+        \"\"\"\n+        return self._queryset_class(model=self.model, using=self._db, hints=self._hints)\n+\n+    def all(self):\n+        # We can't proxy this method through the `QuerySet` like we do for the\n+        # rest of the `QuerySet` methods. This is because `QuerySet.all()`\n+        # works by creating a \"copy\" of the current queryset and in making said\n+        # copy, all the cached `prefetch_related` lookups are lost. See the\n+        # implementation of `RelatedManager.get_queryset()` for a better\n+        # understanding of how this comes into play.\n+        return self.get_queryset()\n+\n+    def __eq__(self, other):\n+        return (\n+            isinstance(other, self.__class__)\n+            and self._constructor_args == other._constructor_args\n+        )\n+\n+    def __hash__(self):\n+        return id(self)\n+\n+\n+class Manager(BaseManager.from_queryset(QuerySet)):\n+    pass\n+\n+\n+class ManagerDescriptor:\n+    def __init__(self, manager):\n+        self.manager = manager\n+\n+    def __get__(self, instance, cls=None):\n+        if instance is not None:\n+            raise AttributeError(\n+                \"Manager isn't accessible via %s instances\" % cls.__name__\n+            )\n+\n+        if cls._meta.abstract:\n+            raise AttributeError(\n+                \"Manager isn't available; %s is abstract\" % (cls._meta.object_name,)\n+            )\n+\n+        if cls._meta.swapped:\n+            raise AttributeError(\n+                \"Manager isn't available; '%s' has been swapped for '%s'\"\n+                % (\n+                    cls._meta.label,\n+                    cls._meta.swapped,\n+                )\n+            )\n+\n+        return cls._meta.managers_map[self.manager.name]\n+\n+\n+class EmptyManager(Manager):\n+    def __init__(self, model):\n+        super().__init__()\n+        self.model = model\n+\n+    def get_queryset(self):\n+        return super().get_queryset().none()\n",
+    "model_stats": {
+      "instance_cost": 0.23700399999999996,
+      "api_calls": 22
+    },
+    "mini_version": "1.15.0",
+    "config": {
+      "agent": {
+        "system_template": "You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).\n\nInclude a THOUGHT section before your command where you explain your reasoning process.\nFormat your response as shown in <format_example>.\n\n<format_example>\nTHOUGHT: Your reasoning and analysis here\n\n```bash\nyour_command_here\n```\n</format_example>\n\nFailure to follow these rules will cause your response to be rejected.\n",
+        "instance_template": "<pr_description>\nConsider the following PR description:\n{{task}}\n</pr_description>\n\n<instructions>\n# Task Instructions\n\n## Overview\nYou're a software engineer interacting continuously with a computer by submitting commands.\nYou'll be helping implement necessary changes to meet requirements in the PR description.\nYour task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.\n\nIMPORTANT: This is an interactive process where you will think and issue ONE command, see its result, then think and issue your next command.\n\nFor each response:\n1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish\n2. Provide exactly ONE bash command to execute\n\n## Important Boundaries\n- MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)\n- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)\n\n## Recommended Workflow\n1. Analyze the codebase by finding and reading relevant files\n2. Create a script to reproduce the issue\n3. Edit the source code to resolve the issue\n4. Verify your fix works by running your script again\n5. Test edge cases to ensure your fix is robust\n\n## Command Execution Rules\nYou are operating in an environment where\n1. You write a single command\n2. The system executes that command in a subshell\n3. You see the result\n4. You write your next command\n\nEach response should include:\n1. A **THOUGHT** section where you explain your reasoning and plan\n2. A single bash code block with your command\n\nFormat your responses like this:\n\n<format_example>\nTHOUGHT: Here I explain my reasoning process, analysis of the current situation,\nand what I'm trying to accomplish with the command below.\n\n```bash\nyour_command_here\n```\n</format_example>\n\nCommands must be specified in a single bash code block:\n\n```bash\nyour_command_here\n```\n\n**CRITICAL REQUIREMENTS:**\n- Your response SHOULD include a THOUGHT section explaining your reasoning\n- Your response MUST include EXACTLY ONE bash code block\n- This bash block MUST contain EXACTLY ONE command (or a set of commands connected with && or ||)\n- If you include zero or multiple bash blocks, or no command at all, YOUR RESPONSE WILL FAIL\n- Do NOT try to run multiple independent commands in separate blocks in one response\n- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.\n- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files\n\nExample of a CORRECT response:\n<example_response>\nTHOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.\n\n```bash\nls -la\n```\n</example_response>\n\nExample of an INCORRECT response:\n<example_response>\nTHOUGHT: I need to examine the codebase and then look at a specific file. I'll run multiple commands to do this.\n\n```bash\nls -la\n```\n\nNow I'll read the file:\n\n```bash\ncat file.txt\n```\n</example_response>\n\nIf you need to run multiple commands, either:\n1. Combine them in one block using && or ||\n```bash\ncommand1 && command2 || echo \"Error occurred\"\n```\n\n2. Wait for the first command to complete, see its output, then issue the next command in your following response.\n\n## Environment Details\n- You have a full Linux shell environment\n- Always use non-interactive flags (-y, -f) for commands\n- Avoid interactive tools like vi, nano, or any that require user input\n- If a command isn't available, you can install it\n\n## Useful Command Examples\n\n### Create a new file:\n```bash\ncat <<'EOF' > newfile.py\nimport numpy as np\nhello = \"world\"\nprint(hello)\nEOF\n```\n\n### Edit files with sed:\n```bash\n# Replace all occurrences\nsed -i 's/old_string/new_string/g' filename.py\n\n# Replace only first occurrence\nsed -i 's/old_string/new_string/' filename.py\n\n# Replace first occurrence on line 1\nsed -i '1s/old_string/new_string/' filename.py\n\n# Replace all occurrences in lines 1-10\nsed -i '1,10s/old_string/new_string/g' filename.py\n```\n\n### View file content:\n```bash\n# View specific lines with numbers\nnl -ba filename.py | sed -n '10,20p'\n```\n\n### Any other command you want to run\n```bash\nanything\n```\n\n## Submission\nWhen you've completed your work (reading, editing, testing), and cannot make further progress\nissue exactly the following command:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```\n\nThis command will submit your work.\nYou cannot continue working (reading, editing, testing) in any way on this task after submitting.\n</instructions>\n",
+        "timeout_template": "The last command <command>{{action['action']}}</command> timed out and has been killed.\nThe output of the command was:\n <output>\n{{output}}\n</output>\nPlease try another command and make sure to avoid those requiring interactive input.",
+        "format_error_template": "Please always provide EXACTLY ONE action in triple backticks, found {{actions|length}} actions.\n\nPlease format your action in triple backticks as shown in <response_example>.\n\n<response_example>\nHere are some thoughts about why you want to perform the action.\n\n```bash\n<action>\n```\n</response_example>\n\nIf you have completed your assignment, please consult the first message about how to\nsubmit your solution (you will not be able to continue working on this task after that).\n",
+        "action_observation_template": "<returncode>{{output.returncode}}</returncode>\n{% if output.output | length < 10000 -%}\n<output>\n{{ output.output -}}\n</output>\n{%- else -%}\n<warning>\nThe output of your last command was too long.\nPlease try a different command that produces less output.\nIf you're looking at a file you can try use head, tail or sed to view a smaller number of lines selectively.\nIf you're using grep or find and it produced too much output, you can use a more selective search pattern.\nIf you really need to see something from the full command's output, you can redirect output to a file and then search in that file.\n</warning>\n{%- set elided_chars = output.output | length - 10000 -%}\n<output_head>\n{{ output.output[:5000] }}\n</output_head>\n<elided_chars>\n{{ elided_chars }} characters elided\n</elided_chars>\n<output_tail>\n{{ output.output[-5000:] }}\n</output_tail>\n{%- endif -%}\n",
+        "step_limit": 250,
+        "cost_limit": 3.0
+      },
+      "model": {
+        "model_name": "gemini/gemini-3-pro-preview",
+        "model_kwargs": {
+          "drop_params": true,
+          "temperature": 0.0
+        },
+        "litellm_model_registry": null,
+        "set_cache_control": null,
+        "cost_tracking": "ignore_errors"
+      },
+      "environment": {
+        "image": "docker.io/swebench/sweb.eval.x86_64.django_1776_django-15731:latest",
+        "cwd": "/testbed",
+        "env": {
+          "PAGER": "cat",
+          "MANPAGER": "cat",
+          "LESS": "-R",
+          "PIP_PROGRESS_BAR": "off",
+          "TQDM_DISABLE": "1"
+        },
+        "forward_env": [],
+        "timeout": 300,
+        "executable": "docker",
+        "run_args": [
+          "--rm"
+        ],
+        "container_timeout": "2h",
+        "pull_timeout": 3600
+      },
+      "agent_type": "minisweagent.run.extra.swebench.ProgressTrackingAgent",
+      "model_type": "minisweagent.models.litellm_model.LitellmModel",
+      "environment_type": "minisweagent.environments.docker.DockerEnvironment"
+    }
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.\nYour response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).\n\nInclude a THOUGHT section before your command where you explain your reasoning process.\nFormat your response as shown in <format_example>.\n\n<format_example>\nTHOUGHT: Your reasoning and analysis here\n\n```bash\nyour_command_here\n```\n</format_example>\n\nFailure to follow these rules will cause your response to be rejected."
+    },
+    {
+      "role": "user",
+      "content": "<pr_description>\nConsider the following PR description:\ninspect.signature() returns incorrect signature on manager methods.\nDescription\n\t \n\t\t(last modified by Shiva Kumar)\n\t \ninspect.signature returns incorrect signature information when used on queryset methods\nimport inspect\nfrom django.db import models\nclass Person(models.Model):\n\tname = models.CharField(max_length=100)\nprint(inspect.signature(Person.objects.bulk_create))\n# actual: (*args, **kwargs)\n# expected: (objs, batch_size=None, ignore_conflicts=False)\nipython and jupyter seem to internally use inspect.signature to show documentation when using the <obj>? command and they too show incorrect signature information:\n \nThe issue is due to the code at \u200bhttps://github.com/django/django/blob/fe2e1478464846638082219c933a4302e5cf3037/django/db/models/manager.py#L84\nAlthough we are ensuring the decorated method has the right name and docstring on lines 87 and 88, complete metadata is not copied.\nThe fix is to use functools.wraps instead of manually assigning name and docstring. wraps will take care of all the metadata and inspect.signature will return the expected output.\nIf the bug is acknowledged please assign the ticket to me, I would like to raise a PR for this.\n\n</pr_description>\n\n<instructions>\n# Task Instructions\n\n## Overview\nYou're a software engineer interacting continuously with a computer by submitting commands.\nYou'll be helping implement necessary changes to meet requirements in the PR description.\nYour task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.\n\nIMPORTANT: This is an interactive process where you will think and issue ONE command, see its result, then think and issue your next command.\n\nFor each response:\n1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish\n2. Provide exactly ONE bash command to execute\n\n## Important Boundaries\n- MODIFY: Regular source code files in /testbed (this is the working directory for all your subsequent commands)\n- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)\n\n## Recommended Workflow\n1. Analyze the codebase by finding and reading relevant files\n2. Create a script to reproduce the issue\n3. Edit the source code to resolve the issue\n4. Verify your fix works by running your script again\n5. Test edge cases to ensure your fix is robust\n\n## Command Execution Rules\nYou are operating in an environment where\n1. You write a single command\n2. The system executes that command in a subshell\n3. You see the result\n4. You write your next command\n\nEach response should include:\n1. A **THOUGHT** section where you explain your reasoning and plan\n2. A single bash code block with your command\n\nFormat your responses like this:\n\n<format_example>\nTHOUGHT: Here I explain my reasoning process, analysis of the current situation,\nand what I'm trying to accomplish with the command below.\n\n```bash\nyour_command_here\n```\n</format_example>\n\nCommands must be specified in a single bash code block:\n\n```bash\nyour_command_here\n```\n\n**CRITICAL REQUIREMENTS:**\n- Your response SHOULD include a THOUGHT section explaining your reasoning\n- Your response MUST include EXACTLY ONE bash code block\n- This bash block MUST contain EXACTLY ONE command (or a set of commands connected with && or ||)\n- If you include zero or multiple bash blocks, or no command at all, YOUR RESPONSE WILL FAIL\n- Do NOT try to run multiple independent commands in separate blocks in one response\n- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.\n- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files\n\nExample of a CORRECT response:\n<example_response>\nTHOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.\n\n```bash\nls -la\n```\n</example_response>\n\nExample of an INCORRECT response:\n<example_response>\nTHOUGHT: I need to examine the codebase and then look at a specific file. I'll run multiple commands to do this.\n\n```bash\nls -la\n```\n\nNow I'll read the file:\n\n```bash\ncat file.txt\n```\n</example_response>\n\nIf you need to run multiple commands, either:\n1. Combine them in one block using && or ||\n```bash\ncommand1 && command2 || echo \"Error occurred\"\n```\n\n2. Wait for the first command to complete, see its output, then issue the next command in your following response.\n\n## Environment Details\n- You have a full Linux shell environment\n- Always use non-interactive flags (-y, -f) for commands\n- Avoid interactive tools like vi, nano, or any that require user input\n- If a command isn't available, you can install it\n\n## Useful Command Examples\n\n### Create a new file:\n```bash\ncat <<'EOF' > newfile.py\nimport numpy as np\nhello = \"world\"\nprint(hello)\nEOF\n```\n\n### Edit files with sed:\n```bash\n# Replace all occurrences\nsed -i 's/old_string/new_string/g' filename.py\n\n# Replace only first occurrence\nsed -i 's/old_string/new_string/' filename.py\n\n# Replace first occurrence on line 1\nsed -i '1s/old_string/new_string/' filename.py\n\n# Replace all occurrences in lines 1-10\nsed -i '1,10s/old_string/new_string/g' filename.py\n```\n\n### View file content:\n```bash\n# View specific lines with numbers\nnl -ba filename.py | sed -n '10,20p'\n```\n\n### Any other command you want to run\n```bash\nanything\n```\n\n## Submission\nWhen you've completed your work (reading, editing, testing), and cannot make further progress\nissue exactly the following command:\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```\n\nThis command will submit your work.\nYou cannot continue working (reading, editing, testing) in any way on this task after submitting.\n</instructions>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I need to verify the current directory structure and locate the file mentioned in the PR description.\n\n```bash\nls -R django/db/models/manager.py\n```",
+      "extra": {
+        "response": {
+          "id": "DVUnafLYCJHmqtsP5LyQiQs",
+          "created": 1764185345,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I need to verify the current directory structure and locate the file mentioned in the PR description.\n\n```bash\nls -R django/db/models/manager.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [
+                  {
+                    "type": "thinking",
+                    "thinking": "{\"text\": \"THOUGHT: I need to verify the current directory structure and locate the file mentioned in the PR description.\\n\\n```bash\\nls -R django/db/models/manager.py\\n```\"}",
+                    "signature": "EosECogEAXLI2nw4avf6Vexs0w/EXnFCg5I3nJPuQ7ysgvfX2Q1YDRUDyan5Jb4WlehLAx/t87HIhggZdzd6ckAdI+8km0sgdZdb02lTFfMY4NaOGE9MQnSSbTVhtZHkbxL96FrJ+ipHBALRzW4qhdqukEe6PUUCaNtIErExNupa/1rZ2x52YhYp0rE91AOU6nwr0RTpvq2QQ6BhKvFKYMZxQ5aaEfO4LKuPoRmCBkouSgnsU68CB3My6CpKTYDpwfhGi9wXzUzfvNGd//Mda3m02X1VkaVMiU3qWZqNXXpQeUjwM13Of3Am/TbajCoY4p2wsdmT/KBOmxKyapGup48Lz1l2dnvXP7zzDCDbUbkk2hE9ehspXFvgutrEXDIm4eU6aMZoUCs8RptERYftXjfZvxC9o0tpN3V9O+zl77N5rEcVjY0rAgLxnfIXTHUr+FYke58rj+uWRDAeb3BlPGGcVF7wVzfFvwQCMHeDMaf88ihKRV4mty1mtsrASj/yrsv5VimpLMopDzteP3K42CkuiBHLxCLNaDyIbMLbAuPE+3ZL6bUFsrA2+K/9eK2leVQidBpljpsPtsF72IU34NTMubTiokuAKXFu5TLMHDm/oJ9CePfOSGYXwWCsUZ2wGPEPEWuau0/XWFGWflADBFd9fsQEtqX5wPdh9G0JQnuTqyfFw8yS15143tjjqw=="
+                  }
+                ],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 143,
+            "prompt_tokens": 1493,
+            "total_tokens": 1636,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 104,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 39,
+              "image_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 1493,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\ndjango/db/models/manager.py\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I will create a reproduction script `reproduce_issue.py` to confirm the reported issue. I need to configure Django settings within the script to make it runnable.\n\n```bash\ncat <<'EOF' > reproduce_issue.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.bulk_create)\n    print(f\"Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\n\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "HFUnaYycGP2tz7IPrvCn2AY",
+          "created": 1764185358,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I will create a reproduction script `reproduce_issue.py` to confirm the reported issue. I need to configure Django settings within the script to make it runnable.\n\n```bash\ncat <<'EOF' > reproduce_issue.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.bulk_create)\n    print(f\"Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\n\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [
+                  {
+                    "type": "thinking",
+                    "thinking": "{\"text\": \"THOUGHT: I will create a reproduction script `reproduce_issue.py` to confirm the reported issue. I need to configure Django settings within the script to make it runnable.\\n\\n```bash\\ncat <<'EOF' > reproduce_issue.py\\nimport os\\nimport django\\nfrom django.conf import settings\\nimport inspect\\n\\n# Configure Django settings\\nsettings.configure(\\n    DATABASES={\\n        'default': {\\n            'ENGINE': 'django.db.backends.sqlite3',\\n            'NAME': ':memory:',\\n        }\\n    },\\n    INSTALLED_APPS=[\\n        'django.contrib.contenttypes',\\n        'django.contrib.auth',\\n    ],\\n)\\n\\ndjango.setup()\\n\\nfrom django.db import models\\n\\nclass Person(models.Model):\\n    name = models.CharField(max_length=100)\\n    \\n    class Meta:\\n        app_label = 'reproduce_issue'\\n\\ntry:\\n    sig = inspect.signature(Person.objects.bulk_create)\\n    print(f\\\"Signature: {sig}\\\")\\nexcept Exception as e:\\n    print(f\\\"Error: {e}\\\")\\n\\nEOF\\n```\"}",
+                    "signature": "EsUGCsIGAXLI2ny57j3KF0riDgYQGuzXglmzLBMFCUU2EqUIBZfS+PBJneT87ZJF3W6O7J8Ov6TCMQlcvubQldg/hDCmqFyjbU3lTZ8UfBF36aIhfzQw2YW/i+F2Y4XpAqjSScf4XlPb2jnQHQBI0dFb6xrSEaOtrSuOJDYmkC/48PSMVtwNbqE9tWqHgSfLIJzS8cRgpHara3qlXCwGUmxxv5INO0fs4kug90K17ojoNjGaO4mZHfHsrBuxD5AHt5+vqCvTZbvtejZ2JhX4n9Xyu0pohIAV4IkNDuHJlxQWMmkOkeg/CZRgtmbPFQFGoH041xHi3UrhabPOGjXtqEQYNdWsC30dZFoo5JVQlZ2cFwgtrm8QW89319DEmkAdnuIm/HRxze4yU404jbo4RWjqLAgsSu1tJkOd9/sqJqluG169iX5Xfew4mZD3MperdbgJBGrASW6gSysxg3swKArXoDsxqGRdpK1TJgR40CH650XNppvc3k61ZZiRY+i0Tuee+SYOm+W7a1ijwBp2AQuCLR4dH55Ojb8IPR1I1H3soU5wWqUJn8x/Nn7dlIW8MDeTvm3h4UaOMjJKhAiy01wOM1wyAriNYKWaR+jSlhy4kDp0fahvOiqR1sEnSd314gAaDXBjxU1GYubNBCMrD97/G6fr4M4+qmQiuXrAUYCtP53BpiVO3fUCy9Ahy/9svUg7McXsVp8n+TNxwaric4V5jjbMpy/vnPMPT2C9KyUowYmS2yrN1TY/yvJgSQz6gzhc6QDcM16N1AwQJbdwHmdZ2GCWaUfAQMwTErMOFFC6A5q3ZzXpr0PCNyEadLUHL6sbM6/AW98fQzybZxee/l8hhuh+Ihra7/dNqMnBGAKI6ixpde8GntpAaHQQkrPo8UqzQXuIv970WhLiqbpWXm71pTmIllNIoDcvTma5t8sjNjfEBbOD7p6PevH8SF6mUwSSjUR4fQo+NsT3Ln7HX95PnRKVgcXbwfuHrHIagqtFDXqt5r6AH5J26iluDWCRknoPtRtrYWqW9qr7YwxbVvT3aLoJXgjm37/OxoeDaxvEtEKwxJkY4n1ZXELeirJzxBCrhU8AK+/nv7B26exRUqjpGC+iL49s"
+                  }
+                ],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 461,
+            "prompt_tokens": 1561,
+            "total_tokens": 2022,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 205,
+              "rejected_prediction_tokens": null,
+              "text_tokens": 256,
+              "image_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 1561,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I will run the reproduction script to see the current behavior.\n\n```bash\npython reproduce_issue.py\n```",
+      "extra": {
+        "response": {
+          "id": "KFUnafidBabXz7IP4uCnmAk",
+          "created": 1764185373,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I will run the reproduction script to see the current behavior.\n\n```bash\npython reproduce_issue.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 28,
+            "prompt_tokens": 1836,
+            "total_tokens": 1864,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 1836,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nSignature: (*args, **kwargs)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The output `Signature: (*args, **kwargs)` confirms the issue. It should be `(objs, batch_size=None, ignore_conflicts=False)`.\n\nNow I need to examine `django/db/models/manager.py` to locate the problematic code. The PR description points to line 84.\n\n```bash\nnl -ba django/db/models/manager.py | sed -n '70,100p'\n```",
+      "extra": {
+        "response": {
+          "id": "M1UnafTTM6DAqtsP_qzN2AM",
+          "created": 1764185385,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The output `Signature: (*args, **kwargs)` confirms the issue. It should be `(objs, batch_size=None, ignore_conflicts=False)`.\n\nNow I need to examine `django/db/models/manager.py` to locate the problematic code. The PR description points to line 84.\n\n```bash\nnl -ba django/db/models/manager.py | sed -n '70,100p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 103,
+            "prompt_tokens": 1892,
+            "total_tokens": 1995,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 1892,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n    70\t            return (\n    71\t                False,  # as_manager\n    72\t                \"%s.%s\" % (module_name, name),  # manager_class\n    73\t                None,  # qs_class\n    74\t                self._constructor_args[0],  # args\n    75\t                self._constructor_args[1],  # kwargs\n    76\t            )\n    77\t\n    78\t    def check(self, **kwargs):\n    79\t        return []\n    80\t\n    81\t    @classmethod\n    82\t    def _get_queryset_methods(cls, queryset_class):\n    83\t        def create_method(name, method):\n    84\t            def manager_method(self, *args, **kwargs):\n    85\t                return getattr(self.get_queryset(), name)(*args, **kwargs)\n    86\t\n    87\t            manager_method.__name__ = method.__name__\n    88\t            manager_method.__doc__ = method.__doc__\n    89\t            return manager_method\n    90\t\n    91\t        new_methods = {}\n    92\t        for name, method in inspect.getmembers(\n    93\t            queryset_class, predicate=inspect.isfunction\n    94\t        ):\n    95\t            # Only copy missing methods.\n    96\t            if hasattr(cls, name):\n    97\t                continue\n    98\t            # Only copy public methods or methods with the attribute\n    99\t            # queryset_only=False.\n   100\t            queryset_only = getattr(method, \"queryset_only\", None)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The code confirms what was described in the PR. The `create_method` function manually assigns `__name__` and `__doc__` but doesn't copy other metadata, which `functools.wraps` would handle.\n\nI need to modify `django/db/models/manager.py` to import `functools` and use `functools.wraps`.\n\nFirst, I'll check the imports in `django/db/models/manager.py` to see if `functools` is already imported.\n\n```bash\nhead -n 20 django/db/models/manager.py\n```",
+      "extra": {
+        "response": {
+          "id": "QlUnaYfUK6yIqtsP4b-kgQE",
+          "created": 1764185396,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The code confirms what was described in the PR. The `create_method` function manually assigns `__name__` and `__doc__` but doesn't copy other metadata, which `functools.wraps` would handle.\n\nI need to modify `django/db/models/manager.py` to import `functools` and use `functools.wraps`.\n\nFirst, I'll check the imports in `django/db/models/manager.py` to see if `functools` is already imported.\n\n```bash\nhead -n 20 django/db/models/manager.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 136,
+            "prompt_tokens": 2417,
+            "total_tokens": 2553,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 2417,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nimport copy\nimport inspect\nfrom importlib import import_module\n\nfrom django.db import router\nfrom django.db.models.query import QuerySet\n\n\nclass BaseManager:\n    # To retain order, track each time a Manager instance is created.\n    creation_counter = 0\n\n    # Set to True for the 'objects' managers that are automatically created.\n    auto_created = False\n\n    #: If set to True the manager will be serialized into migrations and will\n    #: thus be available in e.g. RunPython operations.\n    use_in_migrations = False\n\n    def __new__(cls, *args, **kwargs):\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: `functools` is not imported. I need to add `import functools` and modify `create_method` to use `functools.wraps`.\n\nI will use `sed` to add the import and modify the function.\n\nFirst, adding the import.\n\n```bash\nsed -i '1s/^/import functools\\n/' django/db/models/manager.py\n```",
+      "extra": {
+        "response": {
+          "id": "TVUnafjlA6yIqtsP4b-kgQE",
+          "created": 1764185411,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: `functools` is not imported. I need to add `import functools` and modify `create_method` to use `functools.wraps`.\n\nI will use `sed` to add the import and modify the function.\n\nFirst, adding the import.\n\n```bash\nsed -i '1s/^/import functools\\n/' django/db/models/manager.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 88,
+            "prompt_tokens": 2712,
+            "total_tokens": 2800,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 2712,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Now I will modify `create_method` to use `functools.wraps`.\n\nThe original code is:\n```python\n    def _get_queryset_methods(cls, queryset_class):\n        def create_method(name, method):\n            def manager_method(self, *args, **kwargs):\n                return getattr(self.get_queryset(), name)(*args, **kwargs)\n\n            manager_method.__name__ = method.__name__\n            manager_method.__doc__ = method.__doc__\n            return manager_method\n```\n\nI want to change it to:\n```python\n    def _get_queryset_methods(cls, queryset_class):\n        def create_method(name, method):\n            @functools.wraps(method)\n            def manager_method(self, *args, **kwargs):\n                return getattr(self.get_queryset(), name)(*args, **kwargs)\n\n            return manager_method\n```\n\nI'll read the file again to make sure line numbers haven't shifted too much (just by 1 due to the import).\n\n```bash\nnl -ba django/db/models/manager.py | sed -n '80,100p'\n```",
+      "extra": {
+        "response": {
+          "id": "WVUnaffiN6mMqtsPlNb8wA8",
+          "created": 1764185422,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Now I will modify `create_method` to use `functools.wraps`.\n\nThe original code is:\n```python\n    def _get_queryset_methods(cls, queryset_class):\n        def create_method(name, method):\n            def manager_method(self, *args, **kwargs):\n                return getattr(self.get_queryset(), name)(*args, **kwargs)\n\n            manager_method.__name__ = method.__name__\n            manager_method.__doc__ = method.__doc__\n            return manager_method\n```\n\nI want to change it to:\n```python\n    def _get_queryset_methods(cls, queryset_class):\n        def create_method(name, method):\n            @functools.wraps(method)\n            def manager_method(self, *args, **kwargs):\n                return getattr(self.get_queryset(), name)(*args, **kwargs)\n\n            return manager_method\n```\n\nI'll read the file again to make sure line numbers haven't shifted too much (just by 1 due to the import).\n\n```bash\nnl -ba django/db/models/manager.py | sed -n '80,100p'\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 276,
+            "prompt_tokens": 2819,
+            "total_tokens": 3095,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 2819,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n    80\t        return []\n    81\t\n    82\t    @classmethod\n    83\t    def _get_queryset_methods(cls, queryset_class):\n    84\t        def create_method(name, method):\n    85\t            def manager_method(self, *args, **kwargs):\n    86\t                return getattr(self.get_queryset(), name)(*args, **kwargs)\n    87\t\n    88\t            manager_method.__name__ = method.__name__\n    89\t            manager_method.__doc__ = method.__doc__\n    90\t            return manager_method\n    91\t\n    92\t        new_methods = {}\n    93\t        for name, method in inspect.getmembers(\n    94\t            queryset_class, predicate=inspect.isfunction\n    95\t        ):\n    96\t            # Only copy missing methods.\n    97\t            if hasattr(cls, name):\n    98\t                continue\n    99\t            # Only copy public methods or methods with the attribute\n   100\t            # queryset_only=False.\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I will replace the `create_method` implementation.\n\n```bash\ncat <<'EOF' > django/db/models/manager.py.patch\n--- django/db/models/manager.py\n+++ django/db/models/manager.py\n@@ -84,10 +84,9 @@\n     def _get_queryset_methods(cls, queryset_class):\n         def create_method(name, method):\n+            @functools.wraps(method)\n             def manager_method(self, *args, **kwargs):\n                 return getattr(self.get_queryset(), name)(*args, **kwargs)\n \n-            manager_method.__name__ = method.__name__\n-            manager_method.__doc__ = method.__doc__\n             return manager_method\n \n         new_methods = {}\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "ZlUnadTlO7O_qtsPleHwIQ",
+          "created": 1764185434,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I will replace the `create_method` implementation.\n\n```bash\ncat <<'EOF' > django/db/models/manager.py.patch\n--- django/db/models/manager.py\n+++ django/db/models/manager.py\n@@ -84,10 +84,9 @@\n     def _get_queryset_methods(cls, queryset_class):\n         def create_method(name, method):\n+            @functools.wraps(method)\n             def manager_method(self, *args, **kwargs):\n                 return getattr(self.get_queryset(), name)(*args, **kwargs)\n \n-            manager_method.__name__ = method.__name__\n-            manager_method.__doc__ = method.__doc__\n             return manager_method\n \n         new_methods = {}\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 193,
+            "prompt_tokens": 3378,
+            "total_tokens": 3571,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 3378,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I'll try to apply the patch. I need to be careful because I added a line at the beginning of the file, so line numbers in the patch might be off if I used absolute line numbers based on the previous `nl` output which was before the import addition? Wait, I added `import functools` at line 1. The `nl` output I just saw (lines 80-100) was AFTER adding the import (because I ran `nl` in the previous step, after `sed`).\n\nWait, let me check the `nl` output again.\nThe `nl` output shows:\n```\n    83\t    def _get_queryset_methods(cls, queryset_class):\n    84\t        def create_method(name, method):\n    85\t            def manager_method(self, *args, **kwargs):\n    86\t                return getattr(self.get_queryset(), name)(*args, **kwargs)\n    87\t\n    88\t            manager_method.__name__ = method.__name__\n    89\t            manager_method.__doc__ = method.__doc__\n    90\t            return manager_method\n```\n\nMy patch file has:\n```\n@@ -84,10 +84,9 @@\n     def _get_queryset_methods(cls, queryset_class):\n         def create_method(name, method):\n+            @functools.wraps(method)\n             def manager_method(self, *args, **kwargs):\n                 return getattr(self.get_queryset(), name)(*args, **kwargs)\n \n-            manager_method.__name__ = method.__name__\n-            manager_method.__doc__ = method.__doc__\n             return manager_method\n```\n\nThe context looks correct. `patch` command is usually smart enough to handle small offsets.\n\n```bash\npatch django/db/models/manager.py django/db/models/manager.py.patch\n```",
+      "extra": {
+        "response": {
+          "id": "eVUnaY7lDpusqtsP5f3smQs",
+          "created": 1764185448,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I'll try to apply the patch. I need to be careful because I added a line at the beginning of the file, so line numbers in the patch might be off if I used absolute line numbers based on the previous `nl` output which was before the import addition? Wait, I added `import functools` at line 1. The `nl` output I just saw (lines 80-100) was AFTER adding the import (because I ran `nl` in the previous step, after `sed`).\n\nWait, let me check the `nl` output again.\nThe `nl` output shows:\n```\n    83\t    def _get_queryset_methods(cls, queryset_class):\n    84\t        def create_method(name, method):\n    85\t            def manager_method(self, *args, **kwargs):\n    86\t                return getattr(self.get_queryset(), name)(*args, **kwargs)\n    87\t\n    88\t            manager_method.__name__ = method.__name__\n    89\t            manager_method.__doc__ = method.__doc__\n    90\t            return manager_method\n```\n\nMy patch file has:\n```\n@@ -84,10 +84,9 @@\n     def _get_queryset_methods(cls, queryset_class):\n         def create_method(name, method):\n+            @functools.wraps(method)\n             def manager_method(self, *args, **kwargs):\n                 return getattr(self.get_queryset(), name)(*args, **kwargs)\n \n-            manager_method.__name__ = method.__name__\n-            manager_method.__doc__ = method.__doc__\n             return manager_method\n```\n\nThe context looks correct. `patch` command is usually smart enough to handle small offsets.\n\n```bash\npatch django/db/models/manager.py django/db/models/manager.py.patch\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 442,
+            "prompt_tokens": 3590,
+            "total_tokens": 4032,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 3590,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\npatching file django/db/models/manager.py\nHunk #1 succeeded at 83 (offset -1 lines).\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The patch succeeded. Now I verify the change by running the reproduction script again.\n\n```bash\npython reproduce_issue.py\n```",
+      "extra": {
+        "response": {
+          "id": "hlUnaYKRJ7inqtsPt4K70As",
+          "created": 1764185466,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The patch succeeded. Now I verify the change by running the reproduction script again.\n\n```bash\npython reproduce_issue.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 31,
+            "prompt_tokens": 4080,
+            "total_tokens": 4111,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 4080,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nSignature: (objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The signature is now correct!\n`Signature: (objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None)`\n\nWait, the PR description said:\n`# expected: (objs, batch_size=None, ignore_conflicts=False)`\n\nBut my output has more arguments: `update_conflicts=False, update_fields=None, unique_fields=None`.\nThis is likely because the Django version I am working on is newer than the one in the PR description, and `bulk_create` has gained new arguments. The important thing is that it is NOT `(*args, **kwargs)`.\n\nI should verify that other methods also have correct signatures. I'll update the reproduction script to check another method, e.g., `filter`.\n\n```bash\ncat <<'EOF' > check_filter_signature.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.filter)\n    print(f\"Filter Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "lVUnaeGTJdyvqtsP5OTMkQs",
+          "created": 1764185480,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The signature is now correct!\n`Signature: (objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None)`\n\nWait, the PR description said:\n`# expected: (objs, batch_size=None, ignore_conflicts=False)`\n\nBut my output has more arguments: `update_conflicts=False, update_fields=None, unique_fields=None`.\nThis is likely because the Django version I am working on is newer than the one in the PR description, and `bulk_create` has gained new arguments. The important thing is that it is NOT `(*args, **kwargs)`.\n\nI should verify that other methods also have correct signatures. I'll update the reproduction script to check another method, e.g., `filter`.\n\n```bash\ncat <<'EOF' > check_filter_signature.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.filter)\n    print(f\"Filter Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 405,
+            "prompt_tokens": 4168,
+            "total_tokens": 4573,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 4168,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Running the check for `filter`.\n\n```bash\npython check_filter_signature.py\n```",
+      "extra": {
+        "response": {
+          "id": "o1UnaY2wH-6-qtsP8d6OyQ8",
+          "created": 1764185494,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Running the check for `filter`.\n\n```bash\npython check_filter_signature.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 24,
+            "prompt_tokens": 4592,
+            "total_tokens": 4616,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 4592,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nFilter Signature: (*args, **kwargs)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Wait, `filter` signature is still `(*args, **kwargs)`. Why?\n\n`filter` is a method on `QuerySet`. `Manager` proxies calls to `QuerySet`.\n\nLet's look at `django/db/models/query.py` to see the signature of `filter`.\n\n```bash\ngrep -A 5 \"def filter\" django/db/models/query.py\n```",
+      "extra": {
+        "response": {
+          "id": "sVUnaerCLM2kqtsP4pKwwA8",
+          "created": 1764185509,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Wait, `filter` signature is still `(*args, **kwargs)`. Why?\n\n`filter` is a method on `QuerySet`. `Manager` proxies calls to `QuerySet`.\n\nLet's look at `django/db/models/query.py` to see the signature of `filter`.\n\n```bash\ngrep -A 5 \"def filter\" django/db/models/query.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 92,
+            "prompt_tokens": 4645,
+            "total_tokens": 4737,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 4645,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n    def filter(self, *args, **kwargs):\n        \"\"\"\n        Return a new QuerySet instance with the args ANDed to the existing\n        set.\n        \"\"\"\n        self._not_support_combined_queries(\"filter\")\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Ah, `QuerySet.filter` itself is defined as `def filter(self, *args, **kwargs):`. So `inspect.signature` is correctly reporting `(*args, **kwargs)` because that IS the signature of `QuerySet.filter`.\n\nThe issue reported in the PR was about `bulk_create`. Let's check `bulk_create` in `django/db/models/query.py`.\n\n```bash\ngrep -A 5 \"def bulk_create\" django/db/models/query.py\n```",
+      "extra": {
+        "response": {
+          "id": "vlUnaZDABcyKmtkPyaIo",
+          "created": 1764185522,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Ah, `QuerySet.filter` itself is defined as `def filter(self, *args, **kwargs):`. So `inspect.signature` is correctly reporting `(*args, **kwargs)` because that IS the signature of `QuerySet.filter`.\n\nThe issue reported in the PR was about `bulk_create`. Let's check `bulk_create` in `django/db/models/query.py`.\n\n```bash\ngrep -A 5 \"def bulk_create\" django/db/models/query.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 117,
+            "prompt_tokens": 4809,
+            "total_tokens": 4926,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 4809,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n    def bulk_create(\n        self,\n        objs,\n        batch_size=None,\n        ignore_conflicts=False,\n        update_conflicts=False,\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Yes, `bulk_create` has explicit arguments.\n\nSo my fix works for methods that have explicit arguments.\n\nI should check if there are any side effects. `functools.wraps` copies `__module__`, `__name__`, `__qualname__`, `__doc__`, and `__annotations__`.\n\nThe original code was:\n```python\n            manager_method.__name__ = method.__name__\n            manager_method.__doc__ = method.__doc__\n```\n\nIt was only copying `__name__` and `__doc__`.\n\nBy using `wraps`, we are also copying `__module__`, `__qualname__`, and `__annotations__`. And importantly, `__wrapped__` attribute is added, which `inspect.signature` uses to follow the chain.\n\nI'll verify if `inspect.signature` works correctly for a custom method on a custom QuerySet.\n\n```bash\ncat <<'EOF' > check_custom_method.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass PersonQuerySet(models.QuerySet):\n    def custom_method(self, arg1, arg2=None):\n        pass\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    objects = PersonQuerySet.as_manager()\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.custom_method)\n    print(f\"Custom Method Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "0lUnaeuwDsa2qtsPj8bNwA8",
+          "created": 1764185535,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Yes, `bulk_create` has explicit arguments.\n\nSo my fix works for methods that have explicit arguments.\n\nI should check if there are any side effects. `functools.wraps` copies `__module__`, `__name__`, `__qualname__`, `__doc__`, and `__annotations__`.\n\nThe original code was:\n```python\n            manager_method.__name__ = method.__name__\n            manager_method.__doc__ = method.__doc__\n```\n\nIt was only copying `__name__` and `__doc__`.\n\nBy using `wraps`, we are also copying `__module__`, `__qualname__`, and `__annotations__`. And importantly, `__wrapped__` attribute is added, which `inspect.signature` uses to follow the chain.\n\nI'll verify if `inspect.signature` works correctly for a custom method on a custom QuerySet.\n\n```bash\ncat <<'EOF' > check_custom_method.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass PersonQuerySet(models.QuerySet):\n    def custom_method(self, arg1, arg2=None):\n        pass\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    objects = PersonQuerySet.as_manager()\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.custom_method)\n    print(f\"Custom Method Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 466,
+            "prompt_tokens": 4986,
+            "total_tokens": 5452,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 4986,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Running the check for custom method.\n\n```bash\npython check_custom_method.py\n```",
+      "extra": {
+        "response": {
+          "id": "4VUnaeWkA5WvqtsPq43ByQ8",
+          "created": 1764185555,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Running the check for custom method.\n\n```bash\npython check_custom_method.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 24,
+            "prompt_tokens": 5471,
+            "total_tokens": 5495,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 5471,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nCustom Method Signature: (arg1, arg2=None)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: It works correctly for custom methods too.\n\nI should also check if `from_queryset` works as expected, although `as_manager` (which I used in `check_custom_method.py`) uses `from_queryset` internally or similar mechanism.\n\nActually `as_manager` returns a `Manager` instance that is dynamically created using `from_queryset`.\n\nLet's verify `Manager.from_queryset`.\n\n```bash\ncat <<'EOF' > check_from_queryset.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass PersonQuerySet(models.QuerySet):\n    def custom_method(self, arg1, arg2=None):\n        pass\n\nPersonManager = models.Manager.from_queryset(PersonQuerySet)\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    objects = PersonManager()\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.custom_method)\n    print(f\"Custom Method Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\nEOF\n```",
+      "extra": {
+        "response": {
+          "id": "81UnaYoyzp3Psg_iqLrQBg",
+          "created": 1764185569,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: It works correctly for custom methods too.\n\nI should also check if `from_queryset` works as expected, although `as_manager` (which I used in `check_custom_method.py`) uses `from_queryset` internally or similar mechanism.\n\nActually `as_manager` returns a `Manager` instance that is dynamically created using `from_queryset`.\n\nLet's verify `Manager.from_queryset`.\n\n```bash\ncat <<'EOF' > check_from_queryset.py\nimport os\nimport django\nfrom django.conf import settings\nimport inspect\n\n# Configure Django settings\nsettings.configure(\n    DATABASES={\n        'default': {\n            'ENGINE': 'django.db.backends.sqlite3',\n            'NAME': ':memory:',\n        }\n    },\n    INSTALLED_APPS=[\n        'django.contrib.contenttypes',\n        'django.contrib.auth',\n    ],\n)\n\ndjango.setup()\n\nfrom django.db import models\n\nclass PersonQuerySet(models.QuerySet):\n    def custom_method(self, arg1, arg2=None):\n        pass\n\nPersonManager = models.Manager.from_queryset(PersonQuerySet)\n\nclass Person(models.Model):\n    name = models.CharField(max_length=100)\n    objects = PersonManager()\n    \n    class Meta:\n        app_label = 'reproduce_issue'\n\ntry:\n    sig = inspect.signature(Person.objects.custom_method)\n    print(f\"Custom Method Signature: {sig}\")\nexcept Exception as e:\n    print(f\"Error: {e}\")\nEOF\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 369,
+            "prompt_tokens": 5528,
+            "total_tokens": 5897,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 5528,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: Running `check_from_queryset.py`.\n\n```bash\npython check_from_queryset.py\n```",
+      "extra": {
+        "response": {
+          "id": "_1Unaf20BdyvqtsP5OTMkQs",
+          "created": 1764185588,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: Running `check_from_queryset.py`.\n\n```bash\npython check_from_queryset.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 27,
+            "prompt_tokens": 5916,
+            "total_tokens": 5943,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 5916,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nCustom Method Signature: (arg1, arg2=None)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: It works.\n\nOne thing to consider is if `functools.wraps` causes any issues with `__qualname__` or `__module__` that might be unexpected, but generally `wraps` is the correct way to do this.\n\nThe PR description says:\n\"The fix is to use functools.wraps instead of manually assigning name and docstring. wraps will take care of all the metadata and inspect.signature will return the expected output.\"\n\nI have implemented exactly this.\n\nI'll double check the file content to ensure no syntax errors or weird artifacts.\n\n```bash\ncat django/db/models/manager.py\n```",
+      "extra": {
+        "response": {
+          "id": "DVYnaZvqDpbiz7IP5tW_oQk",
+          "created": 1764185599,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: It works.\n\nOne thing to consider is if `functools.wraps` causes any issues with `__qualname__` or `__module__` that might be unexpected, but generally `wraps` is the correct way to do this.\n\nThe PR description says:\n\"The fix is to use functools.wraps instead of manually assigning name and docstring. wraps will take care of all the metadata and inspect.signature will return the expected output.\"\n\nI have implemented exactly this.\n\nI'll double check the file content to ensure no syntax errors or weird artifacts.\n\n```bash\ncat django/db/models/manager.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 141,
+            "prompt_tokens": 5976,
+            "total_tokens": 6117,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 5976,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nimport functools\nimport copy\nimport inspect\nfrom importlib import import_module\n\nfrom django.db import router\nfrom django.db.models.query import QuerySet\n\n\nclass BaseManager:\n    # To retain order, track each time a Manager instance is created.\n    creation_counter = 0\n\n    # Set to True for the 'objects' managers that are automatically created.\n    auto_created = False\n\n    #: If set to True the manager will be serialized into migrations and will\n    #: thus be available in e.g. RunPython operations.\n    use_in_migrations = False\n\n    def __new__(cls, *args, **kwargs):\n        # Capture the arguments to make returning them trivial.\n        obj = super().__new__(cls)\n        obj._constructor_args = (args, kwargs)\n        return obj\n\n    def __init__(self):\n        super().__init__()\n        self._set_creation_counter()\n        self.model = None\n        self.name = None\n        self._db = None\n        self._hints = {}\n\n    def __str__(self):\n        \"\"\"Return \"app_label.model_label.manager_name\".\"\"\"\n        return \"%s.%s\" % (self.model._meta.label, self.name)\n\n    def __class_getitem__(cls, *args, **kwargs):\n        return cls\n\n    def deconstruct(self):\n        \"\"\"\n        Return a 5-tuple of the form (as_manager (True), manager_class,\n        queryset_class, args, kwargs).\n\n        Raise a ValueError if the manager is dynamically generated.\n        \"\"\"\n        qs_class = self._queryset_class\n        if getattr(self, \"_built_with_as_manager\", False):\n            # using MyQuerySet.as_manager()\n            return (\n                True,  # as_manager\n                None,  # manager_class\n                \"%s.%s\" % (qs_class.__module__, qs_class.__name__),  # qs_class\n                None,  # args\n                None,  # kwargs\n            )\n        else:\n            module_name = self.__module__\n            name = self.__class__.__name__\n            # Make sure it's actually there and not an inner class\n            module = import_module(module_name)\n            if not hasattr(module, name):\n                raise ValueError(\n                    \"Could not find manager %s in %s.\\n\"\n                    \"Please note that you need to inherit from managers you \"\n                    \"dynamically generated with 'from_queryset()'.\"\n                    % (name, module_name)\n                )\n            return (\n                False,  # as_manager\n                \"%s.%s\" % (module_name, name),  # manager_class\n                None,  # qs_class\n                self._constructor_args[0],  # args\n                self._constructor_args[1],  # kwargs\n            )\n\n    def check(self, **kwargs):\n        return []\n\n    @classmethod\n    def _get_queryset_methods(cls, queryset_class):\n        def create_method(name, method):\n            @functools.wraps(method)\n            def manager_method(self, *args, **kwargs):\n                return getattr(self.get_queryset(), name)(*args, **kwargs)\n\n            return manager_method\n\n        new_methods = {}\n        for name, method in inspect.getmembers(\n            queryset_class, predicate=inspect.isfunction\n        ):\n            # Only copy missing methods.\n            if hasattr(cls, name):\n                continue\n            # Only copy public methods or methods with the attribute\n            # queryset_only=False.\n            queryset_only = getattr(method, \"queryset_only\", None)\n            if queryset_only or (queryset_only is None and name.startswith(\"_\")):\n                continue\n            # Copy the method onto the manager.\n            new_methods[name] = create_method(name, method)\n        return new_methods\n\n    @classmethod\n    def from_queryset(cls, queryset_class, class_name=None):\n        if class_name is None:\n            class_name = \"%sFrom%s\" % (cls.__name__, queryset_class.__name__)\n        return type(\n            class_name,\n            (cls,),\n            {\n                \"_queryset_class\": queryset_class,\n                **cls._get_queryset_methods(queryset_class),\n            },\n        )\n\n    def contribute_to_class(self, cls, name):\n        self.name = self.name or name\n        self.model = cls\n\n        setattr(cls, name, ManagerDescriptor(self))\n\n        cls._meta.add_manager(self)\n\n    def _set_creation_counter(self):\n        \"\"\"\n        Set the creation counter value for this instance and increment the\n        class-level copy.\n        \"\"\"\n        self.creation_counter = BaseManager.creation_counter\n        BaseManager.creation_counter += 1\n\n    def db_manager(self, using=None, hints=None):\n        obj = copy.copy(self)\n        obj._db = using or self._db\n        obj._hints = hints or self._hints\n        return obj\n\n    @property\n    def db(self):\n        return self._db or router.db_for_read(self.model, **self._hints)\n\n    #######################\n    # PROXIES TO QUERYSET #\n    #######################\n\n    def get_queryset(self):\n        \"\"\"\n        Return a new QuerySet object. Subclasses can override this method to\n        customize the behavior of the Manager.\n        \"\"\"\n        return self._queryset_class(model=self.model, using=self._db, hints=self._hints)\n\n    def all(self):\n        # We can't proxy this method through the `QuerySet` like we do for the\n        # rest of the `QuerySet` methods. This is because `QuerySet.all()`\n        # works by creating a \"copy\" of the current queryset and in making said\n        # copy, all the cached `prefetch_related` lookups are lost. See the\n        # implementation of `RelatedManager.get_queryset()` for a better\n        # understanding of how this comes into play.\n        return self.get_queryset()\n\n    def __eq__(self, other):\n        return (\n            isinstance(other, self.__class__)\n            and self._constructor_args == other._constructor_args\n        )\n\n    def __hash__(self):\n        return id(self)\n\n\nclass Manager(BaseManager.from_queryset(QuerySet)):\n    pass\n\n\nclass ManagerDescriptor:\n    def __init__(self, manager):\n        self.manager = manager\n\n    def __get__(self, instance, cls=None):\n        if instance is not None:\n            raise AttributeError(\n                \"Manager isn't accessible via %s instances\" % cls.__name__\n            )\n\n        if cls._meta.abstract:\n            raise AttributeError(\n                \"Manager isn't available; %s is abstract\" % (cls._meta.object_name,)\n            )\n\n        if cls._meta.swapped:\n            raise AttributeError(\n                \"Manager isn't available; '%s' has been swapped for '%s'\"\n                % (\n                    cls._meta.label,\n                    cls._meta.swapped,\n                )\n            )\n\n        return cls._meta.managers_map[self.manager.name]\n\n\nclass EmptyManager(Manager):\n    def __init__(self, model):\n        super().__init__()\n        self.model = model\n\n    def get_queryset(self):\n        return super().get_queryset().none()\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The file looks correct. `import functools` is at the top, and `create_method` uses `@functools.wraps(method)`.\n\nI'll run the reproduction script one last time to be absolutely sure.\n\n```bash\npython reproduce_issue.py\n```",
+      "extra": {
+        "response": {
+          "id": "HFYnaZGjHY61qtsP2a_loAs",
+          "created": 1764185614,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The file looks correct. `import functools` is at the top, and `create_method` uses `@functools.wraps(method)`.\n\nI'll run the reproduction script one last time to be absolutely sure.\n\n```bash\npython reproduce_issue.py\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 63,
+            "prompt_tokens": 7877,
+            "total_tokens": 7940,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 7877,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\nSignature: (objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None)\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: The output is correct.\n\nI'll remove the temporary scripts I created.\n\n```bash\nrm reproduce_issue.py check_filter_signature.py check_custom_method.py check_from_queryset.py django/db/models/manager.py.patch\n```",
+      "extra": {
+        "response": {
+          "id": "KlYnaav4KP-rmtkPm9Dl4Q8",
+          "created": 1764185629,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: The output is correct.\n\nI'll remove the temporary scripts I created.\n\n```bash\nrm reproduce_issue.py check_filter_signature.py check_custom_method.py check_from_queryset.py django/db/models/manager.py.patch\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 63,
+            "prompt_tokens": 7997,
+            "total_tokens": 8060,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 7997,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "<returncode>0</returncode>\n<output>\n</output>"
+    },
+    {
+      "role": "assistant",
+      "content": "THOUGHT: I have fixed the issue by using `functools.wraps` in `django/db/models/manager.py`. I have verified the fix with a reproduction script and checked edge cases (custom methods, `from_queryset`).\n\nI'm ready to submit.\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```",
+      "extra": {
+        "response": {
+          "id": "OVYnacexFf6lmtkP5KKByQ8",
+          "created": 1764185643,
+          "model": "gemini-3-pro-preview",
+          "object": "chat.completion",
+          "system_fingerprint": null,
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "index": 0,
+              "message": {
+                "content": "THOUGHT: I have fixed the issue by using `functools.wraps` in `django/db/models/manager.py`. I have verified the fix with a reproduction script and checked edge cases (custom methods, `from_queryset`).\n\nI'm ready to submit.\n\n```bash\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && git add -A && git diff --cached\n```",
+                "role": "assistant",
+                "tool_calls": null,
+                "function_call": null,
+                "images": [],
+                "thinking_blocks": [],
+                "provider_specific_fields": null
+              }
+            }
+          ],
+          "usage": {
+            "completion_tokens": 88,
+            "prompt_tokens": 8079,
+            "total_tokens": 8167,
+            "completion_tokens_details": null,
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cached_tokens": null,
+              "text_tokens": 8079,
+              "image_tokens": null
+            }
+          },
+          "vertex_ai_grounding_metadata": [],
+          "vertex_ai_url_context_metadata": [],
+          "vertex_ai_safety_results": [],
+          "vertex_ai_citation_metadata": []
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "diff --git a/django/db/models/manager.py b/django/db/models/manager.py\nindex e37e56cd17..f6f697299d 100644\n--- a/django/db/models/manager.py\n+++ b/django/db/models/manager.py\n@@ -1,3 +1,4 @@\n+import functools\n import copy\n import inspect\n from importlib import import_module\n@@ -81,11 +82,10 @@ class BaseManager:\n     @classmethod\n     def _get_queryset_methods(cls, queryset_class):\n         def create_method(name, method):\n+            @functools.wraps(method)\n             def manager_method(self, *args, **kwargs):\n                 return getattr(self.get_queryset(), name)(*args, **kwargs)\n \n-            manager_method.__name__ = method.__name__\n-            manager_method.__doc__ = method.__doc__\n             return manager_method\n \n         new_methods = {}\ndiff --git a/django/db/models/manager.py.orig b/django/db/models/manager.py.orig\nnew file mode 100644\nindex 0000000000..e5a5912299\n--- /dev/null\n+++ b/django/db/models/manager.py.orig\n@@ -0,0 +1,214 @@\n+import functools\n+import copy\n+import inspect\n+from importlib import import_module\n+\n+from django.db import router\n+from django.db.models.query import QuerySet\n+\n+\n+class BaseManager:\n+    # To retain order, track each time a Manager instance is created.\n+    creation_counter = 0\n+\n+    # Set to True for the 'objects' managers that are automatically created.\n+    auto_created = False\n+\n+    #: If set to True the manager will be serialized into migrations and will\n+    #: thus be available in e.g. RunPython operations.\n+    use_in_migrations = False\n+\n+    def __new__(cls, *args, **kwargs):\n+        # Capture the arguments to make returning them trivial.\n+        obj = super().__new__(cls)\n+        obj._constructor_args = (args, kwargs)\n+        return obj\n+\n+    def __init__(self):\n+        super().__init__()\n+        self._set_creation_counter()\n+        self.model = None\n+        self.name = None\n+        self._db = None\n+        self._hints = {}\n+\n+    def __str__(self):\n+        \"\"\"Return \"app_label.model_label.manager_name\".\"\"\"\n+        return \"%s.%s\" % (self.model._meta.label, self.name)\n+\n+    def __class_getitem__(cls, *args, **kwargs):\n+        return cls\n+\n+    def deconstruct(self):\n+        \"\"\"\n+        Return a 5-tuple of the form (as_manager (True), manager_class,\n+        queryset_class, args, kwargs).\n+\n+        Raise a ValueError if the manager is dynamically generated.\n+        \"\"\"\n+        qs_class = self._queryset_class\n+        if getattr(self, \"_built_with_as_manager\", False):\n+            # using MyQuerySet.as_manager()\n+            return (\n+                True,  # as_manager\n+                None,  # manager_class\n+                \"%s.%s\" % (qs_class.__module__, qs_class.__name__),  # qs_class\n+                None,  # args\n+                None,  # kwargs\n+            )\n+        else:\n+            module_name = self.__module__\n+            name = self.__class__.__name__\n+            # Make sure it's actually there and not an inner class\n+            module = import_module(module_name)\n+            if not hasattr(module, name):\n+                raise ValueError(\n+                    \"Could not find manager %s in %s.\\n\"\n+                    \"Please note that you need to inherit from managers you \"\n+                    \"dynamically generated with 'from_queryset()'.\"\n+                    % (name, module_name)\n+                )\n+            return (\n+                False,  # as_manager\n+                \"%s.%s\" % (module_name, name),  # manager_class\n+                None,  # qs_class\n+                self._constructor_args[0],  # args\n+                self._constructor_args[1],  # kwargs\n+            )\n+\n+    def check(self, **kwargs):\n+        return []\n+\n+    @classmethod\n+    def _get_queryset_methods(cls, queryset_class):\n+        def create_method(name, method):\n+            def manager_method(self, *args, **kwargs):\n+                return getattr(self.get_queryset(), name)(*args, **kwargs)\n+\n+            manager_method.__name__ = method.__name__\n+            manager_method.__doc__ = method.__doc__\n+            return manager_method\n+\n+        new_methods = {}\n+        for name, method in inspect.getmembers(\n+            queryset_class, predicate=inspect.isfunction\n+        ):\n+            # Only copy missing methods.\n+            if hasattr(cls, name):\n+                continue\n+            # Only copy public methods or methods with the attribute\n+            # queryset_only=False.\n+            queryset_only = getattr(method, \"queryset_only\", None)\n+            if queryset_only or (queryset_only is None and name.startswith(\"_\")):\n+                continue\n+            # Copy the method onto the manager.\n+            new_methods[name] = create_method(name, method)\n+        return new_methods\n+\n+    @classmethod\n+    def from_queryset(cls, queryset_class, class_name=None):\n+        if class_name is None:\n+            class_name = \"%sFrom%s\" % (cls.__name__, queryset_class.__name__)\n+        return type(\n+            class_name,\n+            (cls,),\n+            {\n+                \"_queryset_class\": queryset_class,\n+                **cls._get_queryset_methods(queryset_class),\n+            },\n+        )\n+\n+    def contribute_to_class(self, cls, name):\n+        self.name = self.name or name\n+        self.model = cls\n+\n+        setattr(cls, name, ManagerDescriptor(self))\n+\n+        cls._meta.add_manager(self)\n+\n+    def _set_creation_counter(self):\n+        \"\"\"\n+        Set the creation counter value for this instance and increment the\n+        class-level copy.\n+        \"\"\"\n+        self.creation_counter = BaseManager.creation_counter\n+        BaseManager.creation_counter += 1\n+\n+    def db_manager(self, using=None, hints=None):\n+        obj = copy.copy(self)\n+        obj._db = using or self._db\n+        obj._hints = hints or self._hints\n+        return obj\n+\n+    @property\n+    def db(self):\n+        return self._db or router.db_for_read(self.model, **self._hints)\n+\n+    #######################\n+    # PROXIES TO QUERYSET #\n+    #######################\n+\n+    def get_queryset(self):\n+        \"\"\"\n+        Return a new QuerySet object. Subclasses can override this method to\n+        customize the behavior of the Manager.\n+        \"\"\"\n+        return self._queryset_class(model=self.model, using=self._db, hints=self._hints)\n+\n+    def all(self):\n+        # We can't proxy this method through the `QuerySet` like we do for the\n+        # rest of the `QuerySet` methods. This is because `QuerySet.all()`\n+        # works by creating a \"copy\" of the current queryset and in making said\n+        # copy, all the cached `prefetch_related` lookups are lost. See the\n+        # implementation of `RelatedManager.get_queryset()` for a better\n+        # understanding of how this comes into play.\n+        return self.get_queryset()\n+\n+    def __eq__(self, other):\n+        return (\n+            isinstance(other, self.__class__)\n+            and self._constructor_args == other._constructor_args\n+        )\n+\n+    def __hash__(self):\n+        return id(self)\n+\n+\n+class Manager(BaseManager.from_queryset(QuerySet)):\n+    pass\n+\n+\n+class ManagerDescriptor:\n+    def __init__(self, manager):\n+        self.manager = manager\n+\n+    def __get__(self, instance, cls=None):\n+        if instance is not None:\n+            raise AttributeError(\n+                \"Manager isn't accessible via %s instances\" % cls.__name__\n+            )\n+\n+        if cls._meta.abstract:\n+            raise AttributeError(\n+                \"Manager isn't available; %s is abstract\" % (cls._meta.object_name,)\n+            )\n+\n+        if cls._meta.swapped:\n+            raise AttributeError(\n+                \"Manager isn't available; '%s' has been swapped for '%s'\"\n+                % (\n+                    cls._meta.label,\n+                    cls._meta.swapped,\n+                )\n+            )\n+\n+        return cls._meta.managers_map[self.manager.name]\n+\n+\n+class EmptyManager(Manager):\n+    def __init__(self, model):\n+        super().__init__()\n+        self.model = model\n+\n+    def get_queryset(self):\n+        return super().get_queryset().none()\n"
+    }
+  ],
+  "trajectory_format": "mini-swe-agent-1",
+  "instance_id": "django__django-15731"
+}
