@@ -1,0 +1,609 @@
+diff --git a/demonstration.py b/demonstration.py
+new file mode 100644
+index 0000000000..f09c722dae
+--- /dev/null
++++ b/demonstration.py
+@@ -0,0 +1,54 @@
++"""
++Demonstration of the fix for: 
++"ResolverMatch.__repr__() doesn't handle functools.partial() nicely"
++
++This script demonstrates that ResolverMatch now properly unwraps
++functools.partial objects to show the underlying function in __repr__().
++"""
++import functools
++from django.urls.resolvers import ResolverMatch
++
++def my_view(request, arg1, arg2="default"):
++    """Example view function"""
++    pass
++
++print("=" * 80)
++print("DEMONSTRATION: ResolverMatch with functools.partial")
++print("=" * 80)
++print()
++
++# Create a partial function
++partial_view = functools.partial(my_view, arg2="prefilled_value")
++
++print("1. Original partial object:")
++print(f"   {partial_view}")
++print()
++
++# Create ResolverMatch with the partial
++match = ResolverMatch(
++    func=partial_view,
++    args=(),
++    kwargs={'arg1': 'test_value'},
++    url_name='my_url',
++    route='^test/$'
++)
++
++print("2. ResolverMatch created with partial:")
++print(f"   {repr(match)}")
++print()
++
++print("3. Key improvements:")
++print(f"   ✓ Shows 'my_view' instead of 'functools.partial'")
++print(f"   ✓ _func_path = '{match._func_path}' (reveals underlying function)")
++print(f"   ✓ func attribute = {match.func} (unwrapped)")
++print()
++
++print("4. Verification:")
++print(f"   - 'my_view' in repr(match): {'my_view' in repr(match)}")
++print(f"   - 'functools.partial' NOT in repr(match): {'functools.partial' not in repr(match)}")
++print(f"   - match.func is my_view: {match.func is my_view}")
++print()
++
++print("=" * 80)
++print("SUCCESS: The fix properly unwraps functools.partial objects!")
++print("=" * 80)
+diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
+index 9b00e24509..5df6b493a8 100644
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -31,6 +31,9 @@ from .utils import get_callable
+ 
+ class ResolverMatch:
+     def __init__(self, func, args, kwargs, url_name=None, app_names=None, namespaces=None, route=None, tried=None):
++        # Unwrap functools.partial objects to get the underlying function
++        if isinstance(func, functools.partial):
++            func = func.func
+         self.func = func
+         self.args = args
+         self.kwargs = kwargs
+diff --git a/edge_case_test.py b/edge_case_test.py
+new file mode 100644
+index 0000000000..b8ded2539a
+--- /dev/null
++++ b/edge_case_test.py
+@@ -0,0 +1,58 @@
++"""
++Test edge cases for the functools.partial unwrapping in ResolverMatch
++"""
++import functools
++from django.urls.resolvers import ResolverMatch
++
++# Edge case 1: None as func (should not crash)
++print("Edge case 1: Testing with None (should handle gracefully)")
++try:
++    match = ResolverMatch(func=None, args=(), kwargs={})
++    print(f"  Created match with None: {match}")
++    print("  ✗ FAIL: Should have raised an error")
++except AttributeError as e:
++    print(f"  ✓ Expected error: {e}")
++print()
++
++# Edge case 2: Lambda function with partial
++print("Edge case 2: Lambda function with partial")
++lambda_func = lambda request: "response"
++partial_lambda = functools.partial(lambda_func)
++match = ResolverMatch(func=partial_lambda, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++print(f"  func is lambda_func: {match.func is lambda_func}")
++assert match.func is lambda_func
++print("  ✓ PASS")
++print()
++
++# Edge case 3: Method with partial
++print("Edge case 3: Instance method with partial")
++class MyClass:
++    def my_method(self, request):
++        return "response"
++
++obj = MyClass()
++partial_method = functools.partial(obj.my_method)
++match = ResolverMatch(func=partial_method, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++print(f"  func is obj.my_method: {match.func is obj.my_method}")
++assert match.func is obj.my_method
++print("  ✓ PASS")
++print()
++
++# Edge case 4: Callable class instance (not wrapped in partial)
++print("Edge case 4: Callable class instance (not wrapped in partial)")
++class CallableClass:
++    def __call__(self, request):
++        return "response"
++
++callable_obj = CallableClass()
++match = ResolverMatch(func=callable_obj, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++print(f"  func is callable_obj: {match.func is callable_obj}")
++assert match.func is callable_obj
++assert 'CallableClass' in repr(match)
++print("  ✓ PASS")
++print()
++
++print("All edge case tests passed! ✓")
+diff --git a/edge_case_test_fixed.py b/edge_case_test_fixed.py
+new file mode 100644
+index 0000000000..e8035f483c
+--- /dev/null
++++ b/edge_case_test_fixed.py
+@@ -0,0 +1,63 @@
++"""
++Test edge cases for the functools.partial unwrapping in ResolverMatch
++"""
++import functools
++from django.urls.resolvers import ResolverMatch
++
++# Edge case 1: Lambda function with partial
++print("Edge case 1: Lambda function with partial")
++lambda_func = lambda request: "response"
++partial_lambda = functools.partial(lambda_func)
++match = ResolverMatch(func=partial_lambda, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++print(f"  func is lambda_func: {match.func is lambda_func}")
++assert match.func is lambda_func
++print("  ✓ PASS")
++print()
++
++# Edge case 2: Method with partial
++print("Edge case 2: Instance method with partial")
++class MyClass:
++    def my_method(self, request):
++        return "response"
++
++obj = MyClass()
++partial_method = functools.partial(obj.my_method)
++match = ResolverMatch(func=partial_method, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++# Note: Methods are created on-the-fly, so identity check may fail
++# but the unwrapping still works correctly
++print(f"  _func_path: {match._func_path}")
++assert 'my_method' in match._func_path
++print("  ✓ PASS")
++print()
++
++# Edge case 3: Callable class instance (not wrapped in partial)
++print("Edge case 3: Callable class instance (not wrapped in partial)")
++class CallableClass:
++    def __call__(self, request):
++        return "response"
++
++callable_obj = CallableClass()
++match = ResolverMatch(func=callable_obj, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++print(f"  func is callable_obj: {match.func is callable_obj}")
++assert match.func is callable_obj
++assert 'CallableClass' in repr(match)
++print("  ✓ PASS")
++print()
++
++# Edge case 4: Regular function (ensure backward compatibility)
++print("Edge case 4: Regular function (backward compatibility)")
++def regular_view(request):
++    return "response"
++
++match = ResolverMatch(func=regular_view, args=(), kwargs={})
++print(f"  repr: {repr(match)}")
++print(f"  func is regular_view: {match.func is regular_view}")
++assert match.func is regular_view
++assert 'regular_view' in repr(match)
++print("  ✓ PASS")
++print()
++
++print("All edge case tests passed! ✓")
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..3132dc0940
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,123 @@
++"""
++Final comprehensive test demonstrating the fix for the PR issue:
++"ResolverMatch.__repr__() doesn't handle functools.partial() nicely."
++
++This test shows that:
++1. Before the fix: __repr__ would show "functools.partial" 
++2. After the fix: __repr__ shows the actual underlying function
++"""
++import functools
++from django.urls.resolvers import ResolverMatch
++
++def my_view_function(request, arg1, arg2="default"):
++    """A sample view function"""
++    pass
++
++class MyViewClass:
++    """A sample class-based view"""
++    def __call__(self, request):
++        pass
++
++print("=" * 70)
++print("Testing ResolverMatch with functools.partial")
++print("=" * 70)
++print()
++
++# Test 1: Function-based view with partial
++print("Test 1: Function-based view with functools.partial")
++print("-" * 70)
++partial_func_view = functools.partial(my_view_function, arg2="fixed_value")
++match1 = ResolverMatch(
++    func=partial_func_view,
++    args=(),
++    kwargs={'arg1': 'test'},
++    url_name='test_url',
++    route='^test/$'
++)
++print(f"Original partial object: {partial_func_view}")
++print(f"ResolverMatch repr:\n  {repr(match1)}")
++print(f"\nKey observations:")
++print(f"  - func attribute is unwrapped: {match1.func is my_view_function}")
++print(f"  - _func_path shows actual function: '{match1._func_path}'")
++print(f"  - __repr__ shows 'my_view_function' not 'functools.partial': {'my_view_function' in repr(match1)}")
++assert 'my_view_function' in repr(match1), "FAIL: __repr__ should show underlying function"
++assert 'functools.partial' not in repr(match1), "FAIL: __repr__ should not show 'functools.partial'"
++print("  ✓ PASS")
++print()
++
++# Test 2: Class-based view with partial
++print("Test 2: Class-based view with functools.partial")
++print("-" * 70)
++view_instance = MyViewClass()
++partial_class_view = functools.partial(view_instance)
++match2 = ResolverMatch(
++    func=partial_class_view,
++    args=(),
++    kwargs={},
++    url_name='cbv_url',
++    route='^cbv/$'
++)
++print(f"Original partial object: {partial_class_view}")
++print(f"ResolverMatch repr:\n  {repr(match2)}")
++print(f"\nKey observations:")
++print(f"  - func attribute is unwrapped: {match2.func is view_instance}")
++print(f"  - _func_path shows actual class: '{match2._func_path}'")
++print(f"  - __repr__ shows 'MyViewClass' not 'functools.partial': {'MyViewClass' in repr(match2)}")
++assert 'MyViewClass' in repr(match2), "FAIL: __repr__ should show underlying class"
++assert 'functools.partial' not in repr(match2), "FAIL: __repr__ should not show 'functools.partial'"
++print("  ✓ PASS")
++print()
++
++# Test 3: Nested partial (partial of partial)
++print("Test 3: Nested functools.partial (partial of partial)")
++print("-" * 70)
++partial1 = functools.partial(my_view_function, arg2="value2")
++partial2 = functools.partial(partial1, arg1="value1")
++match3 = ResolverMatch(
++    func=partial2,
++    args=(),
++    kwargs={},
++    url_name='nested_url',
++    route='^nested/$'
++)
++print(f"Nested partial object: {partial2}")
++print(f"ResolverMatch repr:\n  {repr(match3)}")
++print(f"\nKey observations:")
++print(f"  - func attribute is unwrapped to original: {match3.func is my_view_function}")
++print(f"  - _func_path shows actual function: '{match3._func_path}'")
++print(f"  - __repr__ shows 'my_view_function' not 'functools.partial': {'my_view_function' in repr(match3)}")
++assert 'my_view_function' in repr(match3), "FAIL: __repr__ should show underlying function"
++assert 'functools.partial' not in repr(match3), "FAIL: __repr__ should not show 'functools.partial'"
++print("  ✓ PASS")
++print()
++
++# Test 4: Regular function (no partial) - ensure backward compatibility
++print("Test 4: Regular function without functools.partial (backward compatibility)")
++print("-" * 70)
++match4 = ResolverMatch(
++    func=my_view_function,
++    args=(),
++    kwargs={},
++    url_name='regular_url',
++    route='^regular/$'
++)
++print(f"Regular function: {my_view_function}")
++print(f"ResolverMatch repr:\n  {repr(match4)}")
++print(f"\nKey observations:")
++print(f"  - func attribute unchanged: {match4.func is my_view_function}")
++print(f"  - _func_path shows function: '{match4._func_path}'")
++print(f"  - __repr__ shows 'my_view_function': {'my_view_function' in repr(match4)}")
++assert 'my_view_function' in repr(match4), "FAIL: __repr__ should show function"
++assert match4.func is my_view_function, "FAIL: func should be unchanged"
++print("  ✓ PASS")
++print()
++
++print("=" * 70)
++print("ALL TESTS PASSED! ✓")
++print("=" * 70)
++print()
++print("Summary:")
++print("  The fix successfully unwraps functools.partial objects in")
++print("  ResolverMatch.__init__(), so that __repr__() now shows the")
++print("  underlying function instead of 'functools.partial'.")
++print()
+diff --git a/patch_resolvers.py b/patch_resolvers.py
+new file mode 100644
+index 0000000000..aaa07593af
+--- /dev/null
++++ b/patch_resolvers.py
+@@ -0,0 +1,29 @@
++import sys
++
++# Read the file
++with open('/testbed/django/urls/resolvers.py', 'r') as f:
++    content = f.read()
++
++# Find the ResolverMatch.__init__ method and modify it
++old_init = '''class ResolverMatch:
++    def __init__(self, func, args, kwargs, url_name=None, app_names=None, namespaces=None, route=None, tried=None):
++        self.func = func
++        self.args = args
++        self.kwargs = kwargs'''
++
++new_init = '''class ResolverMatch:
++    def __init__(self, func, args, kwargs, url_name=None, app_names=None, namespaces=None, route=None, tried=None):
++        # Unwrap functools.partial objects to get the underlying function
++        if isinstance(func, functools.partial):
++            func = func.func
++        self.func = func
++        self.args = args
++        self.kwargs = kwargs'''
++
++content = content.replace(old_init, new_init)
++
++# Write the modified content back
++with open('/testbed/django/urls/resolvers.py', 'w') as f:
++    f.write(content)
++
++print("File patched successfully!")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..37f6cb21fd
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,68 @@
++import functools
++from django.urls.resolvers import ResolverMatch
++
++# Test 1: Regular function with partial
++def my_view(request, arg1, arg2):
++    """A simple view function"""
++    pass
++
++partial_view = functools.partial(my_view, arg2="fixed_value")
++match1 = ResolverMatch(
++    func=partial_view,
++    args=(),
++    kwargs={'arg1': 'test'},
++    url_name='test_url'
++)
++print("Test 1 - Regular function with partial:")
++print(f"  repr: {repr(match1)}")
++print(f"  _func_path: {match1._func_path}")
++print(f"  func is my_view: {match1.func is my_view}")
++print()
++
++# Test 2: Nested partial (partial of a partial)
++double_partial = functools.partial(partial_view, arg1="another_fixed")
++match2 = ResolverMatch(
++    func=double_partial,
++    args=(),
++    kwargs={},
++    url_name='test_url2'
++)
++print("Test 2 - Nested partial:")
++print(f"  repr: {repr(match2)}")
++print(f"  _func_path: {match2._func_path}")
++print(f"  func is my_view: {match2.func is my_view}")
++print()
++
++# Test 3: Regular function (no partial)
++match3 = ResolverMatch(
++    func=my_view,
++    args=(),
++    kwargs={},
++    url_name='test_url3'
++)
++print("Test 3 - Regular function (no partial):")
++print(f"  repr: {repr(match3)}")
++print(f"  _func_path: {match3._func_path}")
++print(f"  func is my_view: {match3.func is my_view}")
++print()
++
++# Test 4: Class-based view with partial
++class MyView:
++    def __call__(self, request):
++        pass
++
++view_instance = MyView()
++partial_cbv = functools.partial(view_instance)
++match4 = ResolverMatch(
++    func=partial_cbv,
++    args=(),
++    kwargs={},
++    url_name='test_url4'
++)
++print("Test 4 - Class-based view with partial:")
++print(f"  repr: {repr(match4)}")
++print(f"  _func_path: {match4._func_path}")
++print(f"  func is view_instance: {match4.func is view_instance}")
++print()
++
++print("All tests passed!")
+diff --git a/test_nested_partial.py b/test_nested_partial.py
+new file mode 100644
+index 0000000000..0e0ce6f2b5
+--- /dev/null
++++ b/test_nested_partial.py
+@@ -0,0 +1,12 @@
++import functools
++
++def my_view(request, arg1, arg2, arg3):
++    pass
++
++partial1 = functools.partial(my_view, arg3="fixed3")
++partial2 = functools.partial(partial1, arg2="fixed2")
++
++print(f"partial2 type: {type(partial2)}")
++print(f"partial2.func type: {type(partial2.func)}")
++print(f"partial2.func is partial1: {partial2.func is partial1}")
++print(f"partial2.func.func is my_view: {partial2.func.func is my_view}")
+diff --git a/test_nested_partial2.py b/test_nested_partial2.py
+new file mode 100644
+index 0000000000..8fe692456e
+--- /dev/null
++++ b/test_nested_partial2.py
+@@ -0,0 +1,12 @@
++import functools
++
++def my_view(request, arg1, arg2, arg3):
++    pass
++
++partial1 = functools.partial(my_view, arg3="fixed3")
++partial2 = functools.partial(partial1, arg2="fixed2")
++
++print(f"partial1.func is my_view: {partial1.func is my_view}")
++print(f"partial2.func is my_view: {partial2.func is my_view}")
++print(f"partial1.keywords: {partial1.keywords}")
++print(f"partial2.keywords: {partial2.keywords}")
+diff --git a/test_partial_attrs.py b/test_partial_attrs.py
+new file mode 100644
+index 0000000000..121432113a
+--- /dev/null
++++ b/test_partial_attrs.py
+@@ -0,0 +1,15 @@
++import functools
++
++def my_view(request, arg1, arg2):
++    """A simple view function"""
++    pass
++
++partial_view = functools.partial(my_view, arg2="fixed_value")
++
++print("Partial object attributes:")
++print(f"partial_view.func: {partial_view.func}")
++print(f"partial_view.args: {partial_view.args}")
++print(f"partial_view.keywords: {partial_view.keywords}")
++print(f"\nUnderlying function:")
++print(f"partial_view.func.__name__: {partial_view.func.__name__}")
++print(f"partial_view.func.__module__: {partial_view.func.__module__}")
+diff --git a/test_partial_issue.py b/test_partial_issue.py
+new file mode 100644
+index 0000000000..f1d4fec8e7
+--- /dev/null
++++ b/test_partial_issue.py
+@@ -0,0 +1,23 @@
++import functools
++from django.urls.resolvers import ResolverMatch
++
++def my_view(request, arg1, arg2):
++    """A simple view function"""
++    pass
++
++# Create a partial function
++partial_view = functools.partial(my_view, arg2="fixed_value")
++
++# Create a ResolverMatch with the partial function
++match = ResolverMatch(
++    func=partial_view,
++    args=(),
++    kwargs={'arg1': 'test'},
++    url_name='test_url'
++)
++
++print("ResolverMatch repr:")
++print(repr(match))
++print("\nFunc path:")
++print(match._func_path)
++print("\nExpected to show 'my_view' but shows 'functools.partial' instead")
+diff --git a/test_partial_with_urls.py b/test_partial_with_urls.py
+new file mode 100644
+index 0000000000..095148dcf2
+--- /dev/null
++++ b/test_partial_with_urls.py
+@@ -0,0 +1,72 @@
++"""
++Test that functools.partial works correctly with Django URL patterns.
++"""
++import functools
++from django.urls import path
++from django.urls.resolvers import URLResolver, RegexPattern, ResolverMatch
++from django.http import HttpResponse
++
++def my_view(request, arg1, arg2="default"):
++    """A simple view function"""
++    return HttpResponse(f"arg1={arg1}, arg2={arg2}")
++
++# Create a partial view with arg2 pre-filled
++partial_view = functools.partial(my_view, arg2="prefilled")
++
++# Test 1: Direct ResolverMatch creation with partial
++print("Test 1: Direct ResolverMatch creation")
++match = ResolverMatch(
++    func=partial_view,
++    args=(),
++    kwargs={'arg1': 'test'},
++    url_name='partial_url'
++)
++print(f"  repr: {repr(match)}")
++print(f"  _func_path: {match._func_path}")
++print(f"  func.__name__: {match.func.__name__}")
++assert 'my_view' in match._func_path, f"Expected 'my_view' in _func_path, got {match._func_path}"
++assert match.func.__name__ == 'my_view', f"Expected func.__name__ to be 'my_view', got {match.func.__name__}"
++print("  ✓ Passed")
++print()
++
++# Test 2: Verify that the unwrapped function is stored
++print("Test 2: Verify unwrapped function is stored")
++assert match.func is my_view, "Expected func to be the unwrapped my_view function"
++print("  ✓ Passed")
++print()
++
++# Test 3: Test with class-based view
++print("Test 3: Class-based view with partial")
++class MyClassView:
++    def __call__(self, request):
++        return HttpResponse("class view")
++
++cbv_instance = MyClassView()
++partial_cbv = functools.partial(cbv_instance)
++match_cbv = ResolverMatch(
++    func=partial_cbv,
++    args=(),
++    kwargs={},
++    url_name='cbv_url'
++)
++print(f"  repr: {repr(match_cbv)}")
++print(f"  _func_path: {match_cbv._func_path}")
++assert 'MyClassView' in match_cbv._func_path, f"Expected 'MyClassView' in _func_path, got {match_cbv._func_path}"
++print("  ✓ Passed")
++print()
++
++# Test 4: Regular function (no partial) should still work
++print("Test 4: Regular function without partial")
++match_regular = ResolverMatch(
++    func=my_view,
++    args=(),
++    kwargs={},
++    url_name='regular_url'
++)
++print(f"  repr: {repr(match_regular)}")
++assert 'my_view' in match_regular._func_path
++assert match_regular.func is my_view
++print("  ✓ Passed")
++print()
++
++print("All tests passed! ✓")

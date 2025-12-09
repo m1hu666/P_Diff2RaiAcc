@@ -1,0 +1,289 @@
+diff --git a/CHANGES_SUMMARY.md b/CHANGES_SUMMARY.md
+new file mode 100644
+index 0000000000..95b4eefc18
+--- /dev/null
++++ b/CHANGES_SUMMARY.md
+@@ -0,0 +1,15 @@
++# Summary of Changes
++
++## Issue
++DecimalField.to_python() in django/db/models/fields/__init__.py was raising TypeError instead of ValidationError when passed a dictionary or other invalid types (like lists, tuples, sets, etc.).
++
++## Root Cause
++The to_python() method only caught `decimal.InvalidOperation` exceptions, but when passing a dict, list, or other incompatible types to `decimal.Decimal()`, it raises `TypeError` or `ValueError` instead.
++
++## Solution
++Modified the exception handling in DecimalField.to_python() to catch `TypeError` and `ValueError` in addition to `decimal.InvalidOperation`.
++
++### Changed File
++- `django/db/models/fields/__init__.py` (line 1504)
++
++### Change Details
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index 0fd69059ee..28374272f4 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -1501,7 +1501,7 @@ class DecimalField(Field):
+             return self.context.create_decimal_from_float(value)
+         try:
+             return decimal.Decimal(value)
+-        except decimal.InvalidOperation:
++        except (decimal.InvalidOperation, TypeError, ValueError):
+             raise exceptions.ValidationError(
+                 self.error_messages['invalid'],
+                 code='invalid',
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..7b08681fc8
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from decimal import Decimal
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++django.setup()
++
++from django.db.models.fields import DecimalField
++from django.core.exceptions import ValidationError
++
++# Test the DecimalField
++field = DecimalField(max_digits=10, decimal_places=2)
++
++test_cases = [
++    # (value, should_raise_validation_error, description)
++    ({'key': 'value'}, True, "dictionary"),
++    ([1, 2, 3], True, "list"),
++    ((1, 2), True, "tuple"),
++    (set([1, 2]), True, "set"),
++    (object(), True, "object"),
++    ("invalid", True, "invalid string"),
++    ("123.45", False, "valid string"),
++    (123.45, False, "float"),
++    (Decimal("123.45"), False, "Decimal"),
++    (123, False, "integer"),
++    (None, False, "None"),
++    ("", True, "empty string"),
++]
++
++print("Running comprehensive DecimalField.to_python() tests...\n")
++
++all_passed = True
++for value, should_raise, description in test_cases:
++    try:
++        result = field.to_python(value)
++        if should_raise:
++            print("FAIL: {} - Expected ValidationError but got result: {}".format(description, result))
++            all_passed = False
++        else:
++            print("PASS: {} - Got result: {}".format(description, result))
++    except ValidationError as e:
++        if should_raise:
++            print("PASS: {} - Raised ValidationError as expected".format(description))
++        else:
++            print("FAIL: {} - Unexpected ValidationError: {}".format(description, e))
++            all_passed = False
++    except Exception as e:
++        print("FAIL: {} - Unexpected exception ({}): {}".format(description, type(e).__name__, e))
++        all_passed = False
++
++if all_passed:
++    print("\nAll tests passed!")
++else:
++    print("\nSome tests failed!")
++    sys.exit(1)
+diff --git a/test_decimal_issue.py b/test_decimal_issue.py
+new file mode 100644
+index 0000000000..013cfe6cd7
+--- /dev/null
++++ b/test_decimal_issue.py
+@@ -0,0 +1,70 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++django.setup()
++
++from django.db.models.fields import DecimalField
++from django.core.exceptions import ValidationError
++
++# Test the issue
++field = DecimalField(max_digits=10, decimal_places=2)
++
++print("Testing DecimalField.to_python() with a dictionary...")
++try:
++    result = field.to_python({'key': 'value'})
++    print("Result: {}".format(result))
++except TypeError as e:
++    print("TypeError raised: {}".format(e))
++except ValidationError as e:
++    print("ValidationError raised (FIXED!)")
++except Exception as e:
++    print("Other exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting DecimalField.to_python() with a valid value...")
++try:
++    result = field.to_python("123.45")
++    print("Result: {}".format(result))
++except Exception as e:
++    print("Exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting DecimalField.to_python() with an invalid string...")
++try:
++    result = field.to_python("invalid")
++    print("Result: {}".format(result))
++except ValidationError as e:
++    print("ValidationError raised (as expected)")
++except Exception as e:
++    print("Exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting DecimalField.to_python() with a list...")
++try:
++    result = field.to_python([1, 2, 3])
++    print("Result: {}".format(result))
++except TypeError as e:
++    print("TypeError raised: {}".format(e))
++except ValidationError as e:
++    print("ValidationError raised (FIXED!)")
++except Exception as e:
++    print("Other exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting DecimalField.to_python() with None...")
++try:
++    result = field.to_python(None)
++    print("Result: {}".format(result))
++except Exception as e:
++    print("Exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting DecimalField.to_python() with a float...")
++try:
++    result = field.to_python(123.45)
++    print("Result: {}".format(result))
++except Exception as e:
++    print("Exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nAll tests completed successfully!")
+diff --git a/test_forms_decimal.py b/test_forms_decimal.py
+new file mode 100644
+index 0000000000..3fc31de47d
+--- /dev/null
++++ b/test_forms_decimal.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++django.setup()
++
++from django.forms.fields import DecimalField
++from django.core.exceptions import ValidationError
++
++# Test the forms DecimalField
++field = DecimalField(max_digits=10, decimal_places=2)
++
++print("Testing forms DecimalField.to_python() with a dictionary...")
++try:
++    result = field.to_python({'key': 'value'})
++    print("Result: {}".format(result))
++except TypeError as e:
++    print("TypeError raised: {}".format(e))
++except ValidationError as e:
++    print("ValidationError raised (correct behavior)")
++except Exception as e:
++    print("Other exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting forms DecimalField.to_python() with a list...")
++try:
++    result = field.to_python([1, 2, 3])
++    print("Result: {}".format(result))
++except TypeError as e:
++    print("TypeError raised: {}".format(e))
++except ValidationError as e:
++    print("ValidationError raised (correct behavior)")
++except Exception as e:
++    print("Other exception raised ({}): {}".format(type(e).__name__, e))
+diff --git a/test_model_save.py b/test_model_save.py
+new file mode 100644
+index 0000000000..d0e6194ae6
+--- /dev/null
++++ b/test_model_save.py
+@@ -0,0 +1,63 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++django.setup()
++
++from django.db import models
++from django.core.exceptions import ValidationError
++
++# Create a test model
++class TestModel(models.Model):
++    decimal_field = models.DecimalField(max_digits=10, decimal_places=2)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test saving with a dict value
++print("Testing model save with dict value in DecimalField...")
++obj = TestModel()
++obj.decimal_field = {'key': 'value'}
++
++try:
++    # This should raise ValidationError, not TypeError
++    obj.full_clean()
++    print("ERROR: No exception raised!")
++except ValidationError as e:
++    print("ValidationError raised (CORRECT!)")
++except TypeError as e:
++    print("TypeError raised (BUG!): {}".format(e))
++except Exception as e:
++    print("Other exception ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting model save with list value in DecimalField...")
++obj2 = TestModel()
++obj2.decimal_field = [1, 2, 3]
++
++try:
++    obj2.full_clean()
++    print("ERROR: No exception raised!")
++except ValidationError as e:
++    print("ValidationError raised (CORRECT!)")
++except TypeError as e:
++    print("TypeError raised (BUG!): {}".format(e))
++except Exception as e:
++    print("Other exception ({}): {}".format(type(e).__name__, e))
++
++print("\nTesting model save with valid value...")
++obj3 = TestModel()
++obj3.decimal_field = "123.45"
++
++try:
++    obj3.full_clean()
++    print("No exception raised (CORRECT!)")
++    print("Value: {}".format(obj3.decimal_field))
++except Exception as e:
++    print("Exception raised ({}): {}".format(type(e).__name__, e))
++
++print("\nAll tests passed!")

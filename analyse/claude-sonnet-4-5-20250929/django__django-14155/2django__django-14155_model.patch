@@ -1,0 +1,301 @@
+diff --git a/SOLUTION_SUMMARY.md b/SOLUTION_SUMMARY.md
+new file mode 100644
+index 0000000000..2828b37f0d
+--- /dev/null
++++ b/SOLUTION_SUMMARY.md
+@@ -0,0 +1,17 @@
++# Solution Summary: ResolverMatch.__repr__() handling of functools.partial()
++
++## Problem
++When a `functools.partial` function was passed as the view to `ResolverMatch`, the `__repr__()` method showed `functools.partial` instead of the underlying function, which wasn't helpful for debugging.
++
++## Solution
++Modified `ResolverMatch.__init__()` in `/testbed/django/urls/resolvers.py` to:
++
++1. **Unwrap functools.partial objects recursively** - This handles nested partials
++2. **Merge partial args with provided args** - Partial args come first
++3. **Merge partial kwargs with provided kwargs** - Provided kwargs take precedence
++4. **Use self.func instead of func parameter** - Ensures _func_path uses the unwrapped function
++
++## Changes Made
++
++### In ResolverMatch.__init__() (lines 38-45):
++Added unwrapping logic after initial assignments:
+diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
+index 9b00e24509..5462387695 100644
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -34,6 +34,15 @@ class ResolverMatch:
+         self.func = func
+         self.args = args
+         self.kwargs = kwargs
++
++        # Unwrap functools.partial objects (recursively for nested partials)
++        while isinstance(self.func, functools.partial):
++            partial_func = self.func
++            self.func = partial_func.func
++            # Merge partial args with provided args
++            self.args = partial_func.args + self.args
++            # Merge partial kwargs with provided kwargs (provided kwargs take precedence)
++            self.kwargs = {**partial_func.keywords, **self.kwargs}
+         self.url_name = url_name
+         self.route = route
+         self.tried = tried
+@@ -45,12 +54,12 @@ class ResolverMatch:
+         self.namespaces = [x for x in namespaces if x] if namespaces else []
+         self.namespace = ':'.join(self.namespaces)
+ 
+-        if not hasattr(func, '__name__'):
++        if not hasattr(self.func, '__name__'):
+             # A class-based view
+-            self._func_path = func.__class__.__module__ + '.' + func.__class__.__name__
++            self._func_path = self.func.__class__.__module__ + '.' + self.func.__class__.__name__
+         else:
+             # A function-based view
+-            self._func_path = func.__module__ + '.' + func.__name__
++            self._func_path = self.func.__module__ + '.' + self.func.__name__
+ 
+         view_path = url_name or self._func_path
+         self.view_name = ':'.join(self.namespaces + [view_path])
+diff --git a/fix_resolver.py b/fix_resolver.py
+new file mode 100644
+index 0000000000..75d6e4fe5d
+--- /dev/null
++++ b/fix_resolver.py
+@@ -0,0 +1,38 @@
++# Read the file
++with open('/testbed/django/urls/resolvers.py', 'r') as f:
++    lines = f.readlines()
++
++# Remove the incorrectly placed unwrapping code
++new_lines = []
++skip_until = -1
++for i, line in enumerate(lines):
++    if skip_until > 0 and i < skip_until:
++        continue
++    if '# Unwrap functools.partial objects (recursively for nested partials)' in line:
++        # Skip this line and the next 7 lines (the unwrapping block)
++        skip_until = i + 8
++        continue
++    new_lines.append(line)
++
++# Now find the right place to insert the unwrapping code
++# It should be after "self.kwargs = kwargs" line
++final_lines = []
++for i, line in enumerate(new_lines):
++    final_lines.append(line)
++    if 'self.kwargs = kwargs' in line and i < 50:
++        # Add the unwrapping logic right after
++        final_lines.append('\n')
++        final_lines.append('        # Unwrap functools.partial objects (recursively for nested partials)\n')
++        final_lines.append('        while isinstance(self.func, functools.partial):\n')
++        final_lines.append('            partial_func = self.func\n')
++        final_lines.append('            self.func = partial_func.func\n')
++        final_lines.append('            # Merge partial args with provided args\n')
++        final_lines.append('            self.args = partial_func.args + self.args\n')
++        final_lines.append('            # Merge partial kwargs with provided kwargs (provided kwargs take precedence)\n')
++        final_lines.append('            self.kwargs = {**partial_func.keywords, **self.kwargs}\n')
++
++# Write the file
++with open('/testbed/django/urls/resolvers.py', 'w') as f:
++    f.writelines(final_lines)
++
++print("File fixed successfully")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..614dc39ed4
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,67 @@
++"""
++Test edge cases for ResolverMatch with functools.partial
++"""
++import functools
++from django.urls.resolvers import ResolverMatch
++
++def view_func(request, a, b, c=None):
++    pass
++
++class ViewClass:
++    def __call__(self, request):
++        pass
++
++print("Testing edge cases:")
++print("=" * 70)
++
++# Test 1: Empty partial (no args or kwargs)
++print("\n1. Empty partial (no args or kwargs):")
++empty_partial = functools.partial(view_func)
++match = ResolverMatch(empty_partial, (), {}, 'test')
++print(f"   repr: {repr(match)}")
++assert 'view_func' in repr(match)
++print("   ✓ Pass")
++
++# Test 2: Class-based view wrapped in partial
++print("\n2. Class-based view wrapped in partial:")
++view_instance = ViewClass()
++partial_class = functools.partial(view_instance)
++match2 = ResolverMatch(partial_class, (), {}, 'test2')
++print(f"   repr: {repr(match2)}")
++assert 'ViewClass' in repr(match2)
++print("   ✓ Pass")
++
++# Test 3: Multiple levels of nesting
++print("\n3. Triple-nested partial:")
++p1 = functools.partial(view_func, 'arg1')
++p2 = functools.partial(p1, 'arg2')
++p3 = functools.partial(p2, c='kwarg')
++match3 = ResolverMatch(p3, (), {}, 'test3')
++print(f"   args: {match3.args}")
++print(f"   kwargs: {match3.kwargs}")
++print(f"   repr: {repr(match3)}")
++assert match3.args == ('arg1', 'arg2')
++assert match3.kwargs == {'c': 'kwarg'}
++assert 'view_func' in repr(match3)
++print("   ✓ Pass")
++
++# Test 4: Partial with both args and kwargs, plus additional args and kwargs
++print("\n4. Complex merging:")
++partial = functools.partial(view_func, 'partial_arg', c='partial_c')
++match4 = ResolverMatch(partial, ('extra_arg',), {'b': 'extra_b'}, 'test4')
++print(f"   args: {match4.args}")
++print(f"   kwargs: {match4.kwargs}")
++assert match4.args == ('partial_arg', 'extra_arg')
++assert match4.kwargs == {'c': 'partial_c', 'b': 'extra_b'}
++print("   ✓ Pass")
++
++# Test 5: Override partial kwargs with provided kwargs
++print("\n5. Override partial kwargs:")
++partial = functools.partial(view_func, c='partial_c')
++match5 = ResolverMatch(partial, (), {'c': 'override_c'}, 'test5')
++print(f"   kwargs: {match5.kwargs}")
++assert match5.kwargs == {'c': 'override_c'}
++print("   ✓ Pass (provided kwargs take precedence)")
++
++print("\n" + "=" * 70)
++print("All edge case tests passed! ✓")
+diff --git a/test_partial_final.py b/test_partial_final.py
+new file mode 100644
+index 0000000000..a213a873d7
+--- /dev/null
++++ b/test_partial_final.py
+@@ -0,0 +1,119 @@
++"""
++Test to demonstrate that ResolverMatch now handles functools.partial correctly.
++This test shows the fix for the issue described in the PR.
++"""
++import functools
++from django.urls.resolvers import ResolverMatch
++
++def my_view(request, arg1, arg2, arg3=None):
++    """A sample view function"""
++    pass
++
++def another_view(request):
++    """Another view"""
++    pass
++
++print("=" * 70)
++print("Testing ResolverMatch with functools.partial")
++print("=" * 70)
++
++# Test 1: Basic partial with keyword arguments
++print("\n1. Partial with keyword arguments:")
++partial_view = functools.partial(my_view, arg2="fixed_value")
++match = ResolverMatch(
++    func=partial_view,
++    args=(),
++    kwargs={},
++    url_name='test',
++    app_names=[],
++    namespaces=[],
++    route='test/'
++)
++print(f"   Original partial: {partial_view}")
++print(f"   ResolverMatch repr: {repr(match)}")
++print(f"   ✓ Shows 'my_view' instead of 'functools.partial'")
++assert 'my_view' in repr(match)
++assert 'functools.partial' not in repr(match)
++assert match.kwargs == {'arg2': 'fixed_value'}
++
++# Test 2: Partial with positional arguments
++print("\n2. Partial with positional arguments:")
++partial_view2 = functools.partial(my_view, "pos_arg")
++match2 = ResolverMatch(
++    func=partial_view2,
++    args=('additional_arg',),
++    kwargs={},
++    url_name='test2',
++    app_names=[],
++    namespaces=[],
++    route='test2/'
++)
++print(f"   ResolverMatch repr: {repr(match2)}")
++print(f"   ✓ Args merged correctly: {match2.args}")
++assert match2.args == ('pos_arg', 'additional_arg')
++assert 'my_view' in repr(match2)
++
++# Test 3: Nested partial (partial of a partial)
++print("\n3. Nested partial (partial of a partial):")
++partial_a = functools.partial(my_view, "first_arg")
++partial_b = functools.partial(partial_a, arg2="second_arg")
++match3 = ResolverMatch(
++    func=partial_b,
++    args=(),
++    kwargs={},
++    url_name='test3',
++    app_names=[],
++    namespaces=[],
++    route='test3/'
++)
++print(f"   ResolverMatch repr: {repr(match3)}")
++print(f"   ✓ Unwrapped recursively to show 'my_view'")
++print(f"   ✓ Args: {match3.args}, Kwargs: {match3.kwargs}")
++assert 'my_view' in repr(match3)
++assert 'functools.partial' not in repr(match3)
++assert match3.args == ('first_arg',)
++assert match3.kwargs == {'arg2': 'second_arg'}
++
++# Test 4: Regular function (not partial) - should work as before
++print("\n4. Regular function (not partial):")
++match4 = ResolverMatch(
++    func=another_view,
++    args=(),
++    kwargs={},
++    url_name='test4',
++    app_names=[],
++    namespaces=[],
++    route='test4/'
++)
++print(f"   ResolverMatch repr: {repr(match4)}")
++print(f"   ✓ Works normally for non-partial functions")
++assert 'another_view' in repr(match4)
++
++# Test 5: Kwargs precedence - provided kwargs should override partial kwargs
++print("\n5. Kwargs precedence (provided kwargs override partial kwargs):")
++partial_view5 = functools.partial(my_view, arg2="partial_value", arg3="partial_arg3")
++match5 = ResolverMatch(
++    func=partial_view5,
++    args=(),
++    kwargs={'arg2': 'override_value'},  # This should override partial's arg2
++    url_name='test5',
++    app_names=[],
++    namespaces=[],
++    route='test5/'
++)
++print(f"   Partial kwargs: {partial_view5.keywords}")
++provided_kwargs = {'arg2': 'override_value'}
++print(f"   Provided kwargs: {provided_kwargs}")
++print(f"   Final kwargs: {match5.kwargs}")
++print(f"   ✓ Provided kwargs take precedence")
++assert match5.kwargs == {'arg2': 'override_value', 'arg3': 'partial_arg3'}
++
++print("\n" + "=" * 70)
++print("All tests passed! ✓")
++print("=" * 70)
++print("\nSummary:")
++print("- ResolverMatch now unwraps functools.partial objects")
++print("- The underlying function is shown in __repr__")
++print("- Partial args and kwargs are properly merged")
++print("- Nested partials are handled recursively")
++print("- Regular functions continue to work as before")

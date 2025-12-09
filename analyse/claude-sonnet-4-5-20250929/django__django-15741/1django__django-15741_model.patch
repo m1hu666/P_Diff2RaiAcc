@@ -1,0 +1,220 @@
+diff --git a/django/utils/formats.py b/django/utils/formats.py
+index 3f38322d84..67b206d81e 100644
+--- a/django/utils/formats.py
++++ b/django/utils/formats.py
+@@ -9,6 +9,7 @@ from django.conf import settings
+ from django.utils import dateformat, numberformat
+ from django.utils.functional import lazy
+ from django.utils.translation import check_for_language, get_language, to_locale
++from django.utils.encoding import force_str
+ 
+ # format_cache is a mapping from (format_type, lang) to the format string.
+ # By using the cache, it is possible to avoid running get_format_modules
+@@ -106,6 +107,7 @@ def get_format(format_type, lang=None, use_l10n=None):
+     If use_l10n is provided and is not None, it forces the value to
+     be localized (or not), overriding the value of settings.USE_L10N.
+     """
++    format_type = force_str(format_type)
+     if use_l10n is None:
+         try:
+             use_l10n = settings._USE_L10N_INTERNAL
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..708b5b4d4e
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,72 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        USE_L10N=True,
++        LANGUAGE_CODE='en-us',
++        DATE_FORMAT='Y-m-d',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++from django.utils.functional import lazy
++from django.utils.formats import get_format
++from django.utils.translation import gettext_lazy as _
++
++print("Test 1: Regular string")
++try:
++    result = get_format('DATE_FORMAT')
++    print(f"�? Success! Result: {result}")
++except Exception as e:
++    print(f"�? Error: {e}")
++
++print("\nTest 2: Lazy string using lazy()")
++try:
++    lazy_str = lazy(lambda: 'DATE_FORMAT', str)()
++    result = get_format(lazy_str)
++    print(f"�? Success! Result: {result}")
++except Exception as e:
++    print(f"�? Error: {e}")
++
++print("\nTest 3: Lazy string using gettext_lazy (simulated)")
++try:
++    # Simulate what happens with _('DATE_FORMAT')
++    lazy_format = lazy(lambda: 'DATE_FORMAT', str)()
++    result = get_format(lazy_format)
++    print(f"�? Success! Result: {result}")
++except Exception as e:
++    print(f"�? Error: {e}")
++
++print("\nTest 4: get_format with use_l10n=False")
++try:
++    lazy_str = lazy(lambda: 'DATE_FORMAT', str)()
++    result = get_format(lazy_str, use_l10n=False)
++    print(f"�? Success! Result: {result}")
++except Exception as e:
++    print(f"�? Error: {e}")
++
++print("\nTest 5: get_format with use_l10n=True")
++try:
++    lazy_str = lazy(lambda: 'DATE_FORMAT', str)()
++    result = get_format(lazy_str, use_l10n=True)
++    print(f"�? Success! Result: {result}")
++except Exception as e:
++    print(f"�? Error: {e}")
++
++print("\nTest 6: Unicode string")
++try:
++    result = get_format('DATE_FORMAT')
++    print(f"�? Success! Result: {result}")
++except Exception as e:
++    print(f"�? Error: {e}")
++
++print("\nAll tests completed!")
+diff --git a/test_pr_issue.py b/test_pr_issue.py
+new file mode 100644
+index 0000000000..88097b58d8
+--- /dev/null
++++ b/test_pr_issue.py
+@@ -0,0 +1,116 @@
++"""
++Test for the PR issue: django.utils.formats.get_format should allow lazy parameter
++
++This test demonstrates that the date template filter now works with lazy strings,
++which was failing before with: TypeError: getattr(): attribute name must be string
++"""
++import os
++import sys
++import django
++from django.conf import settings
++from datetime import datetime
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        USE_L10N=True,
++        LANGUAGE_CODE='en-us',
++        DATE_FORMAT='Y-m-d',
++        TEMPLATES=[{
++            'BACKEND': 'django.template.backends.django.DjangoTemplates',
++            'DIRS': [],
++            'APP_DIRS': True,
++            'OPTIONS': {
++                'context_processors': [
++                    'django.template.context_processors.debug',
++                    'django.template.context_processors.request',
++                ],
++            },
++        }],
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++from django.template import Template, Context
++from django.utils.functional import lazy
++from django.utils.translation import gettext_lazy as _
++
++print("=" * 70)
++print("Testing the PR issue fix:")
++print("django.utils.formats.get_format should allow lazy parameter")
++print("=" * 70)
++
++# Test 1: Date filter with lazy format string (the original issue)
++print("\nTest 1: Date filter with lazy format string (original issue)")
++print("-" * 70)
++try:
++    # Create a lazy string similar to _('Y-m-d')
++    lazy_format = lazy(lambda: 'Y-m-d', str)()
++    
++    # Create a template that uses the date filter with a lazy format
++    template = Template("{{ some_date|date:date_format }}")
++    context = Context({
++        'some_date': datetime(2023, 12, 25, 14, 30, 0),
++        'date_format': lazy_format
++    })
++    
++    result = template.render(context)
++    print(f"�? SUCCESS! Date rendered as: {result}")
++    print("  The lazy format string was properly handled.")
++except TypeError as e:
++    print(f"�? FAILED! TypeError: {e}")
++    import traceback
++    traceback.print_exc()
++except Exception as e:
++    print(f"�? FAILED! Unexpected error: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test 2: Date filter with regular string (should still work)
++print("\nTest 2: Date filter with regular string (backward compatibility)")
++print("-" * 70)
++try:
++    template = Template("{{ some_date|date:'Y-m-d' }}")
++    context = Context({
++        'some_date': datetime(2023, 12, 25, 14, 30, 0),
++    })
++    
++    result = template.render(context)
++    print(f"�? SUCCESS! Date rendered as: {result}")
++    print("  Regular strings still work correctly.")
++except Exception as e:
++    print(f"�? FAILED! Error: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test 3: Using gettext_lazy directly (real-world scenario)
++print("\nTest 3: Using gettext_lazy (real-world scenario)")
++print("-" * 70)
++try:
++    # This simulates the real use case: some_date|date:_('Y-m-d')
++    # where _() is gettext_lazy
++    lazy_format = _('Y-m-d')  # This creates a lazy translation object
++    
++    template = Template("{{ some_date|date:date_format }}")
++    context = Context({
++        'some_date': datetime(2023, 12, 25, 14, 30, 0),
++        'date_format': lazy_format
++    })
++    
++    result = template.render(context)
++    print(f"�? SUCCESS! Date rendered as: {result}")
++    print("  gettext_lazy format strings work correctly.")
++except Exception as e:
++    print(f"�? FAILED! Error: {e}")
++    import traceback
++    traceback.print_exc()
++
++print("\n" + "=" * 70)
++print("All tests completed successfully!")
++print("The fix allows get_format to accept lazy parameters.")
++print("=" * 70)

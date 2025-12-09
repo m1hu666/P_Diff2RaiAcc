@@ -1,0 +1,181 @@
+diff --git a/django/utils/formats.py b/django/utils/formats.py
+index 3f38322d84..5beb3dd33f 100644
+--- a/django/utils/formats.py
++++ b/django/utils/formats.py
+@@ -7,6 +7,7 @@ from importlib import import_module
+ 
+ from django.conf import settings
+ from django.utils import dateformat, numberformat
++from django.utils.encoding import force_str
+ from django.utils.functional import lazy
+ from django.utils.translation import check_for_language, get_language, to_locale
+ 
+@@ -125,13 +126,13 @@ def get_format(format_type, lang=None, use_l10n=None):
+     val = None
+     if use_l10n:
+         for module in get_format_modules(lang):
+-            val = getattr(module, format_type, None)
++            val = getattr(module, force_str(format_type), None)
+             if val is not None:
+                 break
+     if val is None:
+         if format_type not in FORMAT_SETTINGS:
+             return format_type
+-        val = getattr(settings, format_type)
++        val = getattr(settings, force_str(format_type))
+     elif format_type in ISO_INPUT_FORMATS:
+         # If a list of input formats from one of the format_modules was
+         # retrieved, make sure the ISO_INPUT_FORMATS are in this list.
+diff --git a/test_date_filter_lazy.py b/test_date_filter_lazy.py
+new file mode 100644
+index 0000000000..0c70504aae
+--- /dev/null
++++ b/test_date_filter_lazy.py
+@@ -0,0 +1,58 @@
++"""Test the date template filter with lazy format string - the exact use case from the PR"""
++import django
++from django.conf import settings
++from datetime import datetime
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        USE_L10N=True,
++        LANGUAGE_CODE='en-us',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        TEMPLATES=[{
++            'BACKEND': 'django.template.backends.django.DjangoTemplates',
++            'DIRS': [],
++            'APP_DIRS': True,
++            'OPTIONS': {
++                'context_processors': [
++                    'django.template.context_processors.debug',
++                    'django.template.context_processors.request',
++                ],
++            },
++        }],
++    )
++    django.setup()
++
++from django.template import Template, Context
++from django.utils.translation import gettext_lazy as _
++
++print("=" * 70)
++print("Testing the exact use case from PR: some_date|date:_('Y-m-d')")
++print("=" * 70)
++
++# This is the exact use case mentioned in the PR description
++print("\nTest: Using lazy string _('Y-m-d') with date filter")
++try:
++    template = Template("{{ some_date|date:lazy_format }}")
++    context = Context({
++        'some_date': datetime(2023, 12, 25, 14, 30, 0),
++        'lazy_format': _('Y-m-d')
++    })
++    result = template.render(context)
++    print(f"✓ SUCCESS: Result = '{result.strip()}'")
++    print(f"  Expected format: YYYY-MM-DD")
++    print(f"  This should have failed with TypeError before the fix!")
++except TypeError as e:
++    print(f"✗ FAILED: {e}")
++    print(f"  This is the error that was reported in the PR")
++except Exception as e:
++    print(f"✗ FAILED with unexpected error: {type(e).__name__}: {e}")
++
++print("\n" + "=" * 70)
++print("Test completed!")
++print("=" * 70)
+diff --git a/test_lazy_format_comprehensive.py b/test_lazy_format_comprehensive.py
+new file mode 100644
+index 0000000000..d4a3616133
+--- /dev/null
++++ b/test_lazy_format_comprehensive.py
+@@ -0,0 +1,83 @@
++"""Comprehensive test for lazy parameter support in get_format"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        USE_L10N=True,
++        LANGUAGE_CODE='en-us',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++from django.utils.translation import gettext_lazy as _
++from django.utils.formats import get_format
++
++print("=" * 60)
++print("Testing get_format with various input types")
++print("=" * 60)
++
++# Test 1: Regular string (baseline)
++print("\n1. Testing with regular string 'DATE_FORMAT':")
++try:
++    result = get_format('DATE_FORMAT')
++    print(f"   ✓ Success: {result}")
++except Exception as e:
++    print(f"   ✗ Error: {type(e).__name__}: {e}")
++
++# Test 2: Lazy string
++print("\n2. Testing with lazy string _('DATE_FORMAT'):")
++try:
++    lazy_format = _('DATE_FORMAT')
++    result = get_format(lazy_format)
++    print(f"   ✓ Success: {result}")
++except Exception as e:
++    print(f"   ✗ Error: {type(e).__name__}: {e}")
++
++# Test 3: Lazy string with lowercase
++print("\n3. Testing with lazy string _('date_format') (lowercase):")
++try:
++    lazy_format = _('date_format')
++    result = get_format(lazy_format)
++    print(f"   ✓ Success: {result}")
++except Exception as e:
++    print(f"   ✗ Error: {type(e).__name__}: {e}")
++
++# Test 4: Different format types
++print("\n4. Testing with lazy string _('TIME_FORMAT'):")
++try:
++    lazy_format = _('TIME_FORMAT')
++    result = get_format(lazy_format)
++    print(f"   ✓ Success: {result}")
++except Exception as e:
++    print(f"   ✗ Error: {type(e).__name__}: {e}")
++
++# Test 5: Non-existent format (should return None or default)
++print("\n5. Testing with lazy string _('NONEXISTENT_FORMAT'):")
++try:
++    lazy_format = _('NONEXISTENT_FORMAT')
++    result = get_format(lazy_format)
++    print(f"   ✓ Success (returned): {result}")
++except Exception as e:
++    print(f"   ✗ Error: {type(e).__name__}: {e}")
++
++# Test 6: Unicode lazy string
++print("\n6. Testing with unicode lazy string _('DATE_FORMAT'):")
++try:
++    lazy_format = _('DATE_FORMAT')
++    result = get_format(lazy_format)
++    print(f"   ✓ Success: {result}")
++except Exception as e:
++    print(f"   ✗ Error: {type(e).__name__}: {e}")
++
++print("\n" + "=" * 60)
++print("All tests completed successfully!")
++print("=" * 60)
