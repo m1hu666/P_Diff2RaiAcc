@@ -1,0 +1,578 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 0000000000..0c2ac91d12
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,40 @@
++import matplotlib.pyplot as plt
++import numpy as np
++
++def print_datalim(*ax):
++    for i, ax_ in enumerate(ax):
++        print(f"  ax{i+1}.dataLim.intervaly = {ax_.dataLim.intervaly}")
++        print(f"  ax{i+1}.dataLim.intervalx = {ax_.dataLim.intervalx}")
++    print()
++
++df1_index = ['16 May', '17 May']  # == df2_index
++df1_values = [-22.717708333333402, 26.584999999999937]
++df2_values = [-0.08501399999999998, -2.9833019999999966]
++
++fig, ax1 = plt.subplots()
++
++print("After creating ax1:")
++print_datalim(ax1)
++
++ax1.stackplot(df1_index, df1_values)
++print("After ax1.stackplot:")
++print_datalim(ax1)
++
++ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
++print("After ax1.twinx():")
++print_datalim(ax1, ax2)
++
++# Check shared axes
++print("Shared x-axes siblings of ax1:", ax1._shared_axes["x"].get_siblings(ax1))
++print("Shared y-axes siblings of ax1:", ax1._shared_axes["y"].get_siblings(ax1))
++print("Shared x-axes siblings of ax2:", ax2._shared_axes["x"].get_siblings(ax2))
++print("Shared y-axes siblings of ax2:", ax2._shared_axes["y"].get_siblings(ax2))
++print()
++
++# Let's trace what happens during ax2.plot
++print("Before ax2.plot:")
++print_datalim(ax1, ax2)
++
++ax2.plot(df1_index, df2_values)
++print("After ax2.plot:")
++print_datalim(ax1, ax2)
+diff --git a/debug_issue2.py b/debug_issue2.py
+new file mode 100644
+index 0000000000..0f54cc9ff5
+--- /dev/null
++++ b/debug_issue2.py
+@@ -0,0 +1,63 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import matplotlib.lines as mlines
++
++# Monkey-patch to trace the issue
++original_update_line_limits = plt.Axes._update_line_limits
++
++def traced_update_line_limits(self, line):
++    print(f"  _update_line_limits called on {self}")
++    print(f"    Before: self.dataLim.intervaly = {self.dataLim.intervaly}")
++    print(f"    Before: self.ignore_existing_data_limits = {self.ignore_existing_data_limits}")
++    result = original_update_line_limits(self, line)
++    print(f"    After: self.dataLim.intervaly = {self.dataLim.intervaly}")
++    print(f"    After: self.ignore_existing_data_limits = {self.ignore_existing_data_limits}")
++    return result
++
++plt.Axes._update_line_limits = traced_update_line_limits
++
++# Also trace relim
++original_relim = plt.Axes.relim
++
++def traced_relim(self, visible_only=False):
++    print(f"  relim called on {self}")
++    print(f"    Before: self.dataLim.intervaly = {self.dataLim.intervaly}")
++    result = original_relim(self, visible_only)
++    print(f"    After: self.dataLim.intervaly = {self.dataLim.intervaly}")
++    return result
++
++plt.Axes.relim = traced_relim
++
++# Also trace _unit_change_handler
++original_unit_change_handler = plt.Axes._unit_change_handler
++
++def traced_unit_change_handler(self, axis_name, event=None):
++    if event is None:
++        return original_unit_change_handler(self, axis_name, event)
++    print(f"  _unit_change_handler called on {self} for axis {axis_name}")
++    print(f"    Before: self.dataLim.intervaly = {self.dataLim.intervaly}")
++    result = original_unit_change_handler(self, axis_name, event)
++    print(f"    After: self.dataLim.intervaly = {self.dataLim.intervaly}")
++    return result
++
++plt.Axes._unit_change_handler = traced_unit_change_handler
++
++df1_index = ['16 May', '17 May']  # == df2_index
++df1_values = [-22.717708333333402, 26.584999999999937]
++df2_values = [-0.08501399999999998, -2.9833019999999966]
++
++fig, ax1 = plt.subplots()
++
++print("=== ax1.stackplot ===")
++ax1.stackplot(df1_index, df1_values)
++print(f"ax1.dataLim.intervaly = {ax1.dataLim.intervaly}")
++
++print("\n=== ax1.twinx() ===")
++ax2 = ax1.twinx()
++print(f"ax1.dataLim.intervaly = {ax1.dataLim.intervaly}")
++print(f"ax2.dataLim.intervaly = {ax2.dataLim.intervaly}")
++
++print("\n=== ax2.plot ===")
++ax2.plot(df1_index, df2_values)
++print(f"ax1.dataLim.intervaly = {ax1.dataLim.intervaly}")
++print(f"ax2.dataLim.intervaly = {ax2.dataLim.intervaly}")
+diff --git a/lib/matplotlib/axes/_base.py b/lib/matplotlib/axes/_base.py
+index 5203e3232c..ce71d59a85 100644
+--- a/lib/matplotlib/axes/_base.py
++++ b/lib/matplotlib/axes/_base.py
+@@ -2232,6 +2232,21 @@ class _AxesBase(martist.Artist):
+         self.stale = True
+         return ax
+ 
++    def _update_collection_limits(self, collection):
++        """
++        Figures out the data limit of the given collection, updating self.dataLim.
++        """
++        datalim = collection.get_datalim(self.transData)
++        points = datalim.get_points()
++        if not np.isinf(datalim.minpos).all():
++            # By definition, if minpos (minimum positive value) is set
++            # (i.e., non-inf), then min(points) <= minpos <= max(points),
++            # and minpos would be superfluous. However, we add minpos to
++            # the call so that self.dataLim will update its own minpos.
++            # This ensures that log scales see the correct minimum.
++            points = np.concatenate([points, [datalim.minpos]])
++        self.update_datalim(points)
++
+     def add_collection(self, collection, autolim=True):
+         """
+         Add a `.Collection` to the Axes; return the collection.
+@@ -2451,15 +2466,11 @@ class _AxesBase(martist.Artist):
+         """
+         Recompute the data limits based on current artists.
+ 
+-        At present, `.Collection` instances are not supported.
+-
+         Parameters
+         ----------
+         visible_only : bool, default: False
+             Whether to exclude invisible artists.
+         """
+-        # Collections are deliberately not supported (yet); see
+-        # the TODO note in artists.py.
+         self.dataLim.ignore(True)
+         self.dataLim.set_points(mtransforms.Bbox.null().get_points())
+         self.ignore_existing_data_limits = True
+@@ -2472,6 +2483,8 @@ class _AxesBase(martist.Artist):
+                     self._update_patch_limits(artist)
+                 elif isinstance(artist, mimage.AxesImage):
+                     self._update_image_limits(artist)
++                elif isinstance(artist, mcoll.Collection):
++                    self._update_collection_limits(artist)
+ 
+     def update_datalim(self, xys, updatex=True, updatey=True):
+         """
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..a8fa8bd151
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,21 @@
++import matplotlib.pyplot as plt
++
++def print_datalim(*ax):
++    for ax_ in ax:
++        print(ax_.dataLim.intervaly, end=' / ')
++    print()
++
++df1_index = ['16 May', '17 May']  # == df2_index
++df1_values = [-22.717708333333402, 26.584999999999937]
++df2_values = [-0.08501399999999998, -2.9833019999999966]
++
++fig, ax1 = plt.subplots()
++
++ax1.stackplot(df1_index, df1_values)
++print_datalim(ax1)
++
++ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
++print_datalim(ax1, ax2)
++
++ax2.plot(df1_index, df2_values)
++print_datalim(ax1, ax2)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..ed0c88ccfe
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,81 @@
++"""
++Test edge cases for the fix.
++"""
++import matplotlib.pyplot as plt
++import numpy as np
++
++def test_empty_collection():
++    """Test that empty collections don't cause issues."""
++    fig, ax1 = plt.subplots()
++    # Create an empty stackplot
++    ax1.stackplot([], [])
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [1, 2, 3])
++    print("‚ú? Empty collection test passed")
++    plt.close(fig)
++
++def test_multiple_collections():
++    """Test with multiple collections on the same axes."""
++    fig, ax1 = plt.subplots()
++    ax1.stackplot([1, 2, 3], [1, 2, 3])
++    ax1.fill_between([1, 2, 3], [0, 1, 2], [1, 2, 3])
++    ax1.scatter([1, 2, 3], [2, 3, 4])
++    initial_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [5, 6, 7])
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ylim), \
++        f"ax1 dataLim changed from {initial_ylim} to {ax1.dataLim.intervaly}"
++    print("‚ú? Multiple collections test passed")
++    plt.close(fig)
++
++def test_relim_directly():
++    """Test calling relim() directly on axes with collections."""
++    fig, ax = plt.subplots()
++    ax.stackplot([1, 2, 3], [1, 2, 3])
++    ax.scatter([1, 2, 3], [4, 5, 6])
++    
++    # Store initial limits
++    initial_ylim = ax.dataLim.intervaly.copy()
++    
++    # Call relim
++    ax.relim()
++    
++    # Check that limits are recalculated correctly
++    assert np.isfinite(ax.dataLim.intervaly).all(), \
++        f"dataLim has inf values after relim: {ax.dataLim.intervaly}"
++    
++    # The limits should include both the stackplot and scatter data
++    assert ax.dataLim.intervaly[0] <= 0, "Lower limit should include stackplot baseline"
++    assert ax.dataLim.intervaly[1] >= 6, "Upper limit should include scatter data"
++    
++    print("‚ú? Direct relim test passed")
++    plt.close(fig)
++
++def test_visible_only():
++    """Test relim with visible_only parameter."""
++    fig, ax = plt.subplots()
++    coll1 = ax.stackplot([1, 2, 3], [1, 2, 3])[0]
++    coll2 = ax.scatter([1, 2, 3], [10, 20, 30])
++    
++    # Make scatter invisible
++    coll2.set_visible(False)
++    
++    # Call relim with visible_only=True
++    ax.relim(visible_only=True)
++    
++    # Check that limits only include visible artists (stackplot)
++    assert ax.dataLim.intervaly[1] < 10, \
++        "Upper limit should not include invisible scatter data"
++    
++    print("‚ú? Visible only test passed")
++    plt.close(fig)
++
++if __name__ == '__main__':
++    test_empty_collection()
++    test_multiple_collections()
++    test_relim_directly()
++    test_visible_only()
++    print("\n‚ú? All edge case tests passed!")
+diff --git a/test_fix_comprehensive.py b/test_fix_comprehensive.py
+new file mode 100644
+index 0000000000..1f82d0ac18
+--- /dev/null
++++ b/test_fix_comprehensive.py
+@@ -0,0 +1,104 @@
++"""
++Comprehensive test for the fix to the dataLims issue with twinx and stackplot.
++"""
++import matplotlib.pyplot as plt
++import numpy as np
++
++def test_twinx_stackplot_datalim():
++    """Test that dataLims are preserved when using twinx with stackplot."""
++    df1_index = ['16 May', '17 May']
++    df1_values = [-22.717708333333402, 26.584999999999937]
++    df2_values = [-0.08501399999999998, -2.9833019999999966]
++
++    # Test 1: stackplot on ax1, plot on ax2
++    fig, ax1 = plt.subplots()
++    ax1.stackplot(df1_index, df1_values)
++    initial_ax1_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot(df1_index, df2_values)
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ax1_ylim), \
++        f"ax1 dataLim changed from {initial_ax1_ylim} to {ax1.dataLim.intervaly}"
++    
++    # Check that ax2's dataLim is set correctly
++    assert np.isfinite(ax2.dataLim.intervaly).all(), \
++        f"ax2 dataLim has inf values: {ax2.dataLim.intervaly}"
++    
++    plt.close(fig)
++    print("‚ú? Test 1 passed: stackplot on ax1, plot on ax2")
++
++    # Test 2: plot on ax1, stackplot on ax2
++    fig, ax1 = plt.subplots()
++    ax1.plot(df1_index, df2_values)
++    initial_ax1_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.stackplot(df1_index, df1_values)
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ax1_ylim), \
++        f"ax1 dataLim changed from {initial_ax1_ylim} to {ax1.dataLim.intervaly}"
++    
++    # Check that ax2's dataLim is set correctly
++    assert np.isfinite(ax2.dataLim.intervaly).all(), \
++        f"ax2 dataLim has inf values: {ax2.dataLim.intervaly}"
++    
++    plt.close(fig)
++    print("‚ú? Test 2 passed: plot on ax1, stackplot on ax2")
++
++    # Test 3: scatter on ax1, plot on ax2
++    fig, ax1 = plt.subplots()
++    x = [1, 2, 3]
++    y = [10, 20, 30]
++    ax1.scatter(x, y)
++    initial_ax1_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [5, 15, 25])
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ax1_ylim), \
++        f"ax1 dataLim changed from {initial_ax1_ylim} to {ax1.dataLim.intervaly}"
++    
++    plt.close(fig)
++    print("‚ú? Test 3 passed: scatter on ax1, plot on ax2")
++
++    # Test 4: fill_between on ax1, plot on ax2
++    fig, ax1 = plt.subplots()
++    x = [1, 2, 3]
++    y1 = [10, 20, 30]
++    y2 = [5, 10, 15]
++    ax1.fill_between(x, y1, y2)
++    initial_ax1_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [5, 15, 25])
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ax1_ylim), \
++        f"ax1 dataLim changed from {initial_ax1_ylim} to {ax1.dataLim.intervaly}"
++    
++    plt.close(fig)
++    print("‚ú? Test 4 passed: fill_between on ax1, plot on ax2")
++
++    # Test 5: bar on ax1, plot on ax2
++    fig, ax1 = plt.subplots()
++    ax1.bar([1, 2, 3], [10, 20, 30])
++    initial_ax1_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [5, 15, 25])
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ax1_ylim), \
++        f"ax1 dataLim changed from {initial_ax1_ylim} to {ax1.dataLim.intervaly}"
++    
++    plt.close(fig)
++    print("‚ú? Test 5 passed: bar on ax1, plot on ax2")
++
++    print("\n‚ú? All tests passed!")
++
++if __name__ == '__main__':
++    test_twinx_stackplot_datalim()
+diff --git a/test_nan_handling.py b/test_nan_handling.py
+new file mode 100644
+index 0000000000..84113294de
+--- /dev/null
++++ b/test_nan_handling.py
+@@ -0,0 +1,44 @@
++"""
++Test handling of NaN and masked values in collections.
++"""
++import matplotlib.pyplot as plt
++import numpy as np
++import numpy.ma as ma
++
++def test_nan_collection():
++    """Test that collections with NaN values are handled correctly."""
++    fig, ax1 = plt.subplots()
++    # Create a stackplot with some NaN values
++    ax1.stackplot([1, 2, 3], [np.nan, 2, 3])
++    initial_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [1, 2, 3])
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ylim, equal_nan=True), \
++        f"ax1 dataLim changed from {initial_ylim} to {ax1.dataLim.intervaly}"
++    print("‚ú? NaN collection test passed")
++    plt.close(fig)
++
++def test_masked_collection():
++    """Test that collections with masked values are handled correctly."""
++    fig, ax1 = plt.subplots()
++    # Create a stackplot with masked values
++    y = ma.array([1, 2, 3], mask=[True, False, False])
++    ax1.stackplot([1, 2, 3], y)
++    initial_ylim = ax1.dataLim.intervaly.copy()
++    
++    ax2 = ax1.twinx()
++    ax2.plot([1, 2, 3], [1, 2, 3])
++    
++    # Check that ax1's dataLim is preserved
++    assert np.allclose(ax1.dataLim.intervaly, initial_ylim, equal_nan=True), \
++        f"ax1 dataLim changed from {initial_ylim} to {ax1.dataLim.intervaly}"
++    print("‚ú? Masked collection test passed")
++    plt.close(fig)
++
++if __name__ == '__main__':
++    test_nan_collection()
++    test_masked_collection()
++    print("\n‚ú? All NaN/masked value tests passed!")
+diff --git a/test_other_collections.py b/test_other_collections.py
+new file mode 100644
+index 0000000000..896c0521e1
+--- /dev/null
++++ b/test_other_collections.py
+@@ -0,0 +1,42 @@
++import matplotlib.pyplot as plt
++import numpy as np
++
++def print_datalim(*ax):
++    for i, ax_ in enumerate(ax):
++        print(f"ax{i+1}: {ax_.dataLim.intervaly}", end=' / ')
++    print()
++
++# Test with scatter plot (which creates a PathCollection)
++print("Test with scatter plot:")
++fig, ax1 = plt.subplots()
++x = [1, 2, 3]
++y = [10, 20, 30]
++ax1.scatter(x, y)
++print_datalim(ax1)
++ax2 = ax1.twinx()
++print_datalim(ax1, ax2)
++ax2.plot([1, 2, 3], [5, 15, 25])
++print_datalim(ax1, ax2)
++
++# Test with bar plot (which creates a BarContainer with Rectangles)
++print("\nTest with bar plot:")
++fig, ax1 = plt.subplots()
++ax1.bar([1, 2, 3], [10, 20, 30])
++print_datalim(ax1)
++ax2 = ax1.twinx()
++print_datalim(ax1, ax2)
++ax2.plot([1, 2, 3], [5, 15, 25])
++print_datalim(ax1, ax2)
++
++# Test with fill_between (which creates a PolyCollection)
++print("\nTest with fill_between:")
++fig, ax1 = plt.subplots()
++x = [1, 2, 3]
++y1 = [10, 20, 30]
++y2 = [5, 10, 15]
++ax1.fill_between(x, y1, y2)
++print_datalim(ax1)
++ax2 = ax1.twinx()
++print_datalim(ax1, ax2)
++ax2.plot([1, 2, 3], [5, 15, 25])
++print_datalim(ax1, ax2)
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..53bc9cc574
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,50 @@
++"""
++Test the exact scenario from the PR description.
++"""
++import matplotlib.pyplot as plt
++
++def print_datalim(*ax):
++    for ax_ in ax:
++        print(ax_.dataLim.intervaly, end=' / ')
++    print()
++
++df1_index = ['16 May', '17 May']  # == df2_index
++df1_values = [-22.717708333333402, 26.584999999999937]
++df2_values = [-0.08501399999999998, -2.9833019999999966]
++
++print("Testing the exact scenario from the PR description:")
++print("=" * 60)
++
++fig, ax1 = plt.subplots()
++
++ax1.stackplot(df1_index, df1_values)
++print("After ax1.stackplot:")
++print_datalim(ax1)
++
++ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
++print("After ax1.twinx():")
++print_datalim(ax1, ax2)
++
++ax2.plot(df1_index, df2_values)
++print("After ax2.plot:")
++print_datalim(ax1, ax2)
++
++# Verify the fix
++import numpy as np
++assert np.isfinite(ax1.dataLim.intervaly).all(), \
++    f"FAILED: ax1.dataLim has inf values: {ax1.dataLim.intervaly}"
++assert np.isfinite(ax2.dataLim.intervaly).all(), \
++    f"FAILED: ax2.dataLim has inf values: {ax2.dataLim.intervaly}"
++
++# Check that ax1's limits are approximately correct
++expected_ax1_min = -22.717708333333402
++expected_ax1_max = 26.584999999999937
++assert np.isclose(ax1.dataLim.intervaly[0], expected_ax1_min, rtol=1e-5), \
++    f"FAILED: ax1 min limit is {ax1.dataLim.intervaly[0]}, expected {expected_ax1_min}"
++assert np.isclose(ax1.dataLim.intervaly[1], expected_ax1_max, rtol=1e-5), \
++    f"FAILED: ax1 max limit is {ax1.dataLim.intervaly[1]}, expected {expected_ax1_max}"
++
++print("\n" + "=" * 60)
++print("‚ú? SUCCESS: The PR scenario works correctly!")
++print("   ax1.dataLim is preserved and not replaced by inf values.")
++plt.close(fig)
+diff --git a/test_swap_order.py b/test_swap_order.py
+new file mode 100644
+index 0000000000..4b48ff5297
+--- /dev/null
++++ b/test_swap_order.py
+@@ -0,0 +1,28 @@
++import matplotlib.pyplot as plt
++
++def print_datalim(*ax):
++    for ax_ in ax:
++        print(ax_.dataLim.intervaly, end=' / ')
++    print()
++
++df1_index = ['16 May', '17 May']  # == df2_index
++df1_values = [-22.717708333333402, 26.584999999999937]
++df2_values = [-0.08501399999999998, -2.9833019999999966]
++
++print("Test 1: Original order (stackplot on ax1, plot on ax2)")
++fig, ax1 = plt.subplots()
++ax1.stackplot(df1_index, df1_values)
++print_datalim(ax1)
++ax2 = ax1.twinx()
++print_datalim(ax1, ax2)
++ax2.plot(df1_index, df2_values)
++print_datalim(ax1, ax2)
++
++print("\nTest 2: Swapped order (plot on ax1, stackplot on ax2)")
++fig, ax1 = plt.subplots()
++ax1.plot(df1_index, df2_values)
++print_datalim(ax1)
++ax2 = ax1.twinx()
++print_datalim(ax1, ax2)
++ax2.stackplot(df1_index, df1_values)
++print_datalim(ax1, ax2)

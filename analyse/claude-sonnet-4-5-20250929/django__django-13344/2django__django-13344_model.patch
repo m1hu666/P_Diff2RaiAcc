@@ -1,0 +1,249 @@
+diff --git a/django/core/handlers/exception.py b/django/core/handlers/exception.py
+index 98fb46083a..028a1cc40b 100644
+--- a/django/core/handlers/exception.py
++++ b/django/core/handlers/exception.py
+@@ -70,7 +70,7 @@ def response_for_exception(request, exc):
+     elif isinstance(exc, MultiPartParserError):
+         response = get_exception_response(request, get_resolver(get_urlconf()), 400, exc)
+         log_response(
+-            'Bad request (Unable to parse request body): %s', request.path,
++            'Bad Request (Unable to parse request body): %s', request.path,
+             response=response,
+             request=request,
+             exc_info=sys.exc_info(),
+diff --git a/django/middleware/cache.py b/django/middleware/cache.py
+index e92f768fa3..d957448eb5 100644
+--- a/django/middleware/cache.py
++++ b/django/middleware/cache.py
+@@ -71,6 +71,7 @@ class UpdateCacheMiddleware(MiddlewareMixin):
+         self.cache_alias = settings.CACHE_MIDDLEWARE_ALIAS
+         self.cache = caches[self.cache_alias]
+         self.get_response = get_response
++        self._async_check()
+ 
+     def _should_update_cache(self, request, response):
+         return hasattr(request, '_cache_update_cache') and request._cache_update_cache
+@@ -133,6 +134,7 @@ class FetchFromCacheMiddleware(MiddlewareMixin):
+         self.cache_alias = settings.CACHE_MIDDLEWARE_ALIAS
+         self.cache = caches[self.cache_alias]
+         self.get_response = get_response
++        self._async_check()
+ 
+     def process_request(self, request):
+         """
+@@ -175,6 +177,7 @@ class CacheMiddleware(UpdateCacheMiddleware, FetchFromCacheMiddleware):
+     def __init__(self, get_response=None, cache_timeout=None, page_timeout=None, **kwargs):
+         self._get_response_none_deprecation(get_response)
+         self.get_response = get_response
++        self._async_check()
+         # We need to differentiate between "provided, but using default value",
+         # and "not provided". If the value is provided using a default, then
+         # we fall back to system defaults. If it is not provided at all,
+diff --git a/django/middleware/security.py b/django/middleware/security.py
+index 035c329efb..d292194502 100644
+--- a/django/middleware/security.py
++++ b/django/middleware/security.py
+@@ -20,6 +20,7 @@ class SecurityMiddleware(MiddlewareMixin):
+         self.redirect_exempt = [re.compile(r) for r in settings.SECURE_REDIRECT_EXEMPT]
+         self.referrer_policy = settings.SECURE_REFERRER_POLICY
+         self.get_response = get_response
++        self._async_check()
+ 
+     def process_request(self, request):
+         path = request.path.lstrip("/")
+diff --git a/django/utils/deprecation.py b/django/utils/deprecation.py
+index b2c681b33c..8cff42b4b3 100644
+--- a/django/utils/deprecation.py
++++ b/django/utils/deprecation.py
+@@ -132,6 +132,8 @@ class MiddlewareMixin:
+             )(request)
+         response = response or await self.get_response(request)
+         if hasattr(self, 'process_response'):
++            if asyncio.iscoroutine(response):
++                response = await response
+             response = await sync_to_async(
+                 self.process_response,
+                 thread_sensitive=True,
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6b8894bffd
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,60 @@
++"""
++Script to reproduce the coroutine issue in ASGI middleware.
++"""
++import asyncio
++import sys
++import os
++
++# Add testbed to path
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++
++# Configure Django settings - DummyMiddleware is first
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    MIDDLEWARE=[
++        'test_middleware.DummyMiddleware',
++        'django.middleware.security.SecurityMiddleware',
++    ],
++    ROOT_URLCONF='test_urls',
++    ALLOWED_HOSTS=['*'],
++)
++
++import django
++django.setup()
++
++from django.core.handlers.asgi import ASGIHandler
++
++async def test_asgi_request():
++    """Simulate an ASGI request"""
++    handler = ASGIHandler()
++    
++    # Create a minimal ASGI scope
++    scope = {
++        'type': 'http',
++        'asgi': {'version': '3.0'},
++        'http_version': '1.1',
++        'method': 'GET',
++        'scheme': 'http',
++        'path': '/test/',
++        'query_string': b'',
++        'root_path': '',
++        'headers': [],
++        'server': ('testserver', 80),
++        'client': ('127.0.0.1', 8000),
++    }
++    
++    async def receive():
++        return {'type': 'http.request', 'body': b''}
++    
++    async def send(message):
++        pass
++    
++    await handler(scope, receive, send)
++    print("\nRequest completed!")
++
++if __name__ == '__main__':
++    loop = asyncio.get_event_loop()
++    loop.run_until_complete(test_asgi_request())
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..8f12e0de09
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,64 @@
++"""
++Comprehensive test to verify the fix for the coroutine issue.
++"""
++import asyncio
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    MIDDLEWARE=[
++        'test_middleware.DummyMiddleware',
++        'django.middleware.security.SecurityMiddleware',
++        'django.middleware.cache.UpdateCacheMiddleware',
++        'django.middleware.cache.FetchFromCacheMiddleware',
++    ],
++    ROOT_URLCONF='test_urls',
++    ALLOWED_HOSTS=['*'],
++    CACHES={
++        'default': {
++            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
++        }
++    },
++    CACHE_MIDDLEWARE_SECONDS=600,
++    CACHE_MIDDLEWARE_KEY_PREFIX='test',
++)
++
++import django
++django.setup()
++
++from django.core.handlers.asgi import ASGIHandler
++
++async def test_asgi_request():
++    """Simulate an ASGI request"""
++    handler = ASGIHandler()
++    
++    scope = {
++        'type': 'http',
++        'asgi': {'version': '3.0'},
++        'http_version': '1.1',
++        'method': 'GET',
++        'scheme': 'http',
++        'path': '/test/',
++        'query_string': b'',
++        'root_path': '',
++        'headers': [],
++        'server': ('testserver', 80),
++        'client': ('127.0.0.1', 8000),
++    }
++    
++    async def receive():
++        return {'type': 'http.request', 'body': b''}
++    
++    async def send(message):
++        pass
++    
++    await handler(scope, receive, send)
++    print("SUCCESS: All middleware received HttpResponse, not coroutine")
++
++if __name__ == '__main__':
++    loop = asyncio.get_event_loop()
++    loop.run_until_complete(test_asgi_request())
+diff --git a/test_middleware.py b/test_middleware.py
+new file mode 100644
+index 0000000000..7dc3fe528d
+--- /dev/null
++++ b/test_middleware.py
+@@ -0,0 +1,10 @@
++"""Middleware classes for testing"""
++import asyncio
++from django.utils.deprecation import MiddlewareMixin
++
++class DummyMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"DummyMiddleware - request: {request.__class__}, response: {response.__class__}")
++        if asyncio.iscoroutine(response):
++            print("ERROR: Received coroutine instead of HttpResponse!")
++        return response
+diff --git a/test_security_middleware.py b/test_security_middleware.py
+new file mode 100644
+index 0000000000..5760bf8c17
+--- /dev/null
++++ b/test_security_middleware.py
+@@ -0,0 +1,9 @@
++import asyncio
++from django.middleware.security import SecurityMiddleware as OriginalSecurityMiddleware
++
++class SecurityMiddleware(OriginalSecurityMiddleware):
++    def __init__(self, get_response):
++        print(f"SecurityMiddleware.__init__ called with get_response: {get_response}")
++        print(f"  get_response is coroutine function: {asyncio.iscoroutinefunction(get_response)}")
++        super().__init__(get_response)
++        print(f"  self has _is_coroutine: {hasattr(self, '_is_coroutine')}")
+diff --git a/test_urls.py b/test_urls.py
+new file mode 100644
+index 0000000000..12f533694f
+--- /dev/null
++++ b/test_urls.py
+@@ -0,0 +1,10 @@
++"""URL configuration for testing"""
++from django.urls import path
++from django.http import HttpResponse
++
++def test_view(request):
++    return HttpResponse("Test response")
++
++urlpatterns = [
++    path('test/', test_view),
++]

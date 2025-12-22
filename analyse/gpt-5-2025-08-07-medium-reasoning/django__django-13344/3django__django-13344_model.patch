@@ -1,0 +1,77 @@
+diff --git a/django/utils/deprecation.py b/django/utils/deprecation.py
+index b2c681b33c..3ec89189db 100644
+--- a/django/utils/deprecation.py
++++ b/django/utils/deprecation.py
+@@ -2,7 +2,7 @@ import asyncio
+ import inspect
+ import warnings
+ 
+-from asgiref.sync import sync_to_async
++from asgiref.sync import sync_to_async, async_to_sync
+ 
+ 
+ class RemovedInDjango40Warning(DeprecationWarning):
+@@ -115,6 +115,17 @@ class MiddlewareMixin:
+         if hasattr(self, 'process_request'):
+             response = self.process_request(request)
+         response = response or self.get_response(request)
++        # If get_response returned an awaitable, await it and then process_response.
++        if asyncio.iscoroutine(response):
++            async def _await_and_process():
++                awaited = await response
++                if hasattr(self, 'process_response'):
++                    return await sync_to_async(
++                        self.process_response,
++                        thread_sensitive=True,
++                    )(request, awaited)
++                return awaited
++            return async_to_sync(_await_and_process)()
+         if hasattr(self, 'process_response'):
+             response = self.process_response(request, response)
+         return response
+diff --git a/testproj/__init__.py b/testproj/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testproj/mw.py b/testproj/mw.py
+new file mode 100644
+index 0000000000..b2602c0704
+--- /dev/null
++++ b/testproj/mw.py
+@@ -0,0 +1,17 @@
++
++from django.utils.deprecation import MiddlewareMixin
++last_response_type = None
++class SyncOnlyInnerMiddleware:
++    sync_capable = True
++    async_capable = False
++    def __init__(self, get_response):
++        self.get_response = get_response
++    def __call__(self, request):
++        return self.get_response(request)
++class AsyncOnlyOldStyleMiddleware(MiddlewareMixin):
++    sync_capable = False
++    async_capable = True
++    def process_response(self, request, response):
++        global last_response_type
++        last_response_type = type(response).__name__
++        return response
+diff --git a/testproj/urls.py b/testproj/urls.py
+new file mode 100644
+index 0000000000..bbcce9e8a8
+--- /dev/null
++++ b/testproj/urls.py
+@@ -0,0 +1,4 @@
++
++from django.urls import path
++from .views import index
++urlpatterns = [path("", index)]
+diff --git a/testproj/views.py b/testproj/views.py
+new file mode 100644
+index 0000000000..09c8e52a07
+--- /dev/null
++++ b/testproj/views.py
+@@ -0,0 +1,4 @@
++
++from django.http import HttpResponse
++def index(request):
++    return HttpResponse("OK")

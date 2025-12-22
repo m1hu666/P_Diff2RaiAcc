@@ -1,0 +1,924 @@
+diff --git a/apply_fix.py b/apply_fix.py
+new file mode 100644
+index 0000000000..95b1d16c58
+--- /dev/null
++++ b/apply_fix.py
+@@ -0,0 +1,69 @@
++#!/usr/bin/env python3
++"""
++Apply the fix to FileField to preserve callable storage during deconstruction.
++"""
++
++# Read the file
++with open('/testbed/django/db/models/fields/files.py', 'r') as f:
++    content = f.read()
++
++# Fix 1: Modify __init__ to store the original callable
++old_init = '''    def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
++        self._primary_key_set_explicitly = 'primary_key' in kwargs
++
++        self.storage = storage or default_storage
++        if callable(self.storage):
++            self.storage = self.storage()
++            if not isinstance(self.storage, Storage):
++                raise TypeError(
++                    "%s.storage must be a subclass/instance of %s.%s"
++                    % (self.__class__.__qualname__, Storage.__module__, Storage.__qualname__)
++                )
++        self.upload_to = upload_to'''
++
++new_init = '''    def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
++        self._primary_key_set_explicitly = 'primary_key' in kwargs
++
++        self._storage_callable = None
++        self.storage = storage or default_storage
++        if callable(self.storage):
++            # Store the original callable for deconstruction
++            self._storage_callable = self.storage
++            self.storage = self.storage()
++            if not isinstance(self.storage, Storage):
++                raise TypeError(
++                    "%s.storage must be a subclass/instance of %s.%s"
++                    % (self.__class__.__qualname__, Storage.__module__, Storage.__qualname__)
++                )
++        self.upload_to = upload_to'''
++
++content = content.replace(old_init, new_init)
++
++# Fix 2: Modify deconstruct to return the original callable
++old_deconstruct = '''    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        if kwargs.get("max_length") == 100:
++            del kwargs["max_length"]
++        kwargs['upload_to'] = self.upload_to
++        if self.storage is not default_storage:
++            kwargs['storage'] = self.storage
++        return name, path, args, kwargs'''
++
++new_deconstruct = '''    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        if kwargs.get("max_length") == 100:
++            del kwargs["max_length"]
++        kwargs['upload_to'] = self.upload_to
++        if self._storage_callable is not None:
++            kwargs['storage'] = self._storage_callable
++        elif self.storage is not default_storage:
++            kwargs['storage'] = self.storage
++        return name, path, args, kwargs'''
++
++content = content.replace(old_deconstruct, new_deconstruct)
++
++# Write the file back
++with open('/testbed/django/db/models/fields/files.py', 'w') as f:
++    f.write(content)
++
++print("Fix applied successfully!")
+diff --git a/django/db/models/fields/files.py b/django/db/models/fields/files.py
+index e10a5bb6d9..6a0806d4ed 100644
+--- a/django/db/models/fields/files.py
++++ b/django/db/models/fields/files.py
+@@ -227,8 +227,11 @@ class FileField(Field):
+     def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
+         self._primary_key_set_explicitly = 'primary_key' in kwargs
+ 
++        self._storage_callable = None
+         self.storage = storage or default_storage
+         if callable(self.storage):
++            # Store the original callable for deconstruction
++            self._storage_callable = self.storage
+             self.storage = self.storage()
+             if not isinstance(self.storage, Storage):
+                 raise TypeError(
+@@ -278,7 +281,9 @@ class FileField(Field):
+         if kwargs.get("max_length") == 100:
+             del kwargs["max_length"]
+         kwargs['upload_to'] = self.upload_to
+-        if self.storage is not default_storage:
++        if self._storage_callable is not None:
++            kwargs['storage'] = self._storage_callable
++        elif self.storage is not default_storage:
+             kwargs['storage'] = self.storage
+         return name, path, args, kwargs
+ 
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..87cc745493
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,78 @@
++"""
++Final verification that the fix addresses the exact issue in the PR description.
++"""
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.db import models
++
++print("=" * 70)
++print("FINAL VERIFICATION - PR ISSUE RESOLUTION")
++print("=" * 70)
++
++print("\nPR Description states:")
++print("  'A FileField with a callable storage parameter should not actually")
++print("   evaluate the callable when it is being deconstructed.'")
++print()
++print("  'The correct behavior should be to return a reference to the")
++print("   original callable during deconstruction.'")
++print()
++
++def get_storage():
++    """
++    Callable storage that allows modifying the used storage at runtime,
++    selecting different storages for different environments.
++    """
++    return FileSystemStorage(location='/tmp/runtime_storage')
++
++# Create a FileField with callable storage
++field = models.FileField(storage=get_storage)
++
++print("Before fix:")
++print("  - Deconstruction would return the evaluated storage instance")
++print("  - This breaks the assumption that storage may vary at runtime")
++print("  - The actual evaluated Storage would be inlined into migrations")
++print()
++
++print("After fix:")
++# Deconstruct the field
++name, path, args, kwargs = field.deconstruct()
++storage_value = kwargs.get('storage')
++
++print(f"  - Deconstruction returns: {storage_value}")
++print(f"  - Type: {type(storage_value).__name__}")
++print(f"  - Is original callable? {storage_value is get_storage}")
++print()
++
++if storage_value is get_storage:
++    print("SUCCESS: The fix correctly preserves the callable storage!")
++    print()
++    print("This means:")
++    print("  1. The callable is NOT evaluated during deconstruction")
++    print("  2. A reference to the original callable is returned")
++    print("  3. The storage can vary at runtime as documented")
++    print("  4. Migrations will reference the callable, not inline the instance")
++    print()
++    print("The behavior is now consistent with callable upload_to parameters.")
++else:
++    print("FAILURE: The callable storage is not preserved!")
++    
++print("=" * 70)
+diff --git a/fix.py b/fix.py
+new file mode 100644
+index 0000000000..4ae5707962
+--- /dev/null
++++ b/fix.py
+@@ -0,0 +1,69 @@
++# This script shows the fix that needs to be applied to /testbed/django/db/models/fields/files.py
++
++# In __init__ method, we need to:
++# 1. Store the original callable before evaluating it
++
++# In deconstruct method, we need to:
++# 1. Return the original callable if storage was provided as a callable
++
++# Here's the fix:
++
++OLD_INIT = '''
++    def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
++        self._primary_key_set_explicitly = 'primary_key' in kwargs
++
++        self.storage = storage or default_storage
++        if callable(self.storage):
++            self.storage = self.storage()
++            if not isinstance(self.storage, Storage):
++                raise TypeError(
++                    "%s.storage must be a subclass/instance of %s.%s"
++                    % (self.__class__.__qualname__, Storage.__module__, Storage.__qualname__)
++                )
++        self.upload_to = upload_to
++'''
++
++NEW_INIT = '''
++    def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
++        self._primary_key_set_explicitly = 'primary_key' in kwargs
++
++        self._storage_callable = None
++        self.storage = storage or default_storage
++        if callable(self.storage):
++            self._storage_callable = self.storage
++            self.storage = self.storage()
++            if not isinstance(self.storage, Storage):
++                raise TypeError(
++                    "%s.storage must be a subclass/instance of %s.%s"
++                    % (self.__class__.__qualname__, Storage.__module__, Storage.__qualname__)
++                )
++        self.upload_to = upload_to
++'''
++
++OLD_DECONSTRUCT = '''
++    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        if kwargs.get("max_length") == 100:
++            del kwargs["max_length"]
++        kwargs['upload_to'] = self.upload_to
++        if self.storage is not default_storage:
++            kwargs['storage'] = self.storage
++        return name, path, args, kwargs
++'''
++
++NEW_DECONSTRUCT = '''
++    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        if kwargs.get("max_length") == 100:
++            del kwargs["max_length"]
++        kwargs['upload_to'] = self.upload_to
++        if self._storage_callable is not None:
++            kwargs['storage'] = self._storage_callable
++        elif self.storage is not default_storage:
++            kwargs['storage'] = self.storage
++        return name, path, args, kwargs
++'''
++
++print("Fix plan:")
++print("1. In __init__, store the original callable in self._storage_callable before evaluating it")
++print("2. In deconstruct, return self._storage_callable if it was set, otherwise return self.storage")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..a7e46c939e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,65 @@
++"""
++Script to reproduce the issue with FileField callable storage deconstruction.
++"""
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db import models
++
++# Create a callable storage
++def get_storage():
++    return FileSystemStorage(location='/tmp/test_storage')
++
++# Create a FileField with callable storage
++field = models.FileField(storage=get_storage)
++
++# Deconstruct the field
++name, path, args, kwargs = field.deconstruct()
++
++print("Deconstruction result:")
++print(f"  name: {name}")
++print(f"  path: {path}")
++print(f"  args: {args}")
++print(f"  kwargs: {kwargs}")
++
++# Check if storage is the callable or the evaluated storage
++storage_value = kwargs.get('storage')
++print(f"\nStorage value in kwargs: {storage_value}")
++print(f"Storage value type: {type(storage_value)}")
++print(f"Original callable: {get_storage}")
++print(f"Is storage the original callable? {storage_value is get_storage}")
++
++# The expected behavior is that storage_value should be get_storage (the callable)
++# The actual behavior is that storage_value is the evaluated FileSystemStorage instance
++
++# Let's also check how upload_to handles callables
++def custom_upload_to(instance, filename):
++    return f"uploads/{filename}"
++
++field_with_callable_upload = models.FileField(upload_to=custom_upload_to)
++name2, path2, args2, kwargs2 = field_with_callable_upload.deconstruct()
++
++print("\n\nFileField with callable upload_to:")
++print(f"  kwargs: {kwargs2}")
++upload_to_value = kwargs2.get('upload_to')
++print(f"Upload_to value: {upload_to_value}")
++print(f"Is upload_to the original callable? {upload_to_value is custom_upload_to}")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..406e7f1f3e
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,145 @@
++"""
++Comprehensive test to verify the fix for FileField callable storage deconstruction.
++This test simulates the exact scenario described in the PR.
++"""
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db import models
++
++print("=" * 70)
++print("COMPREHENSIVE TEST FOR FILEFIELD CALLABLE STORAGE DECONSTRUCTION")
++print("=" * 70)
++
++# Test 1: Verify the issue described in the PR is fixed
++print("\nTest 1: Callable storage should not be evaluated during deconstruction")
++print("-" * 70)
++
++def get_dynamic_storage():
++    """
++    This callable allows selecting different storages for different environments.
++    As per the documentation, this should be preserved during deconstruction.
++    """
++    return FileSystemStorage(location='/tmp/dynamic_storage')
++
++field = models.FileField(storage=get_dynamic_storage)
++
++# The storage should be evaluated during __init__
++print(f"Field storage (evaluated): {field.storage}")
++print(f"Field storage type: {type(field.storage)}")
++assert isinstance(field.storage, FileSystemStorage), "Storage should be evaluated during __init__"
++
++# But deconstruction should return the original callable
++name, path, args, kwargs = field.deconstruct()
++storage_in_kwargs = kwargs.get('storage')
++print(f"Storage in deconstruct kwargs: {storage_in_kwargs}")
++print(f"Is original callable preserved? {storage_in_kwargs is get_dynamic_storage}")
++assert storage_in_kwargs is get_dynamic_storage, "Deconstruction should return the original callable"
++print("PASSED: Test 1")
++
++# Test 2: Verify upload_to callable behavior is consistent
++print("\nTest 2: Callable upload_to should behave the same way")
++print("-" * 70)
++
++def custom_upload_to(instance, filename):
++    return f"custom/{filename}"
++
++field_with_upload = models.FileField(
++    storage=get_dynamic_storage,
++    upload_to=custom_upload_to
++)
++
++name, path, args, kwargs = field_with_upload.deconstruct()
++upload_to_in_kwargs = kwargs.get('upload_to')
++storage_in_kwargs = kwargs.get('storage')
++
++print(f"upload_to in kwargs: {upload_to_in_kwargs}")
++print(f"Is upload_to callable preserved? {upload_to_in_kwargs is custom_upload_to}")
++print(f"storage in kwargs: {storage_in_kwargs}")
++print(f"Is storage callable preserved? {storage_in_kwargs is get_dynamic_storage}")
++
++assert upload_to_in_kwargs is custom_upload_to, "upload_to callable should be preserved"
++assert storage_in_kwargs is get_dynamic_storage, "storage callable should be preserved"
++print("PASSED: Test 2")
++
++# Test 3: Non-callable storage should still work
++print("\nTest 3: Non-callable storage instances should work as before")
++print("-" * 70)
++
++storage_instance = FileSystemStorage(location='/tmp/static_storage')
++field_with_instance = models.FileField(storage=storage_instance)
++
++name, path, args, kwargs = field_with_instance.deconstruct()
++storage_in_kwargs = kwargs.get('storage')
++
++print(f"Storage in kwargs: {storage_in_kwargs}")
++print(f"Is same instance? {storage_in_kwargs is storage_instance}")
++assert storage_in_kwargs is storage_instance, "Non-callable storage should be preserved as-is"
++print("PASSED: Test 3")
++
++# Test 4: Default storage should not appear in kwargs
++print("\nTest 4: Default storage should not appear in deconstruct kwargs")
++print("-" * 70)
++
++field_default = models.FileField()
++name, path, args, kwargs = field_default.deconstruct()
++storage_in_kwargs = kwargs.get('storage')
++
++print(f"Storage in kwargs: {storage_in_kwargs}")
++print(f"Is None? {storage_in_kwargs is None}")
++assert storage_in_kwargs is None, "Default storage should not be in kwargs"
++print("PASSED: Test 4")
++
++# Test 5: Callable class storage
++print("\nTest 5: Callable class (not instance) should be preserved")
++print("-" * 70)
++
++class CustomStorage(FileSystemStorage):
++    pass
++
++field_with_class = models.FileField(storage=CustomStorage)
++name, path, args, kwargs = field_with_class.deconstruct()
++storage_in_kwargs = kwargs.get('storage')
++
++print(f"Storage in kwargs: {storage_in_kwargs}")
++print(f"Is same class? {storage_in_kwargs is CustomStorage}")
++assert storage_in_kwargs is CustomStorage, "Callable class should be preserved"
++print("PASSED: Test 5")
++
++# Test 6: Runtime behavior - storage should still work
++print("\nTest 6: Runtime behavior should not be affected")
++print("-" * 70)
++
++field_runtime = models.FileField(storage=get_dynamic_storage)
++print(f"Field can access storage: {field_runtime.storage is not None}")
++print(f"Storage is FileSystemStorage: {isinstance(field_runtime.storage, FileSystemStorage)}")
++assert isinstance(field_runtime.storage, FileSystemStorage), "Storage should work at runtime"
++print("PASSED: Test 6")
++
++print("\n" + "=" * 70)
++print("ALL TESTS PASSED!")
++print("=" * 70)
++print("\nSummary:")
++print("- Callable storage is preserved during deconstruction")
++print("- Non-callable storage instances work as before")
++print("- Default storage is not included in kwargs")
++print("- Runtime behavior is not affected")
++print("- Behavior is consistent with callable upload_to")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..2f500c36e2
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,119 @@
++"""
++Comprehensive test for the FileField callable storage deconstruction fix.
++"""
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db import models
++
++print("Test 1: FileField with callable function storage")
++print("=" * 60)
++
++def get_storage():
++    return FileSystemStorage(location='/tmp/test_storage')
++
++field1 = models.FileField(storage=get_storage)
++name, path, args, kwargs = field1.deconstruct()
++storage_value = kwargs.get('storage')
++print(f"Storage in kwargs: {storage_value}")
++print(f"Is callable preserved? {storage_value is get_storage}")
++assert storage_value is get_storage, "Callable function storage should be preserved"
++print("PASSED\n")
++
++print("Test 2: FileField with callable class storage")
++print("=" * 60)
++
++class CallableStorage(FileSystemStorage):
++    def __call__(self):
++        return self
++
++field2 = models.FileField(storage=CallableStorage)
++name, path, args, kwargs = field2.deconstruct()
++storage_value = kwargs.get('storage')
++print(f"Storage in kwargs: {storage_value}")
++print(f"Is callable preserved? {storage_value is CallableStorage}")
++assert storage_value is CallableStorage, "Callable class storage should be preserved"
++print("PASSED\n")
++
++print("Test 3: FileField with non-callable storage instance")
++print("=" * 60)
++
++storage_instance = FileSystemStorage(location='/tmp/test_storage2')
++field3 = models.FileField(storage=storage_instance)
++name, path, args, kwargs = field3.deconstruct()
++storage_value = kwargs.get('storage')
++print(f"Storage in kwargs: {storage_value}")
++print(f"Is instance preserved? {storage_value is storage_instance}")
++assert storage_value is storage_instance, "Non-callable storage instance should be preserved"
++print("PASSED\n")
++
++print("Test 4: FileField with default storage (None)")
++print("=" * 60)
++
++field4 = models.FileField()
++name, path, args, kwargs = field4.deconstruct()
++storage_value = kwargs.get('storage')
++print(f"Storage in kwargs: {storage_value}")
++print(f"Is None (default storage not included)? {storage_value is None}")
++assert storage_value is None, "Default storage should not be in kwargs"
++print("PASSED\n")
++
++print("Test 5: FileField with explicit default_storage")
++print("=" * 60)
++
++field5 = models.FileField(storage=default_storage)
++name, path, args, kwargs = field5.deconstruct()
++storage_value = kwargs.get('storage')
++print(f"Storage in kwargs: {storage_value}")
++print(f"Is None (default storage not included)? {storage_value is None}")
++assert storage_value is None, "Explicit default_storage should not be in kwargs"
++print("PASSED\n")
++
++print("Test 6: Verify storage is actually callable and works at runtime")
++print("=" * 60)
++
++call_count = 0
++
++def counting_storage():
++    global call_count
++    call_count += 1
++    return FileSystemStorage(location=f'/tmp/test_storage_{call_count}')
++
++field6 = models.FileField(storage=counting_storage)
++print(f"Call count after field creation: {call_count}")
++assert call_count == 1, "Storage should be called once during __init__"
++
++# Verify the storage is actually the evaluated instance
++print(f"Field storage type: {type(field6.storage)}")
++assert isinstance(field6.storage, FileSystemStorage), "Field storage should be FileSystemStorage instance"
++
++# Verify deconstruction returns the callable
++name, path, args, kwargs = field6.deconstruct()
++storage_value = kwargs.get('storage')
++print(f"Storage in kwargs: {storage_value}")
++print(f"Is callable preserved? {storage_value is counting_storage}")
++assert storage_value is counting_storage, "Callable should be preserved in deconstruction"
++print("PASSED\n")
++
++print("=" * 60)
++print("All tests passed!")
++print("=" * 60)
+diff --git a/test_imagefield.py b/test_imagefield.py
+new file mode 100644
+index 0000000000..32e476f250
+--- /dev/null
++++ b/test_imagefield.py
+@@ -0,0 +1,54 @@
++"""
++Test that ImageField with callable storage also works correctly.
++"""
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.db import models
++
++# Create a callable storage
++def get_image_storage():
++    return FileSystemStorage(location='/tmp/images')
++
++# Create an ImageField with callable storage
++image_field = models.ImageField(storage=get_image_storage)
++
++# Deconstruct the field
++name, path, args, kwargs = image_field.deconstruct()
++
++print("ImageField deconstruction result:")
++print(f"  name: {name}")
++print(f"  path: {path}")
++print(f"  args: {args}")
++print(f"  kwargs: {kwargs}")
++
++# Check if storage is the callable or the evaluated storage
++storage_value = kwargs.get('storage')
++print(f"\nStorage value in kwargs: {storage_value}")
++print(f"Storage value type: {type(storage_value)}")
++print(f"Original callable: {get_image_storage}")
++print(f"Is storage the original callable? {storage_value is get_image_storage}")
++
++if storage_value is get_image_storage:
++    print("\nSUCCESS: ImageField correctly preserves callable storage!")
++else:
++    print("\nFAILURE: ImageField does not preserve callable storage!")
+diff --git a/test_migration_scenario.py b/test_migration_scenario.py
+new file mode 100644
+index 0000000000..5fd673c9f7
+--- /dev/null
++++ b/test_migration_scenario.py
+@@ -0,0 +1,120 @@
++"""
++Test that FileField with callable storage works correctly in migrations.
++"""
++import os
++import sys
++import tempfile
++import shutil
++import django
++from django.conf import settings
++
++# Create a temporary directory for the test app
++test_dir = tempfile.mkdtemp(prefix='test_migration_')
++app_dir = os.path.join(test_dir, 'testapp')
++os.makedirs(app_dir)
++
++# Create __init__.py
++with open(os.path.join(app_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++# Create models.py with a FileField that has callable storage
++with open(os.path.join(app_dir, 'models.py'), 'w') as f:
++    f.write('''
++from django.db import models
++from django.core.files.storage import FileSystemStorage
++
++def get_custom_storage():
++    return FileSystemStorage(location='/tmp/custom_storage')
++
++class MyModel(models.Model):
++    file = models.FileField(storage=get_custom_storage, upload_to='uploads/')
++''')
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': os.path.join(test_dir, 'db.sqlite3'),
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'testapp',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++    BASE_DIR=test_dir,
++)
++
++# Add the test directory to sys.path
++sys.path.insert(0, test_dir)
++
++django.setup()
++
++from django.db import models
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations.state import ProjectState
++from django.db.migrations import Migration
++from django.db import migrations
++
++# Import the model
++from testapp.models import MyModel
++
++# Create a migration
++print("Creating migration for MyModel...")
++
++# Get the field
++field = MyModel._meta.get_field('file')
++
++# Deconstruct the field
++name, path, args, kwargs = field.deconstruct()
++
++print(f"\nField deconstruction:")
++print(f"  name: {name}")
++print(f"  path: {path}")
++print(f"  args: {args}")
++print(f"  kwargs: {kwargs}")
++
++# Check that storage is the callable
++storage_value = kwargs.get('storage')
++print(f"\nStorage value: {storage_value}")
++print(f"Storage type: {type(storage_value)}")
++
++# Import the function to compare
++from testapp.models import get_custom_storage
++print(f"Original callable: {get_custom_storage}")
++print(f"Is storage the original callable? {storage_value is get_custom_storage}")
++
++# Create a simple migration to test serialization
++migration = Migration('0001_initial', 'testapp')
++migration.operations = [
++    migrations.CreateModel(
++        name='MyModel',
++        fields=[
++            ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('file', models.FileField(storage=get_custom_storage, upload_to='uploads/')),
++        ],
++    ),
++]
++
++# Write the migration
++writer = MigrationWriter(migration)
++migration_string = writer.as_string()
++
++print("\n" + "=" * 60)
++print("Generated migration file:")
++print("=" * 60)
++print(migration_string)
++print("=" * 60)
++
++# Check that the migration contains the callable reference
++if 'testapp.models.get_custom_storage' in migration_string:
++    print("\nSUCCESS: Migration correctly references the callable storage function!")
++else:
++    print("\nFAILURE: Migration does not reference the callable storage function!")
++    print("This would cause the storage to be inlined as an instance.")
++
++# Cleanup
++shutil.rmtree(test_dir)
+diff --git a/test_real_migration.py b/test_real_migration.py
+new file mode 100644
+index 0000000000..90a7ddcfaa
+--- /dev/null
++++ b/test_real_migration.py
+@@ -0,0 +1,124 @@
++"""
++Test that demonstrates the fix works in a real migration scenario.
++This simulates what happens during makemigrations.
++"""
++import os
++import sys
++import tempfile
++import shutil
++
++# Create a temporary Django project
++test_dir = tempfile.mkdtemp(prefix='django_test_')
++app_dir = os.path.join(test_dir, 'myapp')
++os.makedirs(app_dir)
++
++# Create __init__.py
++with open(os.path.join(app_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++# Create models.py with callable storage
++with open(os.path.join(app_dir, 'models.py'), 'w') as f:
++    f.write('''
++from django.db import models
++from django.core.files.storage import FileSystemStorage
++import os
++
++def get_media_storage():
++    """
++    Returns different storage based on environment.
++    In production: S3 storage
++    In development: local file storage
++    """
++    if os.environ.get('PRODUCTION'):
++        # In real code, this would return S3 storage
++        return FileSystemStorage(location='/var/media/production')
++    else:
++        return FileSystemStorage(location='/tmp/dev_media')
++
++class Document(models.Model):
++    title = models.CharField(max_length=100)
++    file = models.FileField(storage=get_media_storage, upload_to='documents/')
++''')
++
++# Add to sys.path
++sys.path.insert(0, test_dir)
++
++# Configure Django
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': os.path.join(test_dir, 'db.sqlite3'),
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'myapp',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations import Migration
++from django.db import migrations
++
++# Import the model
++from myapp.models import Document, get_media_storage
++
++print("=" * 70)
++print("REAL MIGRATION SCENARIO TEST")
++print("=" * 70)
++
++# Get the field
++field = Document._meta.get_field('file')
++
++# Deconstruct it
++name, path, args, kwargs = field.deconstruct()
++
++print("\nField deconstruction:")
++print(f"  Storage in kwargs: {kwargs.get('storage')}")
++print(f"  Is callable preserved? {kwargs.get('storage') is get_media_storage}")
++
++# Create a migration
++migration = Migration('0001_initial', 'myapp')
++migration.operations = [
++    migrations.CreateModel(
++        name='Document',
++        fields=[
++            ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False)),
++            ('title', models.CharField(max_length=100)),
++            ('file', models.FileField(storage=get_media_storage, upload_to='documents/')),
++        ],
++    ),
++]
++
++# Write the migration
++writer = MigrationWriter(migration)
++migration_string = writer.as_string()
++
++print("\nGenerated migration:")
++print("-" * 70)
++print(migration_string)
++print("-" * 70)
++
++# Verify the migration references the callable
++if 'myapp.models.get_media_storage' in migration_string:
++    print("\nSUCCESS!")
++    print("The migration correctly references the callable storage function.")
++    print("This allows the storage to vary at runtime based on environment.")
++else:
++    print("\nFAILURE!")
++    print("The migration does not reference the callable.")
++    print("The storage instance would be inlined, breaking runtime flexibility.")
++
++# Cleanup
++shutil.rmtree(test_dir)
++
++print("\n" + "=" * 70)

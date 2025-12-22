@@ -1,0 +1,120 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 08d7faf194..524434477c 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -328,6 +328,8 @@ class Query(BaseExpression):
+             obj.subq_aliases = self.subq_aliases.copy()
+         obj.used_aliases = self.used_aliases.copy()
+         obj._filtered_relations = self._filtered_relations.copy()
++        # Clone combined queries to avoid sharing query objects
++        obj.combined_queries = tuple(query.clone() for query in self.combined_queries)
+         # Clear the cached_property
+         try:
+             del obj.base_table
+diff --git a/fix.patch b/fix.patch
+new file mode 100644
+index 0000000000..37ce08316e
+--- /dev/null
++++ b/fix.patch
+@@ -0,0 +1,11 @@
++--- a/django/db/models/sql/query.py
+++++ b/django/db/models/sql/query.py
++@@ -337,6 +337,8 @@ class Query:
++             obj.subq_aliases = self.subq_aliases.copy()
++         obj.used_aliases = self.used_aliases.copy()
++         obj._filtered_relations = self._filtered_relations.copy()
+++        # Clone combined queries to avoid sharing query objects
+++        obj.combined_queries = tuple(query.clone() for query in self.combined_queries)
++         # Clear the cached_property
++         try:
++             del obj.base_table
+diff --git a/test_union_ordering_bug.py b/test_union_ordering_bug.py
+new file mode 100644
+index 0000000000..15ab048f38
+--- /dev/null
++++ b/test_union_ordering_bug.py
+@@ -0,0 +1,84 @@
++"""
++Test case for the union queryset ordering bug.
++This reproduces the issue described in the PR where calling order_by().values_list()
++on a union queryset breaks the original queryset.
++"""
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++
++django.setup()
++
++from django.db import models, connection
++
++class Dimension(models.Model):
++    name = models.CharField(max_length=100)
++    order = models.IntegerField(default=0)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Dimension)
++
++# Insert test data
++for i in range(10, 19):
++    Dimension.objects.create(id=i, name=f'item{i}', order=i-9)
++
++print("=" * 70)
++print("Test: Union queryset with ordering breaks on derived querysets")
++print("=" * 70)
++
++# Create union queryset with ordering
++qs = (
++    Dimension.objects.filter(pk__in=[10, 11])
++    .union(Dimension.objects.filter(pk__in=[16, 17]))
++    .order_by('order')
++)
++
++print("\n1. Evaluate original union queryset:")
++result1 = list(qs)
++print(f"   Result: {[obj.id for obj in result1]}")
++assert len(result1) == 4, "Expected 4 results"
++
++print("\n2. Create derived queryset with order_by().values_list():")
++derived = qs.order_by().values_list('pk', flat=True)
++result2 = list(derived)
++print(f"   Result: {result2}")
++assert len(result2) == 4, "Expected 4 results"
++
++print("\n3. Re-evaluate original union queryset (this used to fail):")
++try:
++    result3 = list(qs)
++    print(f"   Result: {[obj.id for obj in result3]}")
++    assert len(result3) == 4, "Expected 4 results"
++    print("\n[SUCCESS] Original queryset can be re-evaluated after creating derived queryset")
++except Exception as e:
++    print(f"\n[FAILED] {type(e).__name__}: {e}")
++    raise
++
++print("\n4. Verify querysets are independent:")
++print(f"   qs.query.combined_queries[0] is derived.query.combined_queries[0]: {qs.query.combined_queries[0] is derived.query.combined_queries[0]}")
++assert qs.query.combined_queries[0] is not derived.query.combined_queries[0], "Combined queries should not be shared"
++print("   [OK] Combined queries are properly cloned")
++
++print("\n" + "=" * 70)
++print("All tests passed!")
++print("=" * 70)

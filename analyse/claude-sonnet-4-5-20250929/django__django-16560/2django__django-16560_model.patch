@@ -1,0 +1,880 @@
+diff --git a/django/contrib/postgres/constraints.py b/django/contrib/postgres/constraints.py
+index ad3a5f61f5..54c2e10b43 100644
+--- a/django/contrib/postgres/constraints.py
++++ b/django/contrib/postgres/constraints.py
+@@ -33,6 +33,7 @@ class ExclusionConstraint(BaseConstraint):
+         deferrable=None,
+         include=None,
+         violation_error_message=None,
++        violation_error_code=None,
+     ):
+         if index_type and index_type.lower() not in {"gist", "spgist"}:
+             raise ValueError(
+@@ -60,7 +61,7 @@ class ExclusionConstraint(BaseConstraint):
+         self.condition = condition
+         self.deferrable = deferrable
+         self.include = tuple(include) if include else ()
+-        super().__init__(name=name, violation_error_message=violation_error_message)
++        super().__init__(name=name, violation_error_message=violation_error_message, violation_error_code=violation_error_code)
+ 
+     def _get_expressions(self, schema_editor, query):
+         expressions = []
+@@ -150,11 +151,12 @@ class ExclusionConstraint(BaseConstraint):
+                 and self.deferrable == other.deferrable
+                 and self.include == other.include
+                 and self.violation_error_message == other.violation_error_message
++                and self.violation_error_code == other.violation_error_code
+             )
+         return super().__eq__(other)
+ 
+     def __repr__(self):
+-        return "<%s: index_type=%s expressions=%s name=%s%s%s%s%s>" % (
++        return "<%s: index_type=%s expressions=%s name=%s%s%s%s%s%s>" % (
+             self.__class__.__qualname__,
+             repr(self.index_type),
+             repr(self.expressions),
+@@ -168,6 +170,11 @@ class ExclusionConstraint(BaseConstraint):
+                 or self.violation_error_message == self.default_violation_error_message
+                 else " violation_error_message=%r" % self.violation_error_message
+             ),
++            (
++                ""
++                if self.violation_error_code is None
++                else " violation_error_code=%r" % self.violation_error_code
++            ),
+         )
+ 
+     def validate(self, model, instance, exclude=None, using=DEFAULT_DB_ALIAS):
+@@ -204,9 +211,15 @@ class ExclusionConstraint(BaseConstraint):
+             queryset = queryset.exclude(pk=model_class_pk)
+         if not self.condition:
+             if queryset.exists():
+-                raise ValidationError(self.get_violation_error_message())
++                raise ValidationError(
++                    self.get_violation_error_message(),
++                    code=self.violation_error_code,
++                )
+         else:
+             if (self.condition & Exists(queryset.filter(self.condition))).check(
+                 replacement_map, using=using
+             ):
+-                raise ValidationError(self.get_violation_error_message())
++                raise ValidationError(
++                    self.get_violation_error_message(),
++                    code=self.violation_error_code,
++                )
+diff --git a/django/db/models/constraints.py b/django/db/models/constraints.py
+index 075ecee1be..63a1554f8b 100644
+--- a/django/db/models/constraints.py
++++ b/django/db/models/constraints.py
+@@ -19,10 +19,11 @@ __all__ = ["BaseConstraint", "CheckConstraint", "Deferrable", "UniqueConstraint"
+ class BaseConstraint:
+     default_violation_error_message = _("Constraint ‚Äú%(name)s‚Äù is violated.")
+     violation_error_message = None
++    violation_error_code = None
+ 
+     # RemovedInDjango60Warning: When the deprecation ends, replace with:
+-    # def __init__(self, *, name, violation_error_message=None):
+-    def __init__(self, *args, name=None, violation_error_message=None):
++    # def __init__(self, *, name, violation_error_message=None, violation_error_code=None):
++    def __init__(self, *args, name=None, violation_error_message=None, violation_error_code=None):
+         # RemovedInDjango60Warning.
+         if name is None and not args:
+             raise TypeError(
+@@ -34,6 +35,7 @@ class BaseConstraint:
+             self.violation_error_message = violation_error_message
+         else:
+             self.violation_error_message = self.default_violation_error_message
++        self.violation_error_code = violation_error_code
+         # RemovedInDjango60Warning.
+         if args:
+             warnings.warn(
+@@ -42,7 +44,7 @@ class BaseConstraint:
+                 RemovedInDjango60Warning,
+                 stacklevel=2,
+             )
+-            for arg, attr in zip(args, ["name", "violation_error_message"]):
++            for arg, attr in zip(args, ["name", "violation_error_message", "violation_error_code"]):
+                 if arg:
+                     setattr(self, attr, arg)
+ 
+@@ -74,6 +76,8 @@ class BaseConstraint:
+             and self.violation_error_message != self.default_violation_error_message
+         ):
+             kwargs["violation_error_message"] = self.violation_error_message
++        if self.violation_error_code is not None:
++            kwargs["violation_error_code"] = self.violation_error_code
+         return (path, (), kwargs)
+ 
+     def clone(self):
+@@ -82,13 +86,13 @@ class BaseConstraint:
+ 
+ 
+ class CheckConstraint(BaseConstraint):
+-    def __init__(self, *, check, name, violation_error_message=None):
++    def __init__(self, *, check, name, violation_error_message=None, violation_error_code=None):
+         self.check = check
+         if not getattr(check, "conditional", False):
+             raise TypeError(
+                 "CheckConstraint.check must be a Q instance or boolean expression."
+             )
+-        super().__init__(name=name, violation_error_message=violation_error_message)
++        super().__init__(name=name, violation_error_message=violation_error_message, violation_error_code=violation_error_code)
+ 
+     def _get_check_sql(self, model, schema_editor):
+         query = Query(model=model, alias_cols=False)
+@@ -112,12 +116,15 @@ class CheckConstraint(BaseConstraint):
+         against = instance._get_field_value_map(meta=model._meta, exclude=exclude)
+         try:
+             if not Q(self.check).check(against, using=using):
+-                raise ValidationError(self.get_violation_error_message())
++                raise ValidationError(
++                    self.get_violation_error_message(),
++                    code=self.violation_error_code,
++                )
+         except FieldError:
+             pass
+ 
+     def __repr__(self):
+-        return "<%s: check=%s name=%s%s>" % (
++        return "<%s: check=%s name=%s%s%s>" % (
+             self.__class__.__qualname__,
+             self.check,
+             repr(self.name),
+@@ -127,6 +134,11 @@ class CheckConstraint(BaseConstraint):
+                 or self.violation_error_message == self.default_violation_error_message
+                 else " violation_error_message=%r" % self.violation_error_message
+             ),
++            (
++                ""
++                if self.violation_error_code is None
++                else " violation_error_code=%r" % self.violation_error_code
++            ),
+         )
+ 
+     def __eq__(self, other):
+@@ -135,6 +147,7 @@ class CheckConstraint(BaseConstraint):
+                 self.name == other.name
+                 and self.check == other.check
+                 and self.violation_error_message == other.violation_error_message
++                and self.violation_error_code == other.violation_error_code
+             )
+         return super().__eq__(other)
+ 
+@@ -164,6 +177,7 @@ class UniqueConstraint(BaseConstraint):
+         include=None,
+         opclasses=(),
+         violation_error_message=None,
++        violation_error_code=None,
+     ):
+         if not name:
+             raise ValueError("A unique constraint must be named.")
+@@ -213,7 +227,7 @@ class UniqueConstraint(BaseConstraint):
+             F(expression) if isinstance(expression, str) else expression
+             for expression in expressions
+         )
+-        super().__init__(name=name, violation_error_message=violation_error_message)
++        super().__init__(name=name, violation_error_message=violation_error_message, violation_error_code=violation_error_code)
+ 
+     @property
+     def contains_expressions(self):
+@@ -293,7 +307,7 @@ class UniqueConstraint(BaseConstraint):
+         )
+ 
+     def __repr__(self):
+-        return "<%s:%s%s%s%s%s%s%s%s>" % (
++        return "<%s:%s%s%s%s%s%s%s%s%s>" % (
+             self.__class__.__qualname__,
+             "" if not self.fields else " fields=%s" % repr(self.fields),
+             "" if not self.expressions else " expressions=%s" % repr(self.expressions),
+@@ -308,6 +322,11 @@ class UniqueConstraint(BaseConstraint):
+                 or self.violation_error_message == self.default_violation_error_message
+                 else " violation_error_message=%r" % self.violation_error_message
+             ),
++            (
++                ""
++                if self.violation_error_code is None
++                else " violation_error_code=%r" % self.violation_error_code
++            ),
+         )
+ 
+     def __eq__(self, other):
+@@ -321,6 +340,7 @@ class UniqueConstraint(BaseConstraint):
+                 and self.opclasses == other.opclasses
+                 and self.expressions == other.expressions
+                 and self.violation_error_message == other.violation_error_message
++                and self.violation_error_code == other.violation_error_code
+             )
+         return super().__eq__(other)
+ 
+@@ -385,7 +405,10 @@ class UniqueConstraint(BaseConstraint):
+         if not self.condition:
+             if queryset.exists():
+                 if self.expressions:
+-                    raise ValidationError(self.get_violation_error_message())
++                    raise ValidationError(
++                        self.get_violation_error_message(),
++                        code=self.violation_error_code,
++                    )
+                 # When fields are defined, use the unique_error_message() for
+                 # backward compatibility.
+                 for model, constraints in instance.get_constraints():
+@@ -400,6 +423,9 @@ class UniqueConstraint(BaseConstraint):
+                 if (self.condition & Exists(queryset.filter(self.condition))).check(
+                     against, using=using
+                 ):
+-                    raise ValidationError(self.get_violation_error_message())
++                    raise ValidationError(
++                        self.get_violation_error_message(),
++                        code=self.violation_error_code,
++                    )
+             except FieldError:
+                 pass
+diff --git a/summary_of_changes.md b/summary_of_changes.md
+new file mode 100644
+index 0000000000..71a8076db1
+--- /dev/null
++++ b/summary_of_changes.md
+@@ -0,0 +1,50 @@
++# Summary of Changes for violation_error_code Feature
++
++## Files Modified
++
++### 1. /testbed/django/db/models/constraints.py
++
++#### BaseConstraint class:
++- Added `violation_error_code = None` class attribute
++- Updated `__init__` signature to accept `violation_error_code` parameter
++- Added handling for `violation_error_code` in `__init__` method
++- Updated `deconstruct` to include `violation_error_code` when it's not None
++- Updated deprecated positional args handling to include `violation_error_code`
++
++#### CheckConstraint class:
++- Updated `__init__` signature to accept `violation_error_code` parameter
++- Updated `super().__init__` call to pass `violation_error_code`
++- Updated `validate` method to pass `code=self.violation_error_code` to ValidationError
++- Updated `__repr__` to include `violation_error_code` when set
++- Updated `__eq__` to compare `violation_error_code`
++
++#### UniqueConstraint class:
++- Updated `__init__` signature to accept `violation_error_code` parameter
++- Updated `super().__init__` call to pass `violation_error_code`
++- Updated `validate` method to pass `code=self.violation_error_code` to all ValidationError raises
++- Updated `__repr__` to include `violation_error_code` when set
++- Updated `__eq__` to compare `violation_error_code`
++
++### 2. /testbed/django/contrib/postgres/constraints.py
++
++#### ExclusionConstraint class:
++- Updated `__init__` signature to accept `violation_error_code` parameter
++- Updated `super().__init__` call to pass `violation_error_code`
++- Updated `validate` method to pass `code=self.violation_error_code` to all ValidationError raises
++- Updated `__repr__` to include `violation_error_code` when set
++- Updated `__eq__` to compare `violation_error_code`
++
++## Key Features
++
++1. **Backward Compatible**: The `violation_error_code` parameter is optional (defaults to None)
++2. **Consistent API**: All constraint classes (BaseConstraint, CheckConstraint, UniqueConstraint, ExclusionConstraint) support the parameter
++3. **Migration Support**: The `deconstruct` method properly includes the code for migrations
++4. **Equality and Representation**: The `__eq__` and `__repr__` methods properly handle the new attribute
++5. **Clone Support**: The `clone` method preserves the error code through deconstruct/reconstruct
++
++## Benefits
++
++- Allows developers to provide descriptive error codes for constraint violations
++- Enables application code to handle specific constraint violations programmatically
++- Follows Django's best practice of providing error codes with ValidationError
++- Makes constraint errors more actionable and easier to handle in forms and APIs
+diff --git a/test_all_constraint_types.py b/test_all_constraint_types.py
+new file mode 100644
+index 0000000000..32d036b96b
+--- /dev/null
++++ b/test_all_constraint_types.py
+@@ -0,0 +1,96 @@
++"""
++Test violation_error_code with all constraint types
++"""
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Q, CheckConstraint, UniqueConstraint
++from django.core.exceptions import ValidationError
++
++print("Testing violation_error_code with all constraint types\n")
++
++# Test 1: CheckConstraint
++print("1. CheckConstraint")
++check_constraint = CheckConstraint(
++    check=Q(value__gte=0),
++    name='value_positive',
++    violation_error_message='Value must be positive',
++    violation_error_code='negative_value',
++)
++print(f"   ‚úì Created with code: {check_constraint.violation_error_code}")
++
++# Test 2: UniqueConstraint
++print("\n2. UniqueConstraint")
++unique_constraint = UniqueConstraint(
++    fields=['name'],
++    name='unique_name',
++    violation_error_message='Name must be unique',
++    violation_error_code='duplicate_name',
++)
++print(f"   ‚úì Created with code: {unique_constraint.violation_error_code}")
++
++# Test 3: ExclusionConstraint (from postgres)
++print("\n3. ExclusionConstraint (postgres)")
++try:
++    from django.contrib.postgres.constraints import ExclusionConstraint
++    from django.contrib.postgres.fields import DateTimeRangeField
++    
++    exclusion_constraint = ExclusionConstraint(
++        name='exclude_overlapping',
++        expressions=[
++            ('period', '&&'),
++        ],
++        violation_error_message='Periods cannot overlap',
++        violation_error_code='overlapping_periods',
++    )
++    print(f"   ‚úì Created with code: {exclusion_constraint.violation_error_code}")
++except ImportError:
++    print("   ‚äò Skipped (postgres not available)")
++
++# Test 4: Verify deconstruct works for all
++print("\n4. Deconstruct preserves violation_error_code")
++for name, constraint in [
++    ('CheckConstraint', check_constraint),
++    ('UniqueConstraint', unique_constraint),
++]:
++    path, args, kwargs = constraint.deconstruct()
++    assert 'violation_error_code' in kwargs, f"{name} missing violation_error_code in deconstruct"
++    print(f"   ‚úì {name}: {kwargs['violation_error_code']}")
++
++# Test 5: Verify __eq__ works for all
++print("\n5. Equality comparison includes violation_error_code")
++check_same = CheckConstraint(
++    check=Q(value__gte=0),
++    name='value_positive',
++    violation_error_message='Value must be positive',
++    violation_error_code='negative_value',
++)
++check_diff = CheckConstraint(
++    check=Q(value__gte=0),
++    name='value_positive',
++    violation_error_message='Value must be positive',
++    violation_error_code='different_code',
++)
++assert check_constraint == check_same, "Same constraints should be equal"
++assert check_constraint != check_diff, "Different codes should not be equal"
++print("   ‚úì Equality comparison works correctly")
++
++print("\n‚úÖ All constraint types support violation_error_code!")
+diff --git a/test_complete_functionality.py b/test_complete_functionality.py
+new file mode 100644
+index 0000000000..12e128e6a4
+--- /dev/null
++++ b/test_complete_functionality.py
+@@ -0,0 +1,152 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Q, CheckConstraint, UniqueConstraint
++from django.core.exceptions import ValidationError
++
++print("=" * 70)
++print("Testing violation_error_code functionality")
++print("=" * 70)
++
++# Test 1: CheckConstraint with violation_error_code
++print("\n1. CheckConstraint with violation_error_code")
++constraint1 = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18',
++    violation_error_message='Age must be at least 18',
++    violation_error_code='age_too_young',
++)
++print(f"   Created: {constraint1}")
++print(f"   violation_error_code: {constraint1.violation_error_code}")
++assert constraint1.violation_error_code == 'age_too_young'
++print("   ‚úì PASS")
++
++# Test 2: CheckConstraint without violation_error_code
++print("\n2. CheckConstraint without violation_error_code")
++constraint2 = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18_no_code',
++)
++print(f"   Created: {constraint2}")
++print(f"   violation_error_code: {constraint2.violation_error_code}")
++assert constraint2.violation_error_code is None
++print("   ‚úì PASS")
++
++# Test 3: UniqueConstraint with violation_error_code
++print("\n3. UniqueConstraint with violation_error_code")
++constraint3 = UniqueConstraint(
++    fields=['name'],
++    name='unique_name',
++    violation_error_message='Name must be unique',
++    violation_error_code='name_not_unique',
++)
++print(f"   Created: {constraint3}")
++print(f"   violation_error_code: {constraint3.violation_error_code}")
++assert constraint3.violation_error_code == 'name_not_unique'
++print("   ‚úì PASS")
++
++# Test 4: Deconstruct includes violation_error_code
++print("\n4. Deconstruct includes violation_error_code")
++path, args, kwargs = constraint1.deconstruct()
++print(f"   kwargs: {kwargs}")
++assert 'violation_error_code' in kwargs
++assert kwargs['violation_error_code'] == 'age_too_young'
++print("   ‚úì PASS")
++
++# Test 5: Deconstruct excludes violation_error_code when None
++print("\n5. Deconstruct excludes violation_error_code when None")
++path, args, kwargs = constraint2.deconstruct()
++print(f"   kwargs: {kwargs}")
++assert 'violation_error_code' not in kwargs
++print("   ‚úì PASS")
++
++# Test 6: Clone preserves violation_error_code
++print("\n6. Clone preserves violation_error_code")
++cloned = constraint1.clone()
++print(f"   Original: {constraint1.violation_error_code}")
++print(f"   Cloned: {cloned.violation_error_code}")
++assert cloned.violation_error_code == constraint1.violation_error_code
++print("   ‚úì PASS")
++
++# Test 7: __eq__ considers violation_error_code
++print("\n7. __eq__ considers violation_error_code")
++constraint_same = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18',
++    violation_error_message='Age must be at least 18',
++    violation_error_code='age_too_young',
++)
++constraint_diff = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18',
++    violation_error_message='Age must be at least 18',
++    violation_error_code='different_code',
++)
++print(f"   constraint1 == constraint_same: {constraint1 == constraint_same}")
++print(f"   constraint1 == constraint_diff: {constraint1 == constraint_diff}")
++assert constraint1 == constraint_same
++assert constraint1 != constraint_diff
++print("   ‚úì PASS")
++
++# Test 8: __repr__ includes violation_error_code
++print("\n8. __repr__ includes violation_error_code")
++repr_str = repr(constraint1)
++print(f"   repr: {repr_str}")
++assert 'violation_error_code' in repr_str
++assert 'age_too_young' in repr_str
++print("   ‚úì PASS")
++
++# Test 9: ValidationError raised with code
++print("\n9. ValidationError raised with code")
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    age = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++person = Person(name='John', age=15)
++try:
++    constraint1.validate(Person, person)
++    print("   ERROR: ValidationError was not raised!")
++    assert False
++except ValidationError as e:
++    print(f"   Message: {e.message}")
++    print(f"   Code: {e.code}")
++    assert e.code == 'age_too_young'
++    print("   ‚úì PASS")
++
++# Test 10: ValidationError raised without code when not specified
++print("\n10. ValidationError raised without code when not specified")
++try:
++    constraint2.validate(Person, person)
++    print("   ERROR: ValidationError was not raised!")
++    assert False
++except ValidationError as e:
++    print(f"   Message: {e.message}")
++    print(f"   Code: {e.code}")
++    assert e.code is None
++    print("   ‚úì PASS")
++
++print("\n" + "=" * 70)
++print("‚úÖ All tests passed!")
++print("=" * 70)
+diff --git a/test_final_demo.py b/test_final_demo.py
+new file mode 100644
+index 0000000000..a243121d2c
+--- /dev/null
++++ b/test_final_demo.py
+@@ -0,0 +1,146 @@
++"""
++Demonstration of the new violation_error_code feature for Django constraints.
++
++This test shows how the new violation_error_code parameter allows developers
++to provide custom error codes for ValidationErrors raised by constraints,
++making it easier to handle specific constraint violations in application code.
++"""
++
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Q, CheckConstraint, UniqueConstraint
++from django.core.exceptions import ValidationError
++
++print("=" * 80)
++print("DEMONSTRATION: Custom violation_error_code for Django Constraints")
++print("=" * 80)
++
++# Define a model with constraints that have custom error codes
++class Product(models.Model):
++    name = models.CharField(max_length=100)
++    price = models.DecimalField(max_digits=10, decimal_places=2)
++    stock = models.IntegerField()
++    
++    class Meta:
++        app_label = 'demo'
++        constraints = [
++            CheckConstraint(
++                check=Q(price__gte=0),
++                name='price_non_negative',
++                violation_error_message='Price must be non-negative',
++                violation_error_code='invalid_price',
++            ),
++            CheckConstraint(
++                check=Q(stock__gte=0),
++                name='stock_non_negative',
++                violation_error_message='Stock must be non-negative',
++                violation_error_code='invalid_stock',
++            ),
++            UniqueConstraint(
++                fields=['name'],
++                name='unique_product_name',
++                violation_error_message='A product with this name already exists',
++                violation_error_code='duplicate_product_name',
++            ),
++        ]
++
++print("\n1. Model Definition")
++print("-" * 80)
++print("Product model with three constraints:")
++print("  - price_non_negative: CheckConstraint with code 'invalid_price'")
++print("  - stock_non_negative: CheckConstraint with code 'invalid_stock'")
++print("  - unique_product_name: UniqueConstraint with code 'duplicate_product_name'")
++
++print("\n2. Testing CheckConstraint with custom error code")
++print("-" * 80)
++product = Product(name='Widget', price=-10, stock=5)
++constraint = Product._meta.constraints[0]  # price_non_negative
++
++try:
++    constraint.validate(Product, product)
++except ValidationError as e:
++    print(f"‚úì ValidationError raised")
++    print(f"  Message: {e.message}")
++    print(f"  Code: {e.code}")
++    print(f"\n  Application code can now handle this specific error:")
++    print(f"  if e.code == 'invalid_price':")
++    print(f"      # Handle invalid price error specifically")
++
++print("\n3. Testing another CheckConstraint with different error code")
++print("-" * 80)
++product2 = Product(name='Gadget', price=10, stock=-5)
++constraint2 = Product._meta.constraints[1]  # stock_non_negative
++
++try:
++    constraint2.validate(Product, product2)
++except ValidationError as e:
++    print(f"‚úì ValidationError raised")
++    print(f"  Message: {e.message}")
++    print(f"  Code: {e.code}")
++    print(f"\n  Application code can distinguish between different constraint violations:")
++    print(f"  if e.code == 'invalid_stock':")
++    print(f"      # Handle invalid stock error specifically")
++
++print("\n4. Backward Compatibility: Constraints without custom error codes")
++print("-" * 80)
++constraint_no_code = CheckConstraint(
++    check=Q(price__gte=0),
++    name='price_check',
++    violation_error_message='Price must be positive',
++)
++product3 = Product(name='Thing', price=-1, stock=10)
++
++try:
++    constraint_no_code.validate(Product, product3)
++except ValidationError as e:
++    print(f"‚úì ValidationError raised")
++    print(f"  Message: {e.message}")
++    print(f"  Code: {e.code}")
++    print(f"\n  Constraints without violation_error_code still work (code is None)")
++
++print("\n5. Deconstruction for Migrations")
++print("-" * 80)
++constraint = Product._meta.constraints[0]
++path, args, kwargs = constraint.deconstruct()
++print(f"Deconstructed constraint:")
++print(f"  Path: {path}")
++print(f"  Kwargs: {kwargs}")
++print(f"\n‚úì violation_error_code is preserved in migrations")
++
++print("\n6. Clone Preserves Error Code")
++print("-" * 80)
++original = Product._meta.constraints[0]
++cloned = original.clone()
++print(f"Original violation_error_code: {original.violation_error_code}")
++print(f"Cloned violation_error_code: {cloned.violation_error_code}")
++print(f"‚úì Cloning preserves the custom error code")
++
++print("\n" + "=" * 80)
++print("SUMMARY")
++print("=" * 80)
++print("The new violation_error_code parameter allows developers to:")
++print("  1. Provide descriptive error codes for constraint violations")
++print("  2. Handle specific constraint violations in application code")
++print("  3. Follow Django's best practice of providing error codes")
++print("  4. Maintain backward compatibility (code is optional)")
++print("=" * 80)
+diff --git a/test_violation_error_code.py b/test_violation_error_code.py
+new file mode 100644
+index 0000000000..8f3908fdc3
+--- /dev/null
++++ b/test_violation_error_code.py
+@@ -0,0 +1,52 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Q, CheckConstraint, UniqueConstraint
++from django.core.exceptions import ValidationError
++
++# Test 1: Check that BaseConstraint accepts violation_error_code
++print("Test 1: Check that BaseConstraint accepts violation_error_code")
++try:
++    constraint = CheckConstraint(
++        check=Q(age__gte=18),
++        name='age_gte_18',
++        violation_error_message='Age must be at least 18',
++        violation_error_code='age_too_young',
++    )
++    print(f"  Created constraint with violation_error_code: {getattr(constraint, 'violation_error_code', 'NOT FOUND')}")
++except TypeError as e:
++    print(f"  ERROR: {e}")
++
++# Test 2: Check that UniqueConstraint accepts violation_error_code
++print("\nTest 2: Check that UniqueConstraint accepts violation_error_code")
++try:
++    constraint = UniqueConstraint(
++        fields=['name'],
++        name='unique_name',
++        violation_error_message='Name must be unique',
++        violation_error_code='name_not_unique',
++    )
++    print(f"  Created constraint with violation_error_code: {getattr(constraint, 'violation_error_code', 'NOT FOUND')}")
++except TypeError as e:
++    print(f"  ERROR: {e}")
++
++print("\nDone!")
+diff --git a/test_violation_error_code_comprehensive.py b/test_violation_error_code_comprehensive.py
+new file mode 100644
+index 0000000000..0e4d083929
+--- /dev/null
++++ b/test_violation_error_code_comprehensive.py
+@@ -0,0 +1,116 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DEFAULT_AUTO_FIELD='django.db.models.BigAutoField',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Q, CheckConstraint, UniqueConstraint
++from django.core.exceptions import ValidationError
++
++# Create a test model
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    age = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++        constraints = [
++            CheckConstraint(
++                check=Q(age__gte=18),
++                name='age_gte_18',
++                violation_error_message='Age must be at least 18',
++                violation_error_code='age_too_young',
++            ),
++            UniqueConstraint(
++                fields=['name'],
++                name='unique_name',
++                violation_error_message='Name must be unique',
++                violation_error_code='name_not_unique',
++            ),
++        ]
++
++# Test 1: Check that CheckConstraint raises ValidationError with custom code
++print("Test 1: CheckConstraint with custom error code")
++constraint = Person._meta.constraints[0]
++person = Person(name='John', age=15)
++try:
++    constraint.validate(Person, person)
++    print("  ERROR: ValidationError was not raised!")
++except ValidationError as e:
++    print(f"  Message: {e.message}")
++    print(f"  Code: {e.code}")
++    assert e.code == 'age_too_young', f"Expected code 'age_too_young', got '{e.code}'"
++    print("  ‚úì Custom error code is correctly set")
++
++# Test 2: Check that CheckConstraint without custom code works
++print("\nTest 2: CheckConstraint without custom error code")
++constraint_no_code = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18_no_code',
++    violation_error_message='Age must be at least 18',
++)
++try:
++    constraint_no_code.validate(Person, person)
++    print("  ERROR: ValidationError was not raised!")
++except ValidationError as e:
++    print(f"  Message: {e.message}")
++    print(f"  Code: {e.code}")
++    assert e.code is None, f"Expected code None, got '{e.code}'"
++    print("  ‚úì Error code is None when not specified")
++
++# Test 3: Check deconstruct includes violation_error_code
++print("\nTest 3: Deconstruct includes violation_error_code")
++constraint = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18',
++    violation_error_message='Age must be at least 18',
++    violation_error_code='age_too_young',
++)
++path, args, kwargs = constraint.deconstruct()
++print(f"  Deconstructed kwargs: {kwargs}")
++assert 'violation_error_code' in kwargs, "violation_error_code not in kwargs"
++assert kwargs['violation_error_code'] == 'age_too_young', f"Expected 'age_too_young', got '{kwargs['violation_error_code']}'"
++print("  ‚úì violation_error_code is included in deconstruct")
++
++# Test 4: Check deconstruct doesn't include violation_error_code when None
++print("\nTest 4: Deconstruct doesn't include violation_error_code when None")
++constraint_no_code = CheckConstraint(
++    check=Q(age__gte=18),
++    name='age_gte_18_no_code',
++)
++path, args, kwargs = constraint_no_code.deconstruct()
++print(f"  Deconstructed kwargs: {kwargs}")
++assert 'violation_error_code' not in kwargs, "violation_error_code should not be in kwargs when None"
++print("  ‚úì violation_error_code is not included when None")
++
++# Test 5: Check UniqueConstraint with custom error code
++print("\nTest 5: UniqueConstraint with custom error code")
++constraint = UniqueConstraint(
++    fields=['name'],
++    name='unique_name',
++    violation_error_message='Name must be unique',
++    violation_error_code='name_not_unique',
++)
++path, args, kwargs = constraint.deconstruct()
++print(f"  Deconstructed kwargs: {kwargs}")
++assert 'violation_error_code' in kwargs, "violation_error_code not in kwargs"
++assert kwargs['violation_error_code'] == 'name_not_unique', f"Expected 'name_not_unique', got '{kwargs['violation_error_code']}'"
++print("  ‚úì UniqueConstraint correctly handles violation_error_code")
++
++print("\n‚úÖ All tests passed!")

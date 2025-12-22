@@ -1,0 +1,131 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index b48d0df9c0..89037eee95 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -210,6 +210,21 @@ class QuerySet:
+ 
+     @query.setter
+     def query(self, value):
++        if hasattr(value, '_iterable_class_name') and value._iterable_class_name:
++            # Use the stored iterable class name if available
++            iterable_class_map = {
++                'ValuesIterable': ValuesIterable,
++                'ValuesListIterable': ValuesListIterable,
++                'NamedValuesListIterable': NamedValuesListIterable,
++                'FlatValuesListIterable': FlatValuesListIterable,
++            }
++            self._iterable_class = iterable_class_map.get(
++                value._iterable_class_name, ValuesIterable
++            )
++        elif value.values_select:
++            # Fallback: if the query has values_select set but no iterable class name,
++            # default to ValuesIterable for backward compatibility
++            self._iterable_class = ValuesIterable
+         self._query = value
+ 
+     def as_manager(cls):
+@@ -829,6 +844,7 @@ class QuerySet:
+         fields += tuple(expressions)
+         clone = self._values(*fields, **expressions)
+         clone._iterable_class = ValuesIterable
++        clone.query._iterable_class_name = 'ValuesIterable'
+         return clone
+ 
+     def values_list(self, *fields, flat=False, named=False):
+@@ -860,6 +876,12 @@ class QuerySet:
+             else FlatValuesListIterable if flat
+             else ValuesListIterable
+         )
++        if named:
++            clone.query._iterable_class_name = 'NamedValuesListIterable'
++        elif flat:
++            clone.query._iterable_class_name = 'FlatValuesListIterable'
++        else:
++            clone.query._iterable_class_name = 'ValuesListIterable'
+         return clone
+ 
+     def dates(self, field_name, kind, order='ASC'):
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 4648daf395..c4149b4711 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -198,6 +198,9 @@ class Query(BaseExpression):
+         # Holds the selects defined by a call to values() or values_list()
+         # excluding annotation_select and extra_select.
+         self.values_select = ()
++        # Store the name of the iterable class to use when this query is
++        # assigned to a queryset (for proper unpickling of values/values_list queries)
++        self._iterable_class_name = None
+ 
+         # SQL annotation-related attributes
+         self.annotations = {}  # Maps alias -> Annotation Expression
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..185f756159
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,55 @@
++import os
++import sys
++import django
++import pickle
++
++# Add testbed to path
++sys.path.insert(0, '/testbed')
++
++# Setup Django with test settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Sum
++from django.test import TestCase
++
++# Create the model
++class Toy(models.Model):
++    name = models.CharField(max_length=16)
++    material = models.CharField(max_length=16)
++    price = models.PositiveIntegerField()
++    
++    class Meta:
++        app_label = 'queries'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Toy)
++
++# Create test data
++Toy.objects.create(name='foo', price=10, material='wood')
++Toy.objects.create(name='bar', price=20, material='plastic')
++Toy.objects.create(name='baz', price=100, material='wood')
++
++# Test the issue
++prices = Toy.objects.values('material').annotate(total_price=Sum('price'))
++print("Original queryset:")
++print(prices)
++print(f"Type of prices[0]: {type(prices[0])}")
++print(f"prices[0]: {prices[0]}")
++
++# Pickle and unpickle the query
++prices2 = Toy.objects.all()
++prices2.query = pickle.loads(pickle.dumps(prices.query))
++
++print("\nAfter unpickling:")
++print(f"Type of prices2[0]: {type(prices2[0])}")
++try:
++    print(f"prices2[0]: {prices2[0]}")
++    print(prices2)
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/tests/queryset_pickle/tests.py b/tests/queryset_pickle/tests.py
+index a58e45caed..efb8545f04 100644
+--- a/tests/queryset_pickle/tests.py
++++ b/tests/queryset_pickle/tests.py
+@@ -297,3 +297,4 @@ class InLookupTests(TestCase):
+             reloaded_events.query = reloaded
+ 
+         self.assertSequenceEqual(reloaded_events, [self.e1])
++

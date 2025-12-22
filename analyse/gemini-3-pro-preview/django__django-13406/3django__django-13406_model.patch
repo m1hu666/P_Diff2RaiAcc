@@ -1,0 +1,98 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index b48d0df9c0..0f3d6892cf 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -355,10 +355,18 @@ class QuerySet:
+     ####################################
+     # METHODS THAT DO DATABASE QUERIES #
+     ####################################
++    def _get_iterable_class(self):
++        if self._iterable_class is not ModelIterable:
++            return self._iterable_class
++        if getattr(self.query, "default_iterable_class", None):
++            return self.query.default_iterable_class
++        if self.query.values_select:
++            return ValuesIterable
++        return self._iterable_class
+ 
+-    def _iterator(self, use_chunked_fetch, chunk_size):
+-        yield from self._iterable_class(self, chunked_fetch=use_chunked_fetch, chunk_size=chunk_size)
+ 
++    def _iterator(self, use_chunked_fetch, chunk_size):
++        yield from self._get_iterable_class()(self, chunked_fetch=use_chunked_fetch, chunk_size=chunk_size)
+     def iterator(self, chunk_size=2000):
+         """
+         An iterator over the results from applying this QuerySet to the
+@@ -829,6 +837,7 @@ class QuerySet:
+         fields += tuple(expressions)
+         clone = self._values(*fields, **expressions)
+         clone._iterable_class = ValuesIterable
++        clone.query.default_iterable_class = ValuesIterable
+         return clone
+ 
+     def values_list(self, *fields, flat=False, named=False):
+@@ -860,6 +869,7 @@ class QuerySet:
+             else FlatValuesListIterable if flat
+             else ValuesListIterable
+         )
++        clone.query.default_iterable_class = clone._iterable_class
+         return clone
+ 
+     def dates(self, field_name, kind, order='ASC'):
+@@ -1302,7 +1312,7 @@ class QuerySet:
+ 
+     def _fetch_all(self):
+         if self._result_cache is None:
+-            self._result_cache = list(self._iterable_class(self))
++            self._result_cache = list(self._get_iterable_class()(self))
+         if self._prefetch_related_lookups and not self._prefetch_done:
+             self._prefetch_related_objects()
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..08f0191c39
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,42 @@
++import os
++import django
++from django.conf import settings
++from django.db import models, connection
++import pickle
++
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['__main__'],
++)
++django.setup()
++
++class Toy(models.Model):
++    name = models.CharField(max_length=16)
++    material = models.CharField(max_length=16)
++    price = models.PositiveIntegerField()
++    class Meta:
++        app_label = '__main__'
++
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Toy)
++
++Toy.objects.create(name='foo', price=10, material='wood')
++Toy.objects.create(name='bar', price=20, material='plastic')
++Toy.objects.create(name='baz', price=100, material='wood')
++
++from django.db.models import Sum
++
++prices = Toy.objects.values('material').annotate(total_price=Sum('price'))
++print("Original queryset result:")
++print(prices)
++
++prices2 = Toy.objects.all()
++prices2.query = pickle.loads(pickle.dumps(prices.query))
++
++print("\nRecreated queryset result:")
++print(prices2)

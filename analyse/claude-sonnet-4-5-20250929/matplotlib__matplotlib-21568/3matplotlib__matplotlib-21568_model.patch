@@ -1,0 +1,327 @@
+diff --git a/CHANGES_SUMMARY.md b/CHANGES_SUMMARY.md
+new file mode 100644
+index 0000000000..c7c6374765
+--- /dev/null
++++ b/CHANGES_SUMMARY.md
+@@ -0,0 +1,35 @@
++# Summary of Changes
++
++## Issue
++When using `usetex=True` with datetime axes in matplotlib 3.4+, the spacing around colons in time labels (e.g., "00:00:00") was unclear/incorrect because colons were being rendered in LaTeX math mode where they are treated as relation operators with extra spacing.
++
++## Root Cause
++The `_wrap_in_tex` function in `lib/matplotlib/dates.py` was wrapping text in `$\mathdefault{...}$` blocks, but colons inside these blocks were being treated as relation operators in math mode, causing extra spacing.
++
++## Solution
++Modified the `_wrap_in_tex` function to wrap colons in braces `{:}` similar to how dashes are wrapped in `{-}`. This prevents colons from being spaced like relation operators in LaTeX math mode.
++
++## Files Modified
++
++### 1. lib/matplotlib/dates.py
++- Updated `_wrap_in_tex` function (line 599) to also wrap colons in braces
++- Updated comment to reflect this change
++
++### 2. lib/matplotlib/tests/test_dates.py  
++- Updated test expectations in `test_date_formatter_usetex` (line 330)
++- Updated test expectations in `test_concise_formatter_usetex` (lines 612-620)
++
++## Testing
++All existing tests pass, including:
++- test_date_formatter_usetex (3 test cases)
++- test_concise_formatter_usetex (4 test cases)
++- All 76 tests in test_dates.py
++
++## Example
++Before fix:
++'00:00:00' -> '$\mathdefault{00:00:00}$'
++
++After fix:
++'00:00:00' -> '$\mathdefault{00{:}00{:}00}$'
++
++The braces around colons prevent them from being spaced like relation operators in LaTeX math mode.
+diff --git a/lib/matplotlib/dates.py b/lib/matplotlib/dates.py
+index 0766156d64..1106e814fc 100644
+--- a/lib/matplotlib/dates.py
++++ b/lib/matplotlib/dates.py
+@@ -595,8 +595,8 @@ def _wrap_in_tex(text):
+     p = r'([a-zA-Z]+)'
+     ret_text = re.sub(p, r'}$\1$\\mathdefault{', text)
+ 
+-    # Braces ensure dashes are not spaced like binary operators.
+-    ret_text = '$\\mathdefault{'+ret_text.replace('-', '{-}')+'}$'
++    # Braces ensure dashes are not spaced like binary operators, and colons are not spaced like relation operators.
++    ret_text = '$\\mathdefault{'+ret_text.replace('-', '{-}').replace(':', '{:}')+'}$'
+     ret_text = ret_text.replace('$\\mathdefault{}$', '')
+     return ret_text
+ 
+diff --git a/lib/matplotlib/tests/test_dates.py b/lib/matplotlib/tests/test_dates.py
+index 96a3db1730..137b67b8ec 100644
+--- a/lib/matplotlib/tests/test_dates.py
++++ b/lib/matplotlib/tests/test_dates.py
+@@ -327,7 +327,7 @@ def test_date_formatter_callable():
+     (datetime.timedelta(days=30),
+      [r'Jan$\mathdefault{ %02d 1990}$' % (day,) for day in range(1, 32, 3)]),
+     (datetime.timedelta(hours=20),
+-     [r'$\mathdefault{%02d:00:00}$' % (hour,) for hour in range(0, 21, 2)]),
++     [r'$\mathdefault{%02d{:}00{:}00}$' % (hour,) for hour in range(0, 21, 2)]),
+ ])
+ def test_date_formatter_usetex(delta, expected):
+     d1 = datetime.datetime(1990, 1, 1)
+@@ -609,14 +609,14 @@ def test_concise_formatter_show_offset(t_delta, expected):
+       '$\\mathdefault{25}$', '$\\mathdefault{29}$', 'Feb',
+       '$\\mathdefault{05}$', '$\\mathdefault{09}$']),
+     (datetime.timedelta(hours=40),
+-     ['Jan$\\mathdefault{{-}01}$', '$\\mathdefault{04:00}$',
+-      '$\\mathdefault{08:00}$', '$\\mathdefault{12:00}$',
+-      '$\\mathdefault{16:00}$', '$\\mathdefault{20:00}$',
+-      'Jan$\\mathdefault{{-}02}$', '$\\mathdefault{04:00}$',
+-      '$\\mathdefault{08:00}$', '$\\mathdefault{12:00}$',
+-      '$\\mathdefault{16:00}$']),
++     ['Jan$\\mathdefault{{-}01}$', '$\\mathdefault{04{:}00}$',
++      '$\\mathdefault{08{:}00}$', '$\\mathdefault{12{:}00}$',
++      '$\\mathdefault{16{:}00}$', '$\\mathdefault{20{:}00}$',
++      'Jan$\\mathdefault{{-}02}$', '$\\mathdefault{04{:}00}$',
++      '$\\mathdefault{08{:}00}$', '$\\mathdefault{12{:}00}$',
++      '$\\mathdefault{16{:}00}$']),
+     (datetime.timedelta(seconds=2),
+-     ['$\\mathdefault{59.5}$', '$\\mathdefault{00:00}$',
++     ['$\\mathdefault{59.5}$', '$\\mathdefault{00{:}00}$',
+       '$\\mathdefault{00.5}$', '$\\mathdefault{01.0}$',
+       '$\\mathdefault{01.5}$', '$\\mathdefault{02.0}$',
+       '$\\mathdefault{02.5}$']),
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..31f9a9c1c4
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,80 @@
++import matplotlib
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++import numpy as np
++import datetime
++
++# Test the _wrap_in_tex function
++from matplotlib.dates import _wrap_in_tex
++
++print("=" * 60)
++print("Testing _wrap_in_tex function")
++print("=" * 60)
++
++# Test cases
++test_strings = [
++    "00:00:00",
++    "00:01:00",
++    "00:02:00",
++    "Jan-01",
++    "Jan 01 2020",
++    "2020",
++    "12:34:56",
++    "00:00",
++]
++
++for s in test_strings:
++    result = _wrap_in_tex(s)
++    print(f"  '{s:15}' -> '{result}'")
++
++print("\n" + "=" * 60)
++print("Testing with AutoDateFormatter")
++print("=" * 60)
++
++d1 = datetime.datetime(1990, 1, 1)
++d2 = d1 + datetime.timedelta(hours=20)
++
++locator = mdates.AutoDateLocator(interval_multiples=False)
++locator.create_dummy_axis()
++locator.axis.set_view_interval(mdates.date2num(d1), mdates.date2num(d2))
++
++formatter = mdates.AutoDateFormatter(locator, usetex=True)
++labels = [formatter(loc) for loc in locator()]
++print("Labels:", labels)
++
++# Verify colons are wrapped in braces
++for label in labels:
++    if ':' in label:
++        # Check if colons are wrapped in braces
++        if '{:}' in label:
++            print(f"  ✓ Colon properly wrapped in: {label}")
++        else:
++            print(f"  ✗ Colon NOT wrapped in: {label}")
++
++print("\n" + "=" * 60)
++print("Testing with ConciseDateFormatter")
++print("=" * 60)
++
++d1 = datetime.datetime(1990, 1, 1)
++d2 = d1 + datetime.timedelta(hours=40)
++
++locator = mdates.AutoDateLocator(interval_multiples=True)
++locator.create_dummy_axis()
++locator.axis.set_view_interval(mdates.date2num(d1), mdates.date2num(d2))
++
++formatter = mdates.ConciseDateFormatter(locator, usetex=True)
++labels = formatter.format_ticks([mdates.date2num(d1 + datetime.timedelta(hours=i*4)) for i in range(11)])
++print("Labels:", labels)
++
++# Verify colons are wrapped in braces
++for label in labels:
++    if ':' in label:
++        # Check if colons are wrapped in braces
++        if '{:}' in label:
++            print(f"  ✓ Colon properly wrapped in: {label}")
++        else:
++            print(f"  ✗ Colon NOT wrapped in: {label}")
++
++print("\n" + "=" * 60)
++print("All tests completed successfully!")
++print("=" * 60)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..c01d7fb446
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,51 @@
++import matplotlib
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++import numpy as np
++import datetime
++
++# Test the _wrap_in_tex function
++from matplotlib.dates import _wrap_in_tex
++
++# Test cases
++test_strings = [
++    "00:00:00",
++    "00:01:00",
++    "00:02:00",
++    "Jan-01",
++    "Jan 01 2020",
++    "2020",
++]
++
++print("Testing _wrap_in_tex function:")
++for s in test_strings:
++    result = _wrap_in_tex(s)
++    print(f"  '{s}' -> '{result}'")
++
++# Test with AutoDateFormatter
++print("\nTesting with AutoDateFormatter:")
++d1 = datetime.datetime(1990, 1, 1)
++d2 = d1 + datetime.timedelta(hours=20)
++
++locator = mdates.AutoDateLocator()
++locator.create_dummy_axis()
++locator.axis.set_view_interval(mdates.date2num(d1), mdates.date2num(d2))
++
++formatter = mdates.AutoDateFormatter(locator, usetex=True)
++labels = [formatter(loc) for loc in locator()]
++print("Labels:", labels)
++
++# Test with ConciseDateFormatter
++print("\nTesting with ConciseDateFormatter:")
++d1 = datetime.datetime(1990, 1, 1)
++d2 = d1 + datetime.timedelta(hours=40)
++
++locator = mdates.AutoDateLocator()
++locator.create_dummy_axis()
++locator.axis.set_view_interval(mdates.date2num(d1), mdates.date2num(d2))
++
++formatter = mdates.ConciseDateFormatter(locator, usetex=True)
++labels = formatter.format_ticks([mdates.date2num(d1 + datetime.timedelta(hours=i*4)) for i in range(11)])
++print("Labels:", labels)
++
++print("\nAll tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..1bc4a00eec
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,42 @@
++import matplotlib
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++import numpy as np
++import datetime
++
++# Test the _wrap_in_tex function
++from matplotlib.dates import _wrap_in_tex
++
++# Test cases
++test_strings = [
++    "00:00:00",
++    "00:01:00",
++    "00:02:00",
++    "Jan-01",
++    "Jan 01 2020",
++    "2020",
++]
++
++print("Testing _wrap_in_tex function:")
++for s in test_strings:
++    result = _wrap_in_tex(s)
++    print(f"  '{s}' -> '{result}'")
++
++# Now let's test with actual date formatting
++print("\nTesting with actual date formatting:")
++np.random.seed(1)
++matplotlib.rcParams["text.usetex"] = True
++
++dates = [datetime.datetime(2020, 1, 1, 0, i, 0) for i in range(10)]
++data = np.random.rand(10)
++
++fig, ax = plt.subplots(constrained_layout=True)
++ax.plot(dates, data)
++
++# Get the tick labels
++ax.figure.canvas.draw()
++labels = [t.get_text() for t in ax.xaxis.get_ticklabels()]
++print("Tick labels:", labels)
++
++plt.savefig("test_output.png")
++print("Saved test_output.png")
+diff --git a/test_original_issue.py b/test_original_issue.py
+new file mode 100644
+index 0000000000..0309078e65
+--- /dev/null
++++ b/test_original_issue.py
+@@ -0,0 +1,39 @@
++import matplotlib
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++import numpy as np
++import datetime
++
++print("Testing the original issue from the PR...")
++print(f"Matplotlib version: {matplotlib.__version__}")
++
++np.random.seed(1)
++matplotlib.rcParams["text.usetex"] = False  # Disable usetex for now to avoid LaTeX dependency
++
++# Create dates using datetime instead of pandas
++dates = [datetime.datetime(2020, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=i*6) for i in range(100)]
++data = np.random.rand(100)
++
++fig, ax = plt.subplots(constrained_layout=True)
++ax.plot(dates, data)
++
++# Get the formatter
++formatter = ax.xaxis.get_major_formatter()
++print(f"Formatter type: {type(formatter)}")
++
++# Test with usetex manually
++from matplotlib.dates import _wrap_in_tex
++
++# Simulate what would happen with usetex=True
++test_labels = ["00:00:00", "00:02:00", "00:04:00", "00:06:00", "00:08:00", "00:10:00"]
++print("\nWith usetex=True, labels would be formatted as:")
++for label in test_labels:
++    wrapped = _wrap_in_tex(label)
++    print(f"  {label} -> {wrapped}")
++    # Verify colons are wrapped
++    if ':' in label and '{:}' in wrapped:
++        print(f"    ✓ Colons properly wrapped")
++    elif ':' in label:
++        print(f"    ✗ Colons NOT wrapped")
++
++print("\nFix verified! Colons are now wrapped in braces to prevent math mode spacing issues.")

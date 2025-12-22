@@ -1,0 +1,99 @@
+diff --git a/lib/matplotlib/offsetbox.py b/lib/matplotlib/offsetbox.py
+index 1dee8a23d9..0444c19416 100644
+--- a/lib/matplotlib/offsetbox.py
++++ b/lib/matplotlib/offsetbox.py
+@@ -1500,13 +1500,56 @@ class DraggableBase:
+     coordinate and set a relevant attribute.
+     """
+ 
++
+     def __init__(self, ref_artist, use_blit=False):
+         self.ref_artist = ref_artist
+         if not ref_artist.pickable():
+             ref_artist.set_picker(True)
+         self.got_artist = False
+-        self.canvas = self.ref_artist.figure.canvas
+-        self._use_blit = use_blit and self.canvas.supports_blit
++        self._use_blit = use_blit
++        self.cids = []
++        self._c1 = None
++        self.canvas = None
++        self.connect()
++
++        self._old_draw = ref_artist.draw
++        ref_artist.draw = self._draw_wrapper
++    def _draw_wrapper(self, renderer, *args, **kwargs):
++        current_canvas = self.ref_artist.figure.canvas
++        if self.canvas is not current_canvas:
++            self.canvas = current_canvas
++            self.connect()
++        self._old_draw(renderer, *args, **kwargs)
++    def _disconnect_callbacks(self):
++        for cid in self.cids:
++            self.canvas.mpl_disconnect(cid)
++        try:
++            c1 = self._c1
++        except AttributeError:
++            pass
++        else:
++            if c1 is not None:
++                self.canvas.mpl_disconnect(c1)
++        self.cids = []
++        self._c1 = None
++
++    def disconnect(self):
++        """Disconnect the callbacks."""
++        self._disconnect_callbacks()
++
++        if hasattr(self, '_old_draw'):
++            self.ref_artist.draw = self._old_draw
++            del self._old_draw
++
++    def connect(self):
++        if self.canvas is None:
++            self.canvas = self.ref_artist.figure.canvas
++        if self.canvas is None:
++            return
++
++        self._disconnect_callbacks()
++
++        self._use_blit = self._use_blit and self.canvas.supports_blit
+         self.cids = [
+             self.canvas.callbacks._connect_picklable(
+                 'pick_event', self.on_pick),
+@@ -1514,6 +1557,17 @@ class DraggableBase:
+                 'button_release_event', self.on_release),
+         ]
+ 
++
++    def __getstate__(self):
++        state = self.__dict__.copy()
++        state.pop("canvas", None)
++        state.pop("cids", None)
++        return state
++
++    def __setstate__(self, state):
++        self.__dict__.update(state)
++        self.canvas = None
++        self.cids = []
+     def on_motion(self, evt):
+         if self._check_still_parented() and self.got_artist:
+             dx = evt.x - self.mouse_x
+@@ -1560,17 +1614,6 @@ class DraggableBase:
+         else:
+             return True
+ 
+-    def disconnect(self):
+-        """Disconnect the callbacks."""
+-        for cid in self.cids:
+-            self.canvas.mpl_disconnect(cid)
+-        try:
+-            c1 = self._c1
+-        except AttributeError:
+-            pass
+-        else:
+-            self.canvas.mpl_disconnect(c1)
+-
+     def save_offset(self):
+         pass
+ 
