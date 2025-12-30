@@ -1,0 +1,152 @@
+diff --git a/IMPLEMENTATION_SUMMARY.md b/IMPLEMENTATION_SUMMARY.md
+new file mode 100644
+index 000000000..5c20728b9
+--- /dev/null
++++ b/IMPLEMENTATION_SUMMARY.md
+@@ -0,0 +1,47 @@
++# Implementation Summary: Overloaded Methods Support for autodoc_docstring_signature
++
++## Problem
++When using SWIG to wrap C++ classes for Python, overloaded methods have multiple signatures at the start of the docstring. The `autodoc_docstring_signature` feature could only pick up the first signature.
++
++## Solution
++Modified the `_find_signature` and `format_signature` methods in the `DocstringSignatureMixin` class to:
++
++1. **Collect all consecutive signature lines** instead of just the first one
++2. **Preserve individual return annotations** for each overloaded signature
++3. **Format multiple signatures** separated by newlines in the output
++4. **Maintain backward compatibility** with single-signature methods
++
++## Changes Made
++
++### 1. Modified `_find_signature` method (lines 1040-1105)
++- Added loop to collect all consecutive signature lines that match the method name
++- Store all signatures in a list
++- For multiple signatures:
++  - Join argument lists with newlines
++  - Store individual return annotations in `_retann_list` attribute
++  - Return combined args and first return annotation
++
++### 2. Modified `format_signature` method (lines 1118-1150)
++- Check if `self.args` contains newlines (indicating multiple signatures)
++- If `_retann_list` exists, use individual return annotations for each signature
++- Otherwise, fall back to using the same return annotation for all
++- Format each signature with parentheses and return annotation
++- Join all signatures with newlines
++
++### 3. Updated `DocstringStripSignatureMixin.format_signature` (lines 1158-1171)
++- Clean up `_retann_list` attribute when discarding args (for properties)
++
++## Test Results
++All scenarios tested successfully:
++- ✓ Multiple overloads with same return type
++- ✓ Multiple overloads with different return types
++- ✓ Single signature (backward compatibility)
++- ✓ No signature in docstring (introspection still works)
++- ✓ Overloads with no return annotation
++- ✓ Mixed return annotations
++- ✓ Overloaded functions (not just methods)
++
++## Backward Compatibility
++- Single-signature methods work exactly as before
++- Methods without docstring signatures still use introspection
++- The `autodoc_docstring_signature` configuration option works as expected
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index f8e4be999..378ef7c0f 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -1062,15 +1062,49 @@ class DocstringSignatureMixin:
+                     valid_names.extend(cls.__name__ for cls in self.object.__mro__)
+             if base not in valid_names:
+                 continue
+-            # re-prepare docstring to ignore more leading indentation
++            
++            # Collect all consecutive signature lines for overloaded methods
++            signatures = []
++            sig_lines_count = 0
++            for sig_line_idx, sig_line in enumerate(doclines):
++                sig_match = py_ext_sig_re.match(sig_line)
++                if sig_match:
++                    sig_exmod, sig_path, sig_base, sig_args, sig_retann = sig_match.groups()
++                    # Check if this signature line is for the same method
++                    if sig_base in valid_names:
++                        signatures.append((sig_args, sig_retann))
++                        sig_lines_count += 1
++                    else:
++                        # Different method name, stop collecting
++                        break
++                else:
++                    # Not a signature line, stop collecting
++                    break
++            
++            # re-prepare docstring to ignore all signature lines and leading indentation
+             tab_width = self.directive.state.document.settings.tab_width  # type: ignore
+-            self._new_docstrings[i] = prepare_docstring('\n'.join(doclines[1:]),
++            self._new_docstrings[i] = prepare_docstring('\n'.join(doclines[sig_lines_count:]),
+                                                         tabsize=tab_width)
+-            result = args, retann
++            
++            # Combine all signatures
++            if signatures:
++                if len(signatures) == 1:
++                    # Single signature - return as before
++                    result = signatures[0]
++                else:
++                    # Multiple signatures - store individual return annotations
++                    # and join args with newlines
++                    combined_args = '\n'.join(sig[0] if sig[0] else '' for sig in signatures)
++                    # Store the list of return annotations for use in format_signature
++                    self._retann_list = [sig[1] for sig in signatures]
++                    # Return the first return annotation for backward compatibility
++                    result = combined_args, signatures[0][1]
++            
+             # don't look any further
+             break
+         return result
+ 
++
+     def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:
+         if encoding is not None:
+             warnings.warn("The 'encoding' argument to autodoc.%s.get_doc() is deprecated."
+@@ -1088,6 +1122,31 @@ class DocstringSignatureMixin:
+             result = self._find_signature()
+             if result is not None:
+                 self.args, self.retann = result
++        
++        # Handle multiple overloaded signatures
++        if self.args is not None and '\n' in self.args:
++            # Multiple signatures separated by newlines
++            # Check if we have stored return annotations for each signature
++            sig_lines = []
++            args_list = self.args.split('\n')
++            retann_list = getattr(self, '_retann_list', None)
++            
++            if retann_list and len(retann_list) == len(args_list):
++                # Use individual return annotations for each signature
++                for args, retann in zip(args_list, retann_list):
++                    sig = "(%s)" % args
++                    if retann:
++                        sig += ' -> %s' % retann
++                    sig_lines.append(sig)
++            else:
++                # Fall back to using the same return annotation for all
++                for args in args_list:
++                    sig = "(%s)" % args
++                    if self.retann:
++                        sig += ' -> %s' % self.retann
++                    sig_lines.append(sig)
++            return '\n'.join(sig_lines)
++        
+         return super().format_signature(**kwargs)  # type: ignore
+ 
+ 
+@@ -1106,6 +1165,9 @@ class DocstringStripSignatureMixin(DocstringSignatureMixin):
+                 # DocstringSignatureMixin.format_signature.
+                 # Documenter.format_signature use self.args value to format.
+                 _args, self.retann = result
++                # Also discard _retann_list if it was set for overloaded methods
++                if hasattr(self, '_retann_list'):
++                    delattr(self, '_retann_list')
+         return super().format_signature(**kwargs)
+ 
+ 

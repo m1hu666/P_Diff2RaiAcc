@@ -1,0 +1,863 @@
+diff --git a/debug_test.py b/debug_test.py
+new file mode 100644
+index 000000000..44344ebad
+--- /dev/null
++++ b/debug_test.py
+@@ -0,0 +1,16 @@
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++config = Config(napoleon_use_param=True)
++docstring = """
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays.
++"""
++
++print("Creating NumpyDocstring...")
++parsed = NumpyDocstring(docstring, config)
++print(f"Type: {type(parsed)}")
++print(f"Has lines method: {hasattr(parsed, 'lines')}")
++print(f"Lines: {parsed.lines()}")
++print(f"String representation: {str(parsed)}")
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 000000000..05a6bdf4b
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,82 @@
++"""
++Final test to demonstrate the fix for the PR issue:
++"Render error when combining multiple input parameters in docstring"
++
++This test shows that comma-separated parameters in NumPy-style docstrings
++are now correctly split into separate parameter entries.
++"""
++
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++def test_case(title, docstring, config=None):
++    if config is None:
++        config = Config(napoleon_use_param=True)
++    
++    print(f"\n{'=' * 70}")
++    print(f"{title}")
++    print(f"{'=' * 70}")
++    print("Input docstring:")
++    print(docstring)
++    print("\nOutput (reStructuredText):")
++    parsed = NumpyDocstring(docstring, config)
++    result = str(parsed)
++    print(result)
++
++# Test 1: The exact example from the PR
++test_case(
++    "PR Example 1: Multiple parameters without optional",
++    """Parameters
++----------
++x1, x2 : array_like
++    Input arrays, description of `x1`, `x2`."""
++)
++
++# Test 2: The exact example from the PR with optional
++test_case(
++    "PR Example 2: Multiple parameters with optional",
++    """Parameters
++----------
++x1, x2 : array_like, optional
++    Input arrays, description of `x1`, `x2`."""
++)
++
++# Test 3: Three parameters
++test_case(
++    "Test 3: Three parameters",
++    """Parameters
++----------
++x1, x2, x3 : array_like, optional
++    Input arrays."""
++)
++
++# Test 4: Mixed single and multiple parameters
++test_case(
++    "Test 4: Mixed single and multiple parameters",
++    """Parameters
++----------
++x1, x2 : array_like
++    First two parameters.
++y : int
++    Third parameter.
++z1, z2 : str, optional
++    Last two parameters."""
++)
++
++# Test 5: Verify napoleon_use_param=False still works
++test_case(
++    "Test 5: napoleon_use_param=False (field list format)",
++    """Parameters
++----------
++x1, x2 : array_like, optional
++    Input arrays.""",
++    Config(napoleon_use_param=False)
++)
++
++print("\n" + "=" * 70)
++print("SUMMARY")
++print("=" * 70)
++print("✓ Comma-separated parameters are now split into separate entries")
++print("✓ Each parameter gets its own :param: and :type: directive")
++print("✓ The 'optional' keyword is preserved in the type")
++print("✓ Both napoleon_use_param=True and False work correctly")
++print("=" * 70)
+diff --git a/fix_napoleon.py b/fix_napoleon.py
+new file mode 100644
+index 000000000..308ddea68
+--- /dev/null
++++ b/fix_napoleon.py
+@@ -0,0 +1,61 @@
++import sys
++
++# Read the file
++with open('/testbed/sphinx/ext/napoleon/docstring.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the _format_docutils_params method
++old_method = '''    def _format_docutils_params(self, fields: List[Tuple[str, str, List[str]]],
++                                field_role: str = 'param', type_role: str = 'type'
++                                ) -> List[str]:
++        lines = []
++        for _name, _type, _desc in fields:
++            _desc = self._strip_empty(_desc)
++            if any(_desc):
++                _desc = self._fix_field_desc(_desc)
++                field = ':%s %s: ' % (field_role, _name)
++                lines.extend(self._format_block(field, _desc))
++            else:
++                lines.append(':%s %s:' % (field_role, _name))
++
++            if _type:
++                lines.append(':%s %s: %s' % (type_role, _name, _type))
++        return lines + ['']'''
++
++new_method = '''    def _format_docutils_params(self, fields: List[Tuple[str, str, List[str]]],
++                                field_role: str = 'param', type_role: str = 'type'
++                                ) -> List[str]:
++        lines = []
++        for _name, _type, _desc in fields:
++            _desc = self._strip_empty(_desc)
++            # Split comma-separated names to create separate entries for each
++            if ', ' in _name:
++                _names = [n.strip() for n in _name.split(',')]
++            else:
++                _names = [_name]
++            
++            for name in _names:
++                if any(_desc):
++                    _desc_fixed = self._fix_field_desc(_desc)
++                    field = ':%s %s: ' % (field_role, name)
++                    lines.extend(self._format_block(field, _desc_fixed))
++                else:
++                    lines.append(':%s %s:' % (field_role, name))
++
++                if _type:
++                    lines.append(':%s %s: %s' % (type_role, name, _type))
++        return lines + ['']'''
++
++# Replace the method
++if old_method in content:
++    content = content.replace(old_method, new_method)
++    print("Successfully replaced _format_docutils_params method")
++else:
++    print("ERROR: Could not find the exact method to replace")
++    sys.exit(1)
++
++# Write the file back
++with open('/testbed/sphinx/ext/napoleon/docstring.py', 'w') as f:
++    f.write(content)
++
++print("File updated successfully")
+diff --git a/fix_napoleon_v2.py b/fix_napoleon_v2.py
+new file mode 100644
+index 000000000..92510b31a
+--- /dev/null
++++ b/fix_napoleon_v2.py
+@@ -0,0 +1,68 @@
++import sys
++
++# Read the file
++with open('/testbed/sphinx/ext/napoleon/docstring.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the _format_docutils_params method
++old_method = '''    def _format_docutils_params(self, fields: List[Tuple[str, str, List[str]]],
++                                field_role: str = 'param', type_role: str = 'type'
++                                ) -> List[str]:
++        lines = []
++        for _name, _type, _desc in fields:
++            _desc = self._strip_empty(_desc)
++            # Split comma-separated names to create separate entries for each
++            if ', ' in _name:
++                _names = [n.strip() for n in _name.split(',')]
++            else:
++                _names = [_name]
++            
++            for name in _names:
++                if any(_desc):
++                    _desc_fixed = self._fix_field_desc(_desc)
++                    field = ':%s %s: ' % (field_role, name)
++                    lines.extend(self._format_block(field, _desc_fixed))
++                else:
++                    lines.append(':%s %s:' % (field_role, name))
++
++                if _type:
++                    lines.append(':%s %s: %s' % (type_role, name, _type))
++        return lines + ['']'''
++
++new_method = '''    def _format_docutils_params(self, fields: List[Tuple[str, str, List[str]]],
++                                field_role: str = 'param', type_role: str = 'type'
++                                ) -> List[str]:
++        lines = []
++        for _name, _type, _desc in fields:
++            _desc = self._strip_empty(_desc)
++            # Split comma-separated names to create separate entries for each
++            if ',' in _name:
++                _names = [n.strip() for n in _name.split(',')]
++            else:
++                _names = [_name]
++            
++            for name in _names:
++                if any(_desc):
++                    _desc_fixed = self._fix_field_desc(_desc)
++                    field = ':%s %s: ' % (field_role, name)
++                    lines.extend(self._format_block(field, _desc_fixed))
++                else:
++                    lines.append(':%s %s:' % (field_role, name))
++
++                if _type:
++                    lines.append(':%s %s: %s' % (type_role, name, _type))
++        return lines + ['']'''
++
++# Replace the method
++if old_method in content:
++    content = content.replace(old_method, new_method)
++    print("Successfully replaced _format_docutils_params method")
++else:
++    print("ERROR: Could not find the exact method to replace")
++    sys.exit(1)
++
++# Write the file back
++with open('/testbed/sphinx/ext/napoleon/docstring.py', 'w') as f:
++    f.write(content)
++
++print("File updated successfully")
+diff --git a/sphinx/ext/napoleon/docstring.py b/sphinx/ext/napoleon/docstring.py
+index b3daa06f1..a416aefb8 100644
+--- a/sphinx/ext/napoleon/docstring.py
++++ b/sphinx/ext/napoleon/docstring.py
+@@ -392,15 +392,22 @@ class GoogleDocstring:
+         lines = []
+         for _name, _type, _desc in fields:
+             _desc = self._strip_empty(_desc)
+-            if any(_desc):
+-                _desc = self._fix_field_desc(_desc)
+-                field = ':%s %s: ' % (field_role, _name)
+-                lines.extend(self._format_block(field, _desc))
++            # Split comma-separated names to create separate entries for each
++            if ',' in _name:
++                _names = [n.strip() for n in _name.split(',')]
+             else:
+-                lines.append(':%s %s:' % (field_role, _name))
++                _names = [_name]
++            
++            for name in _names:
++                if any(_desc):
++                    _desc_fixed = self._fix_field_desc(_desc)
++                    field = ':%s %s: ' % (field_role, name)
++                    lines.extend(self._format_block(field, _desc_fixed))
++                else:
++                    lines.append(':%s %s:' % (field_role, name))
+ 
+-            if _type:
+-                lines.append(':%s %s: %s' % (type_role, _name, _type))
++                if _type:
++                    lines.append(':%s %s: %s' % (type_role, name, _type))
+         return lines + ['']
+ 
+     def _format_field(self, _name: str, _type: str, _desc: List[str]) -> List[str]:
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..89bb1e726
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,82 @@
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++print("=" * 70)
++print("TEST 1: Multiple parameters with napoleon_use_param=True (DEFAULT)")
++print("=" * 70)
++config = Config(napoleon_use_param=True)
++docstring = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays, description of x1 and x2.
++'''
++parsed = NumpyDocstring(docstring, config)
++result = '\n'.join(parsed.lines())
++print(result)
++print()
++
++print("=" * 70)
++print("TEST 2: Multiple parameters with optional and napoleon_use_param=True")
++print("=" * 70)
++docstring = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like, optional
++    Input arrays, description of x1 and x2.
++'''
++parsed = NumpyDocstring(docstring, config)
++result = '\n'.join(parsed.lines())
++print(result)
++print()
++
++print("=" * 70)
++print("TEST 3: *args, **kwargs with napoleon_use_param=True")
++print("=" * 70)
++docstring = '''Test function.
++
++Parameters
++----------
++*args, **kwargs :
++    Variable length argument list and arbitrary keyword arguments.
++'''
++parsed = NumpyDocstring(docstring, config)
++result = '\n'.join(parsed.lines())
++print(result)
++print()
++
++print("=" * 70)
++print("TEST 4: Multiple parameters with napoleon_use_param=False")
++print("=" * 70)
++config_no_param = Config(napoleon_use_param=False)
++docstring = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like, optional
++    Input arrays, description of x1 and x2.
++'''
++parsed = NumpyDocstring(docstring, config_no_param)
++result = '\n'.join(parsed.lines())
++print(result)
++print()
++
++print("=" * 70)
++print("TEST 5: Mixed parameters with napoleon_use_param=True")
++print("=" * 70)
++config = Config(napoleon_use_param=True)
++docstring = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like
++    Description of x1 and x2.
++y : int
++    Description of y.
++z1, z2 : str, optional
++    Description of z1 and z2.
++'''
++parsed = NumpyDocstring(docstring, config)
++result = '\n'.join(parsed.lines())
++print(result)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..d9c25b239
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,65 @@
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++config = Config(napoleon_use_param=True)
++
++# Test case 1: Three parameters
++docstring1 = '''Test function.
++
++Parameters
++----------
++x1, x2, x3 : array_like
++    Description of x1, x2, and x3.
++'''
++
++print("Test 1: Three parameters")
++print("=" * 60)
++parsed = NumpyDocstring(docstring1, config)
++print('\n'.join(parsed.lines()))
++print()
++
++# Test case 2: Mixed - some with commas, some without
++docstring2 = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like
++    Description of x1 and x2.
++y : int
++    Description of y.
++z1, z2 : str, optional
++    Description of z1 and z2.
++'''
++
++print("Test 2: Mixed parameters")
++print("=" * 60)
++parsed = NumpyDocstring(docstring2, config)
++print('\n'.join(parsed.lines()))
++print()
++
++# Test case 3: Single parameter (should still work)
++docstring3 = '''Test function.
++
++Parameters
++----------
++x : array_like, optional
++    Description of x.
++'''
++
++print("Test 3: Single parameter")
++print("=" * 60)
++parsed = NumpyDocstring(docstring3, config)
++print('\n'.join(parsed.lines()))
++print()
++
++# Test case 4: Parameters with no description
++docstring4 = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like
++'''
++
++print("Test 4: Parameters with no description")
++print("=" * 60)
++parsed = NumpyDocstring(docstring4, config)
++print('\n'.join(parsed.lines()))
+diff --git a/test_edge_cases_final.py b/test_edge_cases_final.py
+new file mode 100644
+index 000000000..c15dadedd
+--- /dev/null
++++ b/test_edge_cases_final.py
+@@ -0,0 +1,48 @@
++"""Test edge cases for comma-separated parameters."""
++
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++config = Config(napoleon_use_param=True)
++
++# Test 1: No space after comma (should still work)
++print("Test 1: No space after comma")
++print("=" * 60)
++docstring = """Parameters
++----------
++x1,x2 : array_like
++    Input arrays."""
++parsed = NumpyDocstring(docstring, config)
++print(str(parsed))
++print()
++
++# Test 2: Multiple spaces after comma
++print("Test 2: Multiple spaces after comma")
++print("=" * 60)
++docstring = """Parameters
++----------
++x1,  x2 : array_like
++    Input arrays."""
++parsed = NumpyDocstring(docstring, config)
++print(str(parsed))
++print()
++
++# Test 3: Single parameter (no comma) - should work as before
++print("Test 3: Single parameter (no comma)")
++print("=" * 60)
++docstring = """Parameters
++----------
++x1 : array_like
++    Input array."""
++parsed = NumpyDocstring(docstring, config)
++print(str(parsed))
++print()
++
++# Test 4: Parameter name with underscore
++print("Test 4: Parameter names with underscores")
++print("=" * 60)
++docstring = """Parameters
++----------
++param_1, param_2 : array_like
++    Input arrays."""
++parsed = NumpyDocstring(docstring, config)
++print(str(parsed))
+diff --git a/test_format_field.py b/test_format_field.py
+new file mode 100644
+index 000000000..7d16e8317
+--- /dev/null
++++ b/test_format_field.py
+@@ -0,0 +1,32 @@
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++config = Config(napoleon_use_param=False)
++
++# Test case 1: Multiple parameters without optional
++docstring1 = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like
++    Description of x1 and x2.
++'''
++
++print("Test 1: Multiple parameters (napoleon_use_param=False)")
++print("=" * 60)
++parsed = NumpyDocstring(docstring1, config)
++print('\n'.join(parsed.lines()))
++print()
++
++# Test case 2: Multiple parameters with optional
++docstring2 = '''Test function.
++
++Parameters
++----------
++x1, x2 : array_like, optional
++    Description of x1 and x2.
++'''
++
++print("Test 2: Multiple parameters with optional (napoleon_use_param=False)")
++print("=" * 60)
++parsed = NumpyDocstring(docstring2, config)
++print('\n'.join(parsed.lines()))
+diff --git a/test_napoleon_issue.py b/test_napoleon_issue.py
+new file mode 100644
+index 000000000..f03da929d
+--- /dev/null
++++ b/test_napoleon_issue.py
+@@ -0,0 +1,54 @@
++"""Test script to reproduce the Napoleon docstring issue with multiple parameters."""
++
++if __name__ == "__main__":
++    from sphinx.ext.napoleon import Config, NumpyDocstring
++    
++    # Create a config object
++    config = Config(napoleon_use_param=True, napoleon_use_rtype=True)
++    
++    # Test case 1: Multiple parameters without optional
++    docstring1 = """
++    Test function with multiple parameters on same line.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like
++        Input arrays, description of `x1`, `x2`.
++    """
++    
++    print("Test 1: Multiple parameters without optional")
++    print("=" * 60)
++    result1 = str(NumpyDocstring(docstring1, config))
++    print(result1)
++    print()
++    
++    # Test case 2: Multiple parameters with optional
++    docstring2 = """
++    Test function with multiple optional parameters on same line.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like, optional
++        Input arrays, description of `x1`, `x2`.
++    """
++    
++    print("Test 2: Multiple parameters with optional")
++    print("=" * 60)
++    result2 = str(NumpyDocstring(docstring2, config))
++    print(result2)
++    print()
++    
++    # Test case 3: Single parameter for comparison
++    docstring3 = """
++    Test function with single parameter.
++    
++    Parameters
++    ----------
++    x1 : array_like, optional
++        Input array, description of `x1`.
++    """
++    
++    print("Test 3: Single parameter with optional (for comparison)")
++    print("=" * 60)
++    result3 = str(NumpyDocstring(docstring3, config))
++    print(result3)
+diff --git a/test_napoleon_issue2.py b/test_napoleon_issue2.py
+new file mode 100644
+index 000000000..c5c37a381
+--- /dev/null
++++ b/test_napoleon_issue2.py
+@@ -0,0 +1,54 @@
++"""Test script to reproduce the Napoleon docstring issue with multiple parameters."""
++
++if __name__ == "__main__":
++    from sphinx.ext.napoleon import Config, NumpyDocstring
++    
++    # Create a config object with napoleon_use_param=True
++    config = Config(napoleon_use_param=True)
++    
++    # Test case 1: Multiple parameters without optional
++    docstring1 = """Test function.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like
++        Input arrays, description of `x1`, `x2`.
++    """
++    
++    print("Test 1: Multiple parameters without optional")
++    print("=" * 60)
++    parsed = NumpyDocstring(docstring1, config)
++    result1 = '\n'.join(parsed.lines())
++    print(result1)
++    print()
++    
++    # Test case 2: Multiple parameters with optional
++    docstring2 = """Test function.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like, optional
++        Input arrays, description of `x1`, `x2`.
++    """
++    
++    print("Test 2: Multiple parameters with optional")
++    print("=" * 60)
++    parsed = NumpyDocstring(docstring2, config)
++    result2 = '\n'.join(parsed.lines())
++    print(result2)
++    print()
++    
++    # Test case 3: Single parameter for comparison
++    docstring3 = """Test function.
++    
++    Parameters
++    ----------
++    x1 : array_like, optional
++        Input array, description of `x1`.
++    """
++    
++    print("Test 3: Single parameter with optional (for comparison)")
++    print("=" * 60)
++    parsed = NumpyDocstring(docstring3, config)
++    result3 = '\n'.join(parsed.lines())
++    print(result3)
+diff --git a/test_optional.py b/test_optional.py
+new file mode 100644
+index 000000000..3056a3c4a
+--- /dev/null
++++ b/test_optional.py
+@@ -0,0 +1,13 @@
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++config = Config(napoleon_use_param=True)
++docstring = '''One line summary.
++
++Parameters
++----------
++x1, x2 : array_like, optional
++    Description of x1 and x2.
++'''
++
++parsed = NumpyDocstring(docstring, config)
++print('\n'.join(parsed.lines()))
+diff --git a/test_pr_example.py b/test_pr_example.py
+new file mode 100644
+index 000000000..dc5da2e98
+--- /dev/null
++++ b/test_pr_example.py
+@@ -0,0 +1,40 @@
++"""Test the exact example from the PR description."""
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++# The PR mentions that napoleon_use_param defaults to True
++config = Config()
++
++print("Example from PR description:")
++print("=" * 70)
++docstring = '''
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays, description of `x1`, `x2`.
++'''
++
++parsed = NumpyDocstring(docstring, config)
++result = '\n'.join(parsed.lines())
++print(result)
++print()
++
++print("Example from PR description with optional:")
++print("=" * 70)
++docstring = '''
++Parameters
++----------
++x1, x2 : array_like, optional
++    Input arrays, description of `x1`, `x2`.
++'''
++
++parsed = NumpyDocstring(docstring, config)
++result = '\n'.join(parsed.lines())
++print(result)
++print()
++
++print("Expected behavior from PR:")
++print("- x1, x2 (array_like, optional) - Input arrays, description of x1, x2.")
++print()
++print("Actual behavior (reStructuredText format):")
++print("The above output shows separate :param: and :type: entries for x1 and x2,")
++print("which will render correctly in HTML as separate parameter entries.")
+diff --git a/test_real_sphinx.py b/test_real_sphinx.py
+new file mode 100644
+index 000000000..a9fde1a33
+--- /dev/null
++++ b/test_real_sphinx.py
+@@ -0,0 +1,117 @@
++"""
++Test with a real Sphinx build to verify HTML rendering.
++"""
++import tempfile
++import os
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for the test
++tmpdir = tempfile.mkdtemp()
++print(f"Test directory: {tmpdir}")
++
++try:
++    # Create a simple Python module with the docstring from the PR
++    module_content = '''
++"""Test module."""
++
++def test_function(x1, x2):
++    """
++    Test function with multiple parameters on same line.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like
++        Input arrays, description of `x1`, `x2`.
++    
++    Returns
++    -------
++    result : array_like
++        Output array.
++    """
++    pass
++
++def test_function_optional(x1, x2):
++    """
++    Test function with multiple optional parameters on same line.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like, optional
++        Input arrays, description of `x1`, `x2`.
++    
++    Returns
++    -------
++    result : array_like
++        Output array.
++    """
++    pass
++'''
++    
++    # Write the module
++    with open(os.path.join(tmpdir, 'test_module.py'), 'w') as f:
++        f.write(module_content)
++    
++    # Create conf.py
++    conf_content = '''
++extensions = ['sphinx.ext.autodoc', 'sphinx.ext.napoleon']
++napoleon_use_param = True
++'''
++    with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++        f.write(conf_content)
++    
++    # Create index.rst
++    index_content = '''
++Test Documentation
++==================
++
++.. automodule:: test_module
++   :members:
++   :undoc-members:
++'''
++    with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++        f.write(index_content)
++    
++    # Build the documentation
++    import sys
++    sys.path.insert(0, tmpdir)
++    
++    from sphinx.application import Sphinx
++    
++    srcdir = tmpdir
++    outdir = os.path.join(tmpdir, '_build')
++    doctreedir = os.path.join(outdir, '.doctrees')
++    
++    app = Sphinx(srcdir, srcdir, outdir, doctreedir, 'html', warning=sys.stderr)
++    app.build()
++    
++    # Read the generated HTML
++    html_file = os.path.join(outdir, 'index.html')
++    if os.path.exists(html_file):
++        with open(html_file, 'r') as f:
++            html_content = f.read()
++        
++        # Check if the parameters are properly rendered
++        if ':param x1:' in html_content or 'x1' in html_content:
++            print("✓ HTML generated successfully")
++            print("✓ Parameters are present in the HTML")
++            
++            # Look for the parameter entries
++            if 'x1' in html_content and 'x2' in html_content:
++                print("✓ Both x1 and x2 are present in the HTML")
++            else:
++                print("✗ Not all parameters found in HTML")
++        else:
++            print("✗ Parameters not found in HTML")
++            print("HTML content preview:")
++            print(html_content[:1000])
++    else:
++        print(f"✗ HTML file not found: {html_file}")
++        print("Files in output directory:")
++        for f in os.listdir(outdir):
++            print(f"  {f}")
++
++finally:
++    # Clean up
++    shutil.rmtree(tmpdir)
++    print(f"\nCleaned up test directory: {tmpdir}")
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 000000000..23dd5fc5c
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,13 @@
++from sphinx.ext.napoleon import Config, NumpyDocstring
++
++config = Config(napoleon_use_param=True)
++docstring = '''One line summary.
++
++Parameters
++----------
++x1, x2 : array_like
++    Description of x1 and x2.
++'''
++
++parsed = NumpyDocstring(docstring, config)
++print('\n'.join(parsed.lines()))

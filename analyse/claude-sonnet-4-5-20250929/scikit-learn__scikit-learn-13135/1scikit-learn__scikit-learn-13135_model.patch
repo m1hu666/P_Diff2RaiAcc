@@ -1,0 +1,222 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..45a39532f
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,16 @@
++import numpy as np
++from sklearn.preprocessing import KBinsDiscretizer
++
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++
++# with 5 bins
++est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++try:
++    Xt = est.fit_transform(X)
++    print("Success! Transformed data:")
++    print(Xt)
++    print("\nBin edges:")
++    print(est.bin_edges_[0])
++    print("\nAre bin edges sorted?", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++except ValueError as e:
++    print(f"Error occurred: {e}")
+diff --git a/sklearn/preprocessing/_discretization.py b/sklearn/preprocessing/_discretization.py
+index dd969c12b..0b4a8e719 100644
+--- a/sklearn/preprocessing/_discretization.py
++++ b/sklearn/preprocessing/_discretization.py
+@@ -172,6 +172,7 @@ class KBinsDiscretizer(BaseEstimator, TransformerMixin):
+                 # 1D k-means procedure
+                 km = KMeans(n_clusters=n_bins[jj], init=init, n_init=1)
+                 centers = km.fit(column[:, None]).cluster_centers_[:, 0]
++                centers = np.sort(centers)
+                 bin_edges[jj] = (centers[1:] + centers[:-1]) * 0.5
+                 bin_edges[jj] = np.r_[col_min, bin_edges[jj], col_max]
+ 
+diff --git a/test_all_strategies.py b/test_all_strategies.py
+new file mode 100644
+index 000000000..b2c9fc636
+--- /dev/null
++++ b/test_all_strategies.py
+@@ -0,0 +1,20 @@
++"""
++Test all strategies to ensure the fix doesn't break anything.
++"""
++import numpy as np
++from sklearn.preprocessing import KBinsDiscretizer
++
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++
++for strategy in ['uniform', 'quantile', 'kmeans']:
++    print(f"\n=== Testing strategy: {strategy} ===")
++    for n_bins in [3, 5]:
++        est = KBinsDiscretizer(n_bins=n_bins, strategy=strategy, encode='ordinal')
++        try:
++            Xt = est.fit_transform(X)
++            is_sorted = np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:])
++            print(f"  n_bins={n_bins}: SUCCESS (sorted={is_sorted})")
++        except Exception as e:
++            print(f"  n_bins={n_bins}: FAILED - {e}")
++
++print("\n=== All strategies tested successfully! ===")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..4adf37f64
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,40 @@
++import numpy as np
++from sklearn.preprocessing import KBinsDiscretizer
++
++# Test 1: Original failing case
++print("=== Test 1: Original failing case ===")
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++est.fit(X)
++print("Bin edges after fit:", est.bin_edges_[0])
++print("Sorted?", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++try:
++    Xt = est.transform(X)
++    print("Transform succeeded!")
++except ValueError as e:
++    print(f"Transform failed: {e}")
++
++# Test 2: With 3 bins (should work)
++print("\n=== Test 2: With 3 bins ===")
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++est = KBinsDiscretizer(n_bins=3, strategy='kmeans', encode='ordinal')
++est.fit(X)
++print("Bin edges after fit:", est.bin_edges_[0])
++print("Sorted?", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++try:
++    Xt = est.transform(X)
++    print("Transform succeeded!")
++    print("Result:", Xt.ravel())
++except ValueError as e:
++    print(f"Transform failed: {e}")
++
++# Test 3: Multiple runs with 5 bins
++print("\n=== Test 3: Multiple runs with 5 bins ===")
++for i in range(5):
++    X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++    est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++    est.fit(X)
++    print(f"Run {i}: bin_edges = {est.bin_edges_[0]}")
++    print(f"  Sorted? {np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:])}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..87069823d
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,44 @@
++import numpy as np
++from sklearn.preprocessing import KBinsDiscretizer
++
++print("=== Test 1: Original failing case ===")
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++print("Success! Bin edges:", est.bin_edges_[0])
++print("Sorted?", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++print("\n=== Test 2: Multiple features ===")
++X = np.array([[0, 1], [0.5, 2], [2, 3], [3, 4], [9, 5], [10, 6]])
++est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++print("Success!")
++for i, edges in enumerate(est.bin_edges_):
++    print(f"Feature {i} bin edges: {edges}")
++    print(f"  Sorted? {np.all(edges[:-1] <= edges[1:])}")
++
++print("\n=== Test 3: Different n_bins per feature ===")
++X = np.array([[0, 1], [0.5, 2], [2, 3], [3, 4], [9, 5], [10, 6]])
++est = KBinsDiscretizer(n_bins=[5, 3], strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++print("Success!")
++for i, edges in enumerate(est.bin_edges_):
++    print(f"Feature {i} bin edges: {edges}")
++    print(f"  Sorted? {np.all(edges[:-1] <= edges[1:])}")
++
++print("\n=== Test 4: Large number of bins ===")
++np.random.seed(42)
++X = np.random.randn(100, 1)
++est = KBinsDiscretizer(n_bins=10, strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++print("Success! Bin edges:", est.bin_edges_[0])
++print("Sorted?", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++print("\n=== Test 5: Uniform data ===")
++X = np.linspace(0, 10, 20).reshape(-1, 1)
++est = KBinsDiscretizer(n_bins=7, strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++print("Success! Bin edges:", est.bin_edges_[0])
++print("Sorted?", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++print("\n=== All tests passed! ===")
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 000000000..842d7bc53
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,37 @@
++"""
++Test the exact scenario from the PR description.
++This should now work without errors.
++"""
++import numpy as np
++from sklearn.preprocessing import KBinsDiscretizer
++
++print("Testing the exact scenario from the PR description...")
++print("=" * 60)
++
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++
++# with 5 bins (this was failing before)
++est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++
++print("SUCCESS! No error thrown.")
++print("\nTransformed data:")
++print(Xt)
++print("\nBin edges:")
++print(est.bin_edges_[0])
++print("\nBin edges are sorted:", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++# Also test with 3 bins (this was working before and should still work)
++print("\n" + "=" * 60)
++print("Testing with 3 bins (should still work)...")
++est = KBinsDiscretizer(n_bins=3, strategy='kmeans', encode='ordinal')
++Xt = est.fit_transform(X)
++print("SUCCESS!")
++print("\nTransformed data:")
++print(Xt)
++print("\nBin edges:")
++print(est.bin_edges_[0])
++print("\nBin edges are sorted:", np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:]))
++
++print("\n" + "=" * 60)
++print("All tests passed! The issue is fixed.")
+diff --git a/test_random_states.py b/test_random_states.py
+new file mode 100644
+index 000000000..813cc9da7
+--- /dev/null
++++ b/test_random_states.py
+@@ -0,0 +1,17 @@
++"""
++Test with different random states to ensure robustness.
++"""
++import numpy as np
++from sklearn.preprocessing import KBinsDiscretizer
++
++X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++
++print("Testing with different random states...")
++for seed in [0, 1, 42, 123, 999]:
++    np.random.seed(seed)
++    est = KBinsDiscretizer(n_bins=5, strategy='kmeans', encode='ordinal')
++    Xt = est.fit_transform(X)
++    is_sorted = np.all(est.bin_edges_[0][:-1] <= est.bin_edges_[0][1:])
++    print(f"Seed {seed:3d}: sorted={is_sorted}, bin_edges={est.bin_edges_[0]}")
++
++print("\nAll random states produce sorted bin edges!")

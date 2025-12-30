@@ -1,0 +1,690 @@
+diff --git a/SOLUTION_SUMMARY.md b/SOLUTION_SUMMARY.md
+new file mode 100644
+index 000000000..151337628
+--- /dev/null
++++ b/SOLUTION_SUMMARY.md
+@@ -0,0 +1,30 @@
++# Fix for bad-names-rgxs Regex Comma Issue
++
++## Problem
++The `bad-names-rgxs` option in pylint was incorrectly splitting regular expressions on commas, even when those commas were part of the regex syntax (e.g., in quantifiers like `{1,3}`). This caused valid regexes to be mangled and resulted in crashes.
++
++## Root Cause
++The `_regexp_csv_transfomer` function used `_csv_transformer` which unconditionally splits on commas using `_splitstrip`. This doesn't account for commas that are part of regex syntax.
++
++## Solution
++Implemented a new `_regexp_csv_split` function that is aware of regex syntax and only splits on commas that are actual delimiters (not inside braces, brackets, or parentheses).
++
++### Changes Made
++1. Added `_regexp_csv_split()` function in `/testbed/pylint/config/argument.py`
++   - Tracks nesting depth of `{}`, `[]`, and `()` 
++   - Only splits on commas at depth 0
++   - Handles escaped characters
++
++2. Updated `_regexp_csv_transfomer()` to use `_regexp_csv_split()` instead of `_csv_transformer()`
++
++3. Updated `_regexp_paths_csv_transfomer()` to use `_regexp_csv_split()` instead of `_csv_transformer()`
++
++## Test Results
++✓ Handles regexes with commas in quantifiers: `(foo{1,3})`
++✓ Handles multiple regexes: `test{1,3},another{2,4}`
++✓ Handles commas in character classes: `[a,b],c`
++✓ Handles commas in groups: `(a,b),c`
++✓ Still rejects invalid regexes: `(unclosed`
++
++## Note on Failing Test
++The test `test_csv_regex_error` in `tests/config/test_config.py` was specifically testing the OLD BUGGY behavior. It expects `(foo{1,3})` to fail, but this is actually a valid regex that should work. The test needs to be updated to use an actually invalid regex.
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 000000000..c48854a8f
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,124 @@
++#!/usr/bin/env python3
++"""Final verification that the fix works correctly."""
++
++import tempfile
++import os
++import subprocess
++import sys
++
++print("="*70)
++print("FINAL VERIFICATION OF THE FIX")
++print("="*70)
++
++# Test 1: The exact case from the PR description
++print("\n1. Testing the exact case from the PR description:")
++print("   Config: bad-name-rgxs = \"(foo{1,3})\"")
++
++with tempfile.TemporaryDirectory() as tmpdir:
++    config_content = """[tool.pylint.basic]
++bad-names-rgxs = "(foo{1,3})"
++"""
++    config_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(config_file, 'w') as f:
++        f.write(config_content)
++    
++    test_file_content = """def foo():
++    pass
++
++def foooo():
++    pass
++"""
++    test_file = os.path.join(tmpdir, "test.py")
++    with open(test_file, 'w') as f:
++        f.write(test_file_content)
++    
++    result = subprocess.run(
++        [sys.executable, "-m", "pylint", test_file],
++        cwd=tmpdir,
++        capture_output=True,
++        text=True
++    )
++    
++    if "re.error" in result.stderr or "unterminated subpattern" in result.stderr:
++        print("   ✗ FAILED: Pylint crashed with regex error")
++        print("   ", result.stderr[:200])
++        sys.exit(1)
++    else:
++        print("   ✓ SUCCESS: Pylint ran without crashing")
++
++# Test 2: Multiple regexes with commas
++print("\n2. Testing multiple regexes with commas:")
++print("   Config: bad-names-rgxs = \"test{1,3},another{2,4}\"")
++
++with tempfile.TemporaryDirectory() as tmpdir:
++    config_content = """[tool.pylint.basic]
++bad-names-rgxs = "test{1,3},another{2,4}"
++"""
++    config_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(config_file, 'w') as f:
++        f.write(config_content)
++    
++    test_file_content = """def test():
++    pass
++
++def another():
++    pass
++"""
++    test_file = os.path.join(tmpdir, "test.py")
++    with open(test_file, 'w') as f:
++        f.write(test_file_content)
++    
++    result = subprocess.run(
++        [sys.executable, "-m", "pylint", test_file],
++        cwd=tmpdir,
++        capture_output=True,
++        text=True
++    )
++    
++    if "re.error" in result.stderr:
++        print("   ✗ FAILED: Pylint crashed with regex error")
++        sys.exit(1)
++    else:
++        print("   ✓ SUCCESS: Pylint ran without crashing")
++
++# Test 3: Verify that actually invalid regexes still fail
++print("\n3. Testing that invalid regexes still fail:")
++print("   Config: bad-names-rgxs = \"(unclosed\"")
++
++with tempfile.TemporaryDirectory() as tmpdir:
++    config_content = """[tool.pylint.basic]
++bad-names-rgxs = "(unclosed"
++"""
++    config_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(config_file, 'w') as f:
++        f.write(config_content)
++    
++    test_file_content = """def foo():
++    pass
++"""
++    test_file = os.path.join(tmpdir, "test.py")
++    with open(test_file, 'w') as f:
++        f.write(test_file_content)
++    
++    result = subprocess.run(
++        [sys.executable, "-m", "pylint", test_file],
++        cwd=tmpdir,
++        capture_output=True,
++        text=True
++    )
++    
++    if "Error in provided regular expression" in result.stderr:
++        print("   ✓ SUCCESS: Invalid regex correctly rejected")
++    else:
++        print("   ✗ FAILED: Invalid regex should have been rejected")
++        sys.exit(1)
++
++print("\n" + "="*70)
++print("ALL VERIFICATION TESTS PASSED!")
++print("="*70)
++print("\nThe fix correctly handles:")
++print("  - Regexes with commas in quantifiers like {1,3}")
++print("  - Multiple regexes separated by commas")
++print("  - Still rejects actually invalid regexes")
++print("\nNote: The test 'test_csv_regex_error' in tests/config/test_config.py")
++print("      was testing the OLD BUGGY behavior and needs to be updated.")
+diff --git a/fix_regexp_csv.py b/fix_regexp_csv.py
+new file mode 100644
+index 000000000..3b3d4cf20
+--- /dev/null
++++ b/fix_regexp_csv.py
+@@ -0,0 +1,95 @@
++#!/usr/bin/env python3
++"""
++Fix for the regexp_csv transformer to handle commas in regex patterns.
++"""
++
++def _regexp_csv_split(value: str) -> list[str]:
++    """
++    Split a comma-separated string of regexes, being careful not to split
++    on commas that are part of regex syntax (e.g., inside {1,3}).
++    
++    This function tracks nesting levels of:
++    - Curly braces {} (for quantifiers like {1,3})
++    - Square brackets [] (for character classes)
++    - Parentheses () (for groups)
++    
++    And only splits on commas that are at nesting level 0.
++    """
++    if not value:
++        return []
++    
++    result = []
++    current = []
++    brace_depth = 0
++    bracket_depth = 0
++    paren_depth = 0
++    escaped = False
++    
++    for char in value:
++        if escaped:
++            current.append(char)
++            escaped = False
++            continue
++            
++        if char == '\\':
++            current.append(char)
++            escaped = True
++            continue
++        
++        if char == '{':
++            brace_depth += 1
++            current.append(char)
++        elif char == '}':
++            brace_depth = max(0, brace_depth - 1)
++            current.append(char)
++        elif char == '[':
++            bracket_depth += 1
++            current.append(char)
++        elif char == ']':
++            bracket_depth = max(0, bracket_depth - 1)
++            current.append(char)
++        elif char == '(':
++            paren_depth += 1
++            current.append(char)
++        elif char == ')':
++            paren_depth = max(0, paren_depth - 1)
++            current.append(char)
++        elif char == ',' and brace_depth == 0 and bracket_depth == 0 and paren_depth == 0:
++            # This comma is a delimiter
++            pattern = ''.join(current).strip()
++            if pattern:  # Don't add empty strings
++                result.append(pattern)
++            current = []
++        else:
++            current.append(char)
++    
++    # Don't forget the last pattern
++    pattern = ''.join(current).strip()
++    if pattern:
++        result.append(pattern)
++    
++    return result
++
++
++# Test the function
++if __name__ == "__main__":
++    test_cases = [
++        ("(foo{1,3})", ["(foo{1,3})"]),
++        ("test{1,3},another", ["test{1,3}", "another"]),
++        ("a,b,c", ["a", "b", "c"]),
++        ("[a,b],c", ["[a,b]", "c"]),
++        ("(a,b),c", ["(a,b)", "c"]),
++        ("a{1,3},b{2,4},c", ["a{1,3}", "b{2,4}", "c"]),
++        ("", []),
++        ("  a  ,  b  ", ["a", "b"]),
++    ]
++    
++    for input_val, expected in test_cases:
++        result = _regexp_csv_split(input_val)
++        status = "✓" if result == expected else "✗"
++        print(f"{status} Input: {input_val!r}")
++        print(f"  Expected: {expected}")
++        print(f"  Got:      {result}")
++        if result != expected:
++            print("  FAILED!")
++        print()
+diff --git a/patch_argument.py b/patch_argument.py
+new file mode 100644
+index 000000000..f541517df
+--- /dev/null
++++ b/patch_argument.py
+@@ -0,0 +1,106 @@
++#!/usr/bin/env python3
++"""
++Script to patch the argument.py file with the fix.
++"""
++
++# Read the current file
++with open('/testbed/pylint/config/argument.py', 'r') as f:
++    content = f.read()
++
++# Find the location to insert the new function (after _regex_transformer)
++new_function = '''
++
++def _regexp_csv_split(value: str) -> list[str]:
++    """Split a comma-separated string of regexes.
++    
++    This function is aware of regex syntax and doesn't split on commas that are
++    part of the regex pattern itself (e.g., inside {1,3} quantifiers, [a,b]
++    character classes, or (a,b) groups).
++    """
++    if not value:
++        return []
++    
++    result = []
++    current = []
++    brace_depth = 0
++    bracket_depth = 0
++    paren_depth = 0
++    escaped = False
++    
++    for char in value:
++        if escaped:
++            current.append(char)
++            escaped = False
++            continue
++            
++        if char == '\\\\':
++            current.append(char)
++            escaped = True
++            continue
++        
++        if char == '{':
++            brace_depth += 1
++            current.append(char)
++        elif char == '}':
++            brace_depth = max(0, brace_depth - 1)
++            current.append(char)
++        elif char == '[':
++            bracket_depth += 1
++            current.append(char)
++        elif char == ']':
++            bracket_depth = max(0, bracket_depth - 1)
++            current.append(char)
++        elif char == '(':
++            paren_depth += 1
++            current.append(char)
++        elif char == ')':
++            paren_depth = max(0, paren_depth - 1)
++            current.append(char)
++        elif char == ',' and brace_depth == 0 and bracket_depth == 0 and paren_depth == 0:
++            # This comma is a delimiter
++            pattern = ''.join(current).strip()
++            if pattern:  # Don't add empty strings
++                result.append(pattern)
++            current = []
++        else:
++            current.append(char)
++    
++    # Don't forget the last pattern
++    pattern = ''.join(current).strip()
++    if pattern:
++        result.append(pattern)
++    
++    return result
++'''
++
++# Find the _regexp_csv_transfomer function and replace it
++old_function = '''def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
++    """Transforms a comma separated list of regular expressions."""
++    patterns: list[Pattern[str]] = []
++    for pattern in _csv_transformer(value):
++        patterns.append(_regex_transformer(pattern))
++    return patterns'''
++
++new_function_impl = '''def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
++    """Transforms a comma separated list of regular expressions."""
++    patterns: list[Pattern[str]] = []
++    for pattern in _regexp_csv_split(value):
++        patterns.append(_regex_transformer(pattern))
++    return patterns'''
++
++# Replace the function
++content = content.replace(old_function, new_function_impl)
++
++# Insert the helper function before _regexp_csv_transfomer
++insert_pos = content.find('def _regexp_csv_transfomer')
++if insert_pos == -1:
++    print("ERROR: Could not find _regexp_csv_transfomer function")
++    exit(1)
++
++content = content[:insert_pos] + new_function + '\n\n' + content[insert_pos:]
++
++# Write the updated file
++with open('/testbed/pylint/config/argument.py', 'w') as f:
++    f.write(content)
++
++print("Successfully patched argument.py")
+diff --git a/pylint/config/argument.py b/pylint/config/argument.py
+index 30a5fd175..adf032d9f 100644
+--- a/pylint/config/argument.py
++++ b/pylint/config/argument.py
+@@ -111,10 +111,75 @@ def _regex_transformer(value: str) -> Pattern[str]:
+         raise argparse.ArgumentTypeError(msg) from e
+ 
+ 
++
++
++def _regexp_csv_split(value: str) -> list[str]:
++    """Split a comma-separated string of regexes.
++    
++    This function is aware of regex syntax and doesn't split on commas that are
++    part of the regex pattern itself (e.g., inside {1,3} quantifiers, [a,b]
++    character classes, or (a,b) groups).
++    """
++    if not value:
++        return []
++    
++    result = []
++    current = []
++    brace_depth = 0
++    bracket_depth = 0
++    paren_depth = 0
++    escaped = False
++    
++    for char in value:
++        if escaped:
++            current.append(char)
++            escaped = False
++            continue
++            
++        if char == '\\':
++            current.append(char)
++            escaped = True
++            continue
++        
++        if char == '{':
++            brace_depth += 1
++            current.append(char)
++        elif char == '}':
++            brace_depth = max(0, brace_depth - 1)
++            current.append(char)
++        elif char == '[':
++            bracket_depth += 1
++            current.append(char)
++        elif char == ']':
++            bracket_depth = max(0, bracket_depth - 1)
++            current.append(char)
++        elif char == '(':
++            paren_depth += 1
++            current.append(char)
++        elif char == ')':
++            paren_depth = max(0, paren_depth - 1)
++            current.append(char)
++        elif char == ',' and brace_depth == 0 and bracket_depth == 0 and paren_depth == 0:
++            # This comma is a delimiter
++            pattern = ''.join(current).strip()
++            if pattern:  # Don't add empty strings
++                result.append(pattern)
++            current = []
++        else:
++            current.append(char)
++    
++    # Don't forget the last pattern
++    pattern = ''.join(current).strip()
++    if pattern:
++        result.append(pattern)
++    
++    return result
++
++
+ def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+     """Transforms a comma separated list of regular expressions."""
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in _regexp_csv_split(value):
+         patterns.append(_regex_transformer(pattern))
+     return patterns
+ 
+@@ -122,7 +187,7 @@ def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+ def _regexp_paths_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+     """Transforms a comma separated list of regular expressions paths."""
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in _regexp_csv_split(value):
+         patterns.append(
+             re.compile(
+                 str(pathlib.PureWindowsPath(pattern)).replace("\\", "\\\\")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..a3895259e
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,86 @@
++#!/usr/bin/env python3
++"""Test edge cases for the regexp_csv fix."""
++
++from pylint.config.argument import _regexp_csv_transfomer, _regexp_csv_split
++import re
++
++def test_split():
++    """Test the _regexp_csv_split function."""
++    test_cases = [
++        # (input, expected_output)
++        ("(foo{1,3})", ["(foo{1,3})"]),
++        ("test{1,3},another", ["test{1,3}", "another"]),
++        ("a,b,c", ["a", "b", "c"]),
++        ("[a,b],c", ["[a,b]", "c"]),
++        ("(a,b),c", ["(a,b)", "c"]),
++        ("a{1,3},b{2,4},c", ["a{1,3}", "b{2,4}", "c"]),
++        ("", []),
++        ("  a  ,  b  ", ["a", "b"]),
++        # Nested structures
++        ("({1,3})", ["({1,3})"]),
++        ("[{1,3}]", ["[{1,3}]"]),
++        # Multiple nesting
++        ("(a{1,3}),b", ["(a{1,3})", "b"]),
++        ("[a{1,3}],b", ["[a{1,3}]", "b"]),
++        # Escaped characters
++        (r"a\,b,c", [r"a\,b", "c"]),
++    ]
++    
++    print("Testing _regexp_csv_split:")
++    all_passed = True
++    for input_val, expected in test_cases:
++        result = _regexp_csv_split(input_val)
++        passed = result == expected
++        all_passed = all_passed and passed
++        status = "✓" if passed else "✗"
++        print(f"{status} Input: {input_val!r}")
++        if not passed:
++            print(f"  Expected: {expected}")
++            print(f"  Got:      {result}")
++    
++    return all_passed
++
++def test_transformer():
++    """Test the _regexp_csv_transfomer function."""
++    test_cases = [
++        # (input, should_succeed)
++        ("(foo{1,3})", True),
++        ("test{1,3},another", True),
++        ("a,b,c", True),
++        ("[a,b],c", True),
++        ("(a,b),c", True),
++        ("a{1,3},b{2,4},c", True),
++        # Invalid regexes should still fail
++        ("(unclosed", False),
++        ("[unclosed", False),
++    ]
++    
++    print("\nTesting _regexp_csv_transfomer:")
++    all_passed = True
++    for input_val, should_succeed in test_cases:
++        try:
++            result = _regexp_csv_transfomer(input_val)
++            if should_succeed:
++                print(f"✓ Input: {input_val!r} - Successfully compiled {len(result)} pattern(s)")
++            else:
++                print(f"✗ Input: {input_val!r} - Should have failed but succeeded")
++                all_passed = False
++        except Exception as e:
++            if not should_succeed:
++                print(f"✓ Input: {input_val!r} - Failed as expected: {type(e).__name__}")
++            else:
++                print(f"✗ Input: {input_val!r} - Should have succeeded but failed: {e}")
++                all_passed = False
++    
++    return all_passed
++
++if __name__ == "__main__":
++    split_passed = test_split()
++    transformer_passed = test_transformer()
++    
++    print("\n" + "="*60)
++    if split_passed and transformer_passed:
++        print("✓ All tests passed!")
++    else:
++        print("✗ Some tests failed!")
++        exit(1)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..03aef2386
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,33 @@
++#!/usr/bin/env python3
++"""Test script to reproduce the bad-names-rgxs issue."""
++
++import tempfile
++import os
++import sys
++
++# Create a temporary config file with the problematic regex
++config_content = """
++[tool.pylint.basic]
++bad-name-rgxs = "(foo{1,3})"
++"""
++
++# Create a simple Python file to lint
++test_file_content = """
++def foo():
++    pass
++"""
++
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Write config file
++    config_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(config_file, 'w') as f:
++        f.write(config_content)
++    
++    # Write test file
++    test_file = os.path.join(tmpdir, "test.py")
++    with open(test_file, 'w') as f:
++        f.write(test_file_content)
++    
++    # Try to run pylint
++    os.chdir(tmpdir)
++    os.system(f"pylint {test_file}")
+diff --git a/test_pylint_config.py b/test_pylint_config.py
+new file mode 100644
+index 000000000..f9fb2133e
+--- /dev/null
++++ b/test_pylint_config.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python3
++"""Test that pylint can handle bad-names-rgxs with commas in regexes."""
++
++import tempfile
++import os
++import subprocess
++import sys
++
++# Create a temporary directory for our test
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Create a pyproject.toml with the problematic regex
++    config_content = """[tool.pylint.basic]
++bad-names-rgxs = "(foo{1,3})"
++"""
++    config_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(config_file, 'w') as f:
++        f.write(config_content)
++    
++    # Create a simple Python file to lint
++    test_file_content = """def foo():
++    pass
++
++def foooo():
++    pass
++
++def bar():
++    pass
++"""
++    test_file = os.path.join(tmpdir, "test.py")
++    with open(test_file, 'w') as f:
++        f.write(test_file_content)
++    
++    # Run pylint
++    result = subprocess.run(
++        [sys.executable, "-m", "pylint", test_file],
++        cwd=tmpdir,
++        capture_output=True,
++        text=True
++    )
++    
++    print("Return code:", result.returncode)
++    print("\nSTDOUT:")
++    print(result.stdout)
++    print("\nSTDERR:")
++    print(result.stderr)
++    
++    # Check if it ran without crashing
++    if "re.error" in result.stderr or "unterminated subpattern" in result.stderr:
++        print("\n❌ FAILED: Pylint crashed with regex error")
++        sys.exit(1)
++    else:
++        print("\n✓ SUCCESS: Pylint ran without crashing")
++        
++        # Check if it detected the bad names
++        if "disallowed-name" in result.stdout:
++            print("✓ SUCCESS: Bad names were detected")
++        else:
++            print("⚠ WARNING: Bad names were not detected (might be expected)")
+diff --git a/test_regex_issue.py b/test_regex_issue.py
+new file mode 100644
+index 000000000..a71501a00
+--- /dev/null
++++ b/test_regex_issue.py
+@@ -0,0 +1,20 @@
++#!/usr/bin/env python3
++"""Simple test to reproduce the regex issue."""
++
++from pylint.config.argument import _regexp_csv_transfomer
++
++# This should work but will fail because the comma in {1,3} causes a split
++try:
++    result = _regexp_csv_transfomer("(foo{1,3})")
++    print("Success! Result:", result)
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
++
++# This should also fail
++try:
++    result = _regexp_csv_transfomer("test{1,3},another")
++    print("Success! Result:", result)
++except Exception as e:
++    print(f"Error: {e}")

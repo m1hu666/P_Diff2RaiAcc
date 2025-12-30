@@ -1,0 +1,87 @@
+diff --git a/_src/conf.py b/_src/conf.py
+new file mode 100644
+index 000000000..a471bab6f
+--- /dev/null
++++ b/_src/conf.py
+@@ -0,0 +1,2 @@
++extensions=['sphinx.ext.autodoc']
++autodoc_docstring_signature=True
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index f8e4be999..209512def 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -1044,6 +1044,9 @@ class DocstringSignatureMixin:
+                           RemovedInSphinx40Warning, stacklevel=2)
+         docstrings = self.get_doc()
+         self._new_docstrings = docstrings[:]
++        # list of parsed signatures found at the beginning of the docstring
++        # Each entry is a tuple of (args, retann)
++        self._signatures = None
+         result = None
+         for i, doclines in enumerate(docstrings):
+             # no lines in docstring, no match
+@@ -1062,13 +1065,27 @@ class DocstringSignatureMixin:
+                     valid_names.extend(cls.__name__ for cls in self.object.__mro__)
+             if base not in valid_names:
+                 continue
+-            # re-prepare docstring to ignore more leading indentation
+-            tab_width = self.directive.state.document.settings.tab_width  # type: ignore
+-            self._new_docstrings[i] = prepare_docstring('\n'.join(doclines[1:]),
+-                                                        tabsize=tab_width)
+-            result = args, retann
+-            # don't look any further
+-            break
++            # Collect consecutive signature lines (for overloaded methods)
++            signatures = []
++            for j, line in enumerate(doclines):
++                m = py_ext_sig_re.match(line)
++                if not m:
++                    break
++                exmod2, path2, base2, args2, retann2 = m.groups()
++                # Ensure each line describes the same callable name
++                if base2 not in valid_names:
++                    break
++                signatures.append((args2, retann2))
++            if signatures:
++                # re-prepare docstring to ignore more leading indentation,
++                # and strip all matched signature lines from the beginning
++                tab_width = self.directive.state.document.settings.tab_width  # type: ignore
++                self._new_docstrings[i] = prepare_docstring('\n'.join(doclines[len(signatures):]),
++                                                            tabsize=tab_width)
++                self._signatures = signatures
++                result = signatures[0]
++                # don't look any further
++                break
+         return result
+ 
+     def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:
+@@ -1082,13 +1099,28 @@ class DocstringSignatureMixin:
+         return super().get_doc(None, ignore)  # type: ignore
+ 
+     def format_signature(self, **kwargs: Any) -> str:
++        extra_sigs = []
+         if self.args is None and self.env.config.autodoc_docstring_signature:  # type: ignore
+             # only act if a signature is not explicitly given already, and if
+             # the feature is enabled
+             result = self._find_signature()
+             if result is not None:
+                 self.args, self.retann = result
+-        return super().format_signature(**kwargs)  # type: ignore
++                # If multiple signatures were found at the beginning of the docstring,
++                # append the rest as additional signature lines.
++                if getattr(self, '_signatures', None):
++                    for (args, retann) in self._signatures[1:]:
++                        if args is not None:
++                            extra_sigs.append('(%s)%s' % (args, (' -> %s' % retann) if retann else ''))
++                        else:
++                            # If no args captured, keep empty parentheses
++                            extra_sigs.append('()%s' % ((' -> %s' % retann) if retann else ''))
++        primary = super().format_signature(**kwargs)  # type: ignore
++        if extra_sigs:
++            # One signature per line, the first is the primary.
++            return '\n'.join([primary] + extra_sigs)
++        else:
++            return primary
+ 
+ 
+ class DocstringStripSignatureMixin(DocstringSignatureMixin):

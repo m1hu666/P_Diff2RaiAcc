@@ -1,0 +1,638 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..7a874f0bcc
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,114 @@
++#!/usr/bin/env python
++"""Final comprehensive test of the ConditionSet fix"""
++
++from sympy import *
++from sympy.sets.conditionset import ConditionSet
++
++def test_case(description, expr, expected_type, should_pass=True):
++    """Test a single case"""
++    print(f"\nTesting: {description}")
++    print(f"  Expression: {expr}")
++    try:
++        result = expr.as_set()
++        print(f"  Result: {result}")
++        print(f"  Type: {type(result).__name__}")
++        
++        if expected_type == ConditionSet:
++            assert isinstance(result, ConditionSet), f"Expected ConditionSet, got {type(result)}"
++        elif expected_type == FiniteSet:
++            assert isinstance(result, FiniteSet), f"Expected FiniteSet, got {type(result)}"
++        else:
++            # For other types, just check it's not raising an error
++            pass
++        
++        print("  ‚úì PASS")
++        return True
++    except Exception as e:
++        if should_pass:
++            print(f"  ‚úó FAIL: {e}")
++            return False
++        else:
++            print(f"  ‚úì PASS (expected to fail): {e}")
++            return True
++
++print("="*70)
++print("FINAL COMPREHENSIVE TEST OF CONDITIONSET FIX")
++print("="*70)
++
++n = Symbol('n')
++x = Symbol('x')
++y = Symbol('y')
++
++tests_passed = 0
++tests_total = 0
++
++# Test 1: Original issue from PR
++tests_total += 1
++if test_case(
++    "Original PR issue",
++    Eq(n*cos(n) - 3*sin(n), 0),
++    ConditionSet
++):
++    tests_passed += 1
++
++# Test 2: Another unsolvable equation
++tests_total += 1
++if test_case(
++    "Unsolvable equation with exp",
++    Eq(x*exp(x) - sin(x), 0),
++    ConditionSet
++):
++    tests_passed += 1
++
++# Test 3: Solvable equation (should still work)
++tests_total += 1
++if test_case(
++    "Solvable quadratic equation",
++    Eq(x**2 - 4, 0),
++    FiniteSet
++):
++    tests_passed += 1
++
++# Test 4: Unsolvable inequality
++tests_total += 1
++if test_case(
++    "Unsolvable inequality",
++    x*cos(x) > 0,
++    ConditionSet
++):
++    tests_passed += 1
++
++# Test 5: Solvable inequality
++tests_total += 1
++if test_case(
++    "Solvable inequality",
++    x**2 >= 4,
++    None  # Union of intervals
++):
++    tests_passed += 1
++
++# Test 6: Complex unsolvable equation
++tests_total += 1
++if test_case(
++    "Complex transcendental equation",
++    Eq(x*log(x) - tan(x), 0),
++    ConditionSet
++):
++    tests_passed += 1
++
++# Test 7: Simple equality
++tests_total += 1
++if test_case(
++    "Simple linear equation",
++    Eq(2*x - 4, 0),
++    FiniteSet
++):
++    tests_passed += 1
++
++print("\n" + "="*70)
++print(f"RESULTS: {tests_passed}/{tests_total} tests passed")
++if tests_passed == tests_total:
++    print("‚úì ALL TESTS PASSED!")
++else:
++    print(f"‚úó {tests_total - tests_passed} test(s) failed")
++print("="*70)
+diff --git a/sympy/solvers/inequalities.py b/sympy/solvers/inequalities.py
+index 9127d217f1..26776b9b4d 100644
+--- a/sympy/solvers/inequalities.py
++++ b/sympy/solvers/inequalities.py
+@@ -8,6 +8,7 @@
+ from sympy.core.relational import Relational, Eq, Ge, Lt
+ from sympy.sets import Interval
+ from sympy.sets.sets import FiniteSet, Union, EmptySet, Intersection
++from sympy.sets.conditionset import ConditionSet
+ from sympy.core.singleton import S
+ from sympy.core.function import expand_mul
+ 
+@@ -526,154 +527,151 @@ def solve_univariate_inequality(expr, gen, relational=True, domain=S.Reals, cont
+                     # in which case we raise ValueError
+                     raise ValueError
+             except (ValueError, NotImplementedError):
+-                # replace gen with generic x since it's
+-                # univariate anyway
+-                raise NotImplementedError(filldedent('''
+-                    The inequality, %s, cannot be solved using
+-                    solve_univariate_inequality.
+-                    ''' % expr.subs(gen, Symbol('x'))))
+-
+-            expanded_e = expand_mul(e)
+-            def valid(x):
+-                # this is used to see if gen=x satisfies the
+-                # relational by substituting it into the
+-                # expanded form and testing against 0, e.g.
+-                # if expr = x*(x + 1) < 2 then e = x*(x + 1) - 2
+-                # and expanded_e = x**2 + x - 2; the test is
+-                # whether a given value of x satisfies
+-                # x**2 + x - 2 < 0
+-                #
+-                # expanded_e, expr and gen used from enclosing scope
+-                v = expanded_e.subs(gen, expand_mul(x))
+-                try:
+-                    r = expr.func(v, 0)
+-                except TypeError:
+-                    r = S.false
+-                if r in (S.true, S.false):
+-                    return r
+-                if v.is_extended_real is False:
+-                    return S.false
+-                else:
+-                    v = v.n(2)
+-                    if v.is_comparable:
+-                        return expr.func(v, 0)
+-                    # not comparable or couldn't be evaluated
+-                    raise NotImplementedError(
+-                        'relationship did not evaluate: %s' % r)
+-
+-            singularities = []
+-            for d in denoms(expr, gen):
+-                singularities.extend(solvify(d, gen, domain))
+-            if not continuous:
+-                domain = continuous_domain(expanded_e, gen, domain)
+-
+-            include_x = '=' in expr.rel_op and expr.rel_op != '!='
+-
+-            try:
+-                discontinuities = set(domain.boundary -
+-                    FiniteSet(domain.inf, domain.sup))
+-                # remove points that are not between inf and sup of domain
+-                critical_points = FiniteSet(*(solns + singularities + list(
+-                    discontinuities))).intersection(
+-                    Interval(domain.inf, domain.sup,
+-                    domain.inf not in domain, domain.sup not in domain))
+-                if all(r.is_number for r in critical_points):
+-                    reals = _nsort(critical_points, separated=True)[0]
+-                else:
+-                    sifted = sift(critical_points, lambda x: x.is_extended_real)
+-                    if sifted[None]:
+-                        # there were some roots that weren't known
+-                        # to be real
+-                        raise NotImplementedError
++                # Instead of raising NotImplementedError, return a ConditionSet
++                rv = ConditionSet(_gen, expr.subs(gen, _gen), _domain)
++
++            if rv is None:
++                expanded_e = expand_mul(e)
++                def valid(x):
++                    # this is used to see if gen=x satisfies the
++                    # relational by substituting it into the
++                    # expanded form and testing against 0, e.g.
++                    # if expr = x*(x + 1) < 2 then e = x*(x + 1) - 2
++                    # and expanded_e = x**2 + x - 2; the test is
++                    # whether a given value of x satisfies
++                    # x**2 + x - 2 < 0
++                    #
++                    # expanded_e, expr and gen used from enclosing scope
++                    v = expanded_e.subs(gen, expand_mul(x))
+                     try:
+-                        reals = sifted[True]
+-                        if len(reals) > 1:
+-                            reals = list(sorted(reals))
++                        r = expr.func(v, 0)
+                     except TypeError:
+-                        raise NotImplementedError
+-            except NotImplementedError:
+-                raise NotImplementedError('sorting of these roots is not supported')
+-
+-            # If expr contains imaginary coefficients, only take real
+-            # values of x for which the imaginary part is 0
+-            make_real = S.Reals
+-            if im(expanded_e) != S.Zero:
+-                check = True
+-                im_sol = FiniteSet()
+-                try:
+-                    a = solveset(im(expanded_e), gen, domain)
+-                    if not isinstance(a, Interval):
+-                        for z in a:
+-                            if z not in singularities and valid(z) and z.is_extended_real:
+-                                im_sol += FiniteSet(z)
++                        r = S.false
++                    if r in (S.true, S.false):
++                        return r
++                    if v.is_extended_real is False:
++                        return S.false
+                     else:
+-                        start, end = a.inf, a.sup
+-                        for z in _nsort(critical_points + FiniteSet(end)):
+-                            valid_start = valid(start)
+-                            if start != end:
+-                                valid_z = valid(z)
+-                                pt = _pt(start, z)
+-                                if pt not in singularities and pt.is_extended_real and valid(pt):
+-                                    if valid_start and valid_z:
+-                                        im_sol += Interval(start, z)
+-                                    elif valid_start:
+-                                        im_sol += Interval.Ropen(start, z)
+-                                    elif valid_z:
+-                                        im_sol += Interval.Lopen(start, z)
+-                                    else:
+-                                        im_sol += Interval.open(start, z)
+-                            start = z
+-                        for s in singularities:
+-                            im_sol -= FiniteSet(s)
+-                except (TypeError):
+-                    im_sol = S.Reals
+-                    check = False
+-
+-                if isinstance(im_sol, EmptySet):
+-                    raise ValueError(filldedent('''
+-                        %s contains imaginary parts which cannot be
+-                        made 0 for any value of %s satisfying the
+-                        inequality, leading to relations like I < 0.
+-                        '''  % (expr.subs(gen, _gen), _gen)))
+-
+-                make_real = make_real.intersect(im_sol)
+-
+-            sol_sets = [S.EmptySet]
+-
+-            start = domain.inf
+-            if valid(start) and start.is_finite:
+-                sol_sets.append(FiniteSet(start))
+-
+-            for x in reals:
+-                end = x
++                        v = v.n(2)
++                        if v.is_comparable:
++                            return expr.func(v, 0)
++                        # not comparable or couldn't be evaluated
++                        raise NotImplementedError(
++                            'relationship did not evaluate: %s' % r)
+ 
+-                if valid(_pt(start, end)):
+-                    sol_sets.append(Interval(start, end, True, True))
++                singularities = []
++                for d in denoms(expr, gen):
++                    singularities.extend(solvify(d, gen, domain))
++                if not continuous:
++                    domain = continuous_domain(expanded_e, gen, domain)
+ 
+-                if x in singularities:
+-                    singularities.remove(x)
+-                else:
+-                    if x in discontinuities:
+-                        discontinuities.remove(x)
+-                        _valid = valid(x)
+-                    else:  # it's a solution
+-                        _valid = include_x
+-                    if _valid:
+-                        sol_sets.append(FiniteSet(x))
++                include_x = '=' in expr.rel_op and expr.rel_op != '!='
+ 
+-                start = end
++                try:
++                    discontinuities = set(domain.boundary -
++                        FiniteSet(domain.inf, domain.sup))
++                    # remove points that are not between inf and sup of domain
++                    critical_points = FiniteSet(*(solns + singularities + list(
++                        discontinuities))).intersection(
++                        Interval(domain.inf, domain.sup,
++                        domain.inf not in domain, domain.sup not in domain))
++                    if all(r.is_number for r in critical_points):
++                        reals = _nsort(critical_points, separated=True)[0]
++                    else:
++                        sifted = sift(critical_points, lambda x: x.is_extended_real)
++                        if sifted[None]:
++                            # there were some roots that weren't known
++                            # to be real
++                            raise NotImplementedError
++                        try:
++                            reals = sifted[True]
++                            if len(reals) > 1:
++                                reals = list(sorted(reals))
++                        except TypeError:
++                            raise NotImplementedError
++                except NotImplementedError:
++                    raise NotImplementedError('sorting of these roots is not supported')
++
++                # If expr contains imaginary coefficients, only take real
++                # values of x for which the imaginary part is 0
++                make_real = S.Reals
++                if im(expanded_e) != S.Zero:
++                    check = True
++                    im_sol = FiniteSet()
++                    try:
++                        a = solveset(im(expanded_e), gen, domain)
++                        if not isinstance(a, Interval):
++                            for z in a:
++                                if z not in singularities and valid(z) and z.is_extended_real:
++                                    im_sol += FiniteSet(z)
++                        else:
++                            start, end = a.inf, a.sup
++                            for z in _nsort(critical_points + FiniteSet(end)):
++                                valid_start = valid(start)
++                                if start != end:
++                                    valid_z = valid(z)
++                                    pt = _pt(start, z)
++                                    if pt not in singularities and pt.is_extended_real and valid(pt):
++                                        if valid_start and valid_z:
++                                            im_sol += Interval(start, z)
++                                        elif valid_start:
++                                            im_sol += Interval.Ropen(start, z)
++                                        elif valid_z:
++                                            im_sol += Interval.Lopen(start, z)
++                                        else:
++                                            im_sol += Interval.open(start, z)
++                                start = z
++                            for s in singularities:
++                                im_sol -= FiniteSet(s)
++                    except (TypeError):
++                        im_sol = S.Reals
++                        check = False
++
++                    if isinstance(im_sol, EmptySet):
++                        raise ValueError(filldedent('''
++                            %s contains imaginary parts which cannot be
++                            made 0 for any value of %s satisfying the
++                            inequality, leading to relations like I < 0.
++                            '''  % (expr.subs(gen, _gen), _gen)))
++
++                    make_real = make_real.intersect(im_sol)
++
++                sol_sets = [S.EmptySet]
++
++                start = domain.inf
++                if valid(start) and start.is_finite:
++                    sol_sets.append(FiniteSet(start))
++
++                for x in reals:
++                    end = x
++
++                    if valid(_pt(start, end)):
++                        sol_sets.append(Interval(start, end, True, True))
++
++                    if x in singularities:
++                        singularities.remove(x)
++                    else:
++                        if x in discontinuities:
++                            discontinuities.remove(x)
++                            _valid = valid(x)
++                        else:  # it's a solution
++                            _valid = include_x
++                        if _valid:
++                            sol_sets.append(FiniteSet(x))
+ 
+-            end = domain.sup
+-            if valid(end) and end.is_finite:
+-                sol_sets.append(FiniteSet(end))
++                    start = end
+ 
+-            if valid(_pt(start, end)):
+-                sol_sets.append(Interval.open(start, end))
++                end = domain.sup
++                if valid(end) and end.is_finite:
++                    sol_sets.append(FiniteSet(end))
+ 
+-            if im(expanded_e) != S.Zero and check:
+-                rv = (make_real).intersect(_domain)
+-            else:
+-                rv = Intersection(
++                if valid(_pt(start, end)):
++                    sol_sets.append(Interval.open(start, end))
++
++                if im(expanded_e) != S.Zero and check:
++                    rv = (make_real).intersect(_domain)
++                else:
++                    rv = Intersection(
+                     (Union(*sol_sets)), make_real, _domain).subs(gen, _gen)
+ 
+     return rv if not relational else rv.as_relational(_gen)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..3e8c3e9815
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,58 @@
++from sympy import *
++from sympy.sets.conditionset import ConditionSet
++
++print("Testing comprehensive cases for the ConditionSet fix...")
++
++# Test 1: Original issue from PR
++print("\n1. Original issue - Eq(n*cos(n) - 3*sin(n), 0).as_set()")
++n = Symbol('n')
++result = Eq(n*cos(n) - 3*sin(n), 0).as_set()
++assert isinstance(result, ConditionSet), f"Expected ConditionSet, got {type(result)}"
++assert result.sym == n
++assert result.condition == Eq(n*cos(n) - 3*sin(n), 0)
++assert result.base_set == S.Reals
++print("   PASS")
++
++# Test 2: Inequality that can't be solved
++print("\n2. Unsolvable inequality - (x*cos(x) > 0).as_set()")
++x = Symbol('x')
++result = (x*cos(x) > 0).as_set()
++assert isinstance(result, ConditionSet), f"Expected ConditionSet, got {type(result)}"
++print("   PASS")
++
++# Test 3: Solvable equation should still work
++print("\n3. Solvable equation - Eq(x**2 - 4, 0).as_set()")
++result = Eq(x**2 - 4, 0).as_set()
++assert isinstance(result, FiniteSet), f"Expected FiniteSet, got {type(result)}"
++assert result == FiniteSet(-2, 2)
++print("   PASS")
++
++# Test 4: Simple inequality that can be solved
++print("\n4. Solvable inequality - (x**2 >= 4).as_set()")
++result = (x**2 >= 4).as_set()
++assert not isinstance(result, ConditionSet), f"Should not be ConditionSet for solvable inequality"
++print("   PASS")
++
++# Test 5: Another complex unsolvable equation
++print("\n5. Complex unsolvable - Eq(x*exp(x) - sin(x), 0).as_set()")
++result = Eq(x*exp(x) - sin(x), 0).as_set()
++assert isinstance(result, ConditionSet), f"Expected ConditionSet, got {type(result)}"
++print("   PASS")
++
++# Test 6: Verify the relational parameter works
++print("\n6. Testing relational=False parameter")
++from sympy.solvers.inequalities import solve_univariate_inequality
++result = solve_univariate_inequality(Eq(n*cos(n) - 3*sin(n), 0), n, relational=False)
++assert isinstance(result, ConditionSet), f"Expected ConditionSet, got {type(result)}"
++print("   PASS")
++
++# Test 7: Verify the relational parameter works with relational=True
++print("\n7. Testing relational=True parameter")
++result = solve_univariate_inequality(Eq(n*cos(n) - 3*sin(n), 0), n, relational=True)
++# When relational=True, it should call as_relational on the ConditionSet
++print(f"   Result: {result}")
++print("   PASS")
++
++print("\n" + "="*50)
++print("All tests passed successfully!")
++print("="*50)
+diff --git a/test_dummy_case.py b/test_dummy_case.py
+new file mode 100644
+index 0000000000..ed824a6ff2
+--- /dev/null
++++ b/test_dummy_case.py
+@@ -0,0 +1,21 @@
++from sympy import *
++from sympy.sets.conditionset import ConditionSet
++
++print("Testing case where gen is replaced with Dummy...")
++
++# Create a symbol without extended_real assumption
++n = Symbol('n')  # No assumption about being real
++print(f"n.is_extended_real: {n.is_extended_real}")
++
++# This should trigger the code path where gen is replaced with a Dummy
++result = Eq(n*cos(n) - 3*sin(n), 0).as_set()
++print(f"Result: {result}")
++print(f"Type: {type(result)}")
++
++# Verify it's a ConditionSet
++assert isinstance(result, ConditionSet), f"Expected ConditionSet, got {type(result)}"
++
++# Verify the symbol in the result is the original n, not a Dummy
++assert result.sym == n, f"Expected symbol to be {n}, got {result.sym}"
++
++print("PASS: Dummy replacement case works correctly!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..bf1998f120
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,40 @@
++from sympy import *
++
++# Test the original issue from the PR description
++n = Symbol('n')
++result = Eq(n*cos(n) - 3*sin(n), 0).as_set()
++print("Result:", result)
++print("Type:", type(result))
++
++# Check if it's a ConditionSet
++from sympy.sets.conditionset import ConditionSet
++if isinstance(result, ConditionSet):
++    print("SUCCESS: Returned a ConditionSet as expected!")
++    print("Symbol:", result.sym)
++    print("Condition:", result.condition)
++    print("Base set:", result.base_set)
++else:
++    print("FAILED: Did not return a ConditionSet")
++
++# Test with a few more cases
++print("\n--- Testing other cases ---")
++
++# Test case 2: Another unsolvable equation
++x = Symbol('x')
++result2 = Eq(x*exp(x) - sin(x), 0).as_set()
++print("\nTest 2 - Eq(x*exp(x) - sin(x), 0).as_set():")
++print("Result:", result2)
++print("Is ConditionSet:", isinstance(result2, ConditionSet))
++
++# Test case 3: A solvable equation (should still work)
++result3 = Eq(x**2 - 4, 0).as_set()
++print("\nTest 3 - Eq(x**2 - 4, 0).as_set():")
++print("Result:", result3)
++print("Type:", type(result3))
++
++# Test case 4: An inequality that can't be solved
++result4 = (x*cos(x) > 0).as_set()
++print("\nTest 4 - (x*cos(x) > 0).as_set():")
++print("Result:", result4)
++print("Is ConditionSet:", isinstance(result4, ConditionSet))
++
+diff --git a/verify_pr_fix.py b/verify_pr_fix.py
+new file mode 100644
+index 0000000000..0a75cf3d67
+--- /dev/null
++++ b/verify_pr_fix.py
+@@ -0,0 +1,72 @@
++#!/usr/bin/env python
++"""
++Verification that the PR issue is fixed.
++
++PR Description:
++`solveset` raises `NotImplementedError` instead of returning `ConditionSet`
++
++The problem was:
++    Eq(n*cos(n) - 3*sin(n), 0).as_set()
++    raised NotImplementedError
++
++Expected result:
++    ConditionSet(n, Eq(n*cos(n) - 3*sin(n), 0), Reals)
++"""
++
++from sympy import *
++from sympy.sets.conditionset import ConditionSet
++
++print("="*70)
++print("VERIFICATION OF PR FIX")
++print("="*70)
++
++# Test the exact example from the PR description
++n = Symbol('n')
++print("\nTest: Eq(n*cos(n) - 3*sin(n), 0).as_set()")
++print("-" * 70)
++
++try:
++    result = Eq(n*cos(n) - 3*sin(n), 0).as_set()
++    print(f"‚úì No exception raised")
++    print(f"  Result: {result}")
++    
++    # Verify it's a ConditionSet
++    if isinstance(result, ConditionSet):
++        print(f"‚úì Result is a ConditionSet")
++        
++        # Verify the components
++        if result.sym == n:
++            print(f"‚úì Symbol is correct: {result.sym}")
++        else:
++            print(f"‚úó Symbol is incorrect: expected {n}, got {result.sym}")
++            
++        if result.condition == Eq(n*cos(n) - 3*sin(n), 0):
++            print(f"‚úì Condition is correct: {result.condition}")
++        else:
++            print(f"‚úó Condition is incorrect")
++            
++        if result.base_set == S.Reals:
++            print(f"‚úì Base set is correct: {result.base_set}")
++        else:
++            print(f"‚úó Base set is incorrect: expected Reals, got {result.base_set}")
++            
++        # Check the string representation matches expected
++        expected_str = "ConditionSet(n, Eq(n*cos(n) - 3*sin(n), 0), Reals)"
++        if str(result) == expected_str:
++            print(f"‚úì String representation matches expected")
++        else:
++            print(f"  Note: String representation differs slightly")
++            print(f"    Expected: {expected_str}")
++            print(f"    Got:      {str(result)}")
++    else:
++        print(f"‚úó Result is not a ConditionSet: {type(result)}")
++        
++except NotImplementedError as e:
++    print(f"‚úó NotImplementedError was raised (this is the bug we're fixing)")
++    print(f"  Error: {e}")
++except Exception as e:
++    print(f"‚úó Unexpected exception: {type(e).__name__}: {e}")
++
++print("\n" + "="*70)
++print("PR FIX VERIFICATION COMPLETE")
++print("="*70)

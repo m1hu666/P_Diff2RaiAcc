@@ -1,0 +1,206 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 000000000..7bc6babcd
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,133 @@
++"""Final comprehensive test to demonstrate the fix works correctly."""
++
++if __name__ == "__main__":
++    from sphinx.ext.napoleon.docstring import NumpyDocstring, GoogleDocstring
++    
++    # Create config objects
++    class ConfigWithParam:
++        napoleon_use_param = True
++        napoleon_use_rtype = True
++        napoleon_use_ivar = False
++        napoleon_use_keyword = True
++        napoleon_custom_sections = None
++        napoleon_type_aliases = {}
++    
++    class ConfigWithoutParam:
++        napoleon_use_param = False
++        napoleon_use_rtype = False
++        napoleon_use_ivar = False
++        napoleon_use_keyword = False
++        napoleon_custom_sections = None
++        napoleon_type_aliases = {}
++    
++    config_with_param = ConfigWithParam()
++    config_without_param = ConfigWithoutParam()
++    
++    print("=" * 70)
++    print("NUMPY DOCSTRING TESTS")
++    print("=" * 70)
++    
++    # Test 1: Multiple parameters without optional (napoleon_use_param=True)
++    print("\n1. Multiple parameters without optional (napoleon_use_param=True)")
++    print("-" * 70)
++    docstring1 = """
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays, description of `x1`, `x2`.
++x3 : int, optional
++    Another parameter.
++"""
++    result1 = str(NumpyDocstring(docstring1, config_with_param))
++    print(result1)
++    assert ":param x1:" in result1
++    assert ":param x2:" in result1
++    assert ":param x3:" in result1
++    assert ":type x1: :class:`array_like`" in result1
++    assert ":type x2: :class:`array_like`" in result1
++    print("‚ú? PASS: x1 and x2 are split into separate parameters")
++    
++    # Test 2: Multiple parameters with optional (napoleon_use_param=True)
++    print("\n2. Multiple parameters with optional (napoleon_use_param=True)")
++    print("-" * 70)
++    docstring2 = """
++Parameters
++----------
++a1, a2 : array_like, optional
++    Input arrays.
++"""
++    result2 = str(NumpyDocstring(docstring2, config_with_param))
++    print(result2)
++    assert ":param a1:" in result2
++    assert ":param a2:" in result2
++    assert "*optional*" in result2
++    print("‚ú? PASS: a1 and a2 are split with optional flag preserved")
++    
++    # Test 3: Multiple parameters (napoleon_use_param=False)
++    print("\n3. Multiple parameters (napoleon_use_param=False)")
++    print("-" * 70)
++    docstring3 = """
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays.
++"""
++    result3 = str(NumpyDocstring(docstring3, config_without_param))
++    print(result3)
++    assert "**x1**" in result3
++    assert "**x2**" in result3
++    print("‚ú? PASS: x1 and x2 are split in field list format")
++    
++    # Test 4: Special case - *args, **kwargs should NOT be split
++    print("\n4. Special case: *args, **kwargs (should NOT be split)")
++    print("-" * 70)
++    docstring4 = """
++Parameters
++----------
++*args, **kwargs
++    Variable arguments.
++"""
++    result4 = str(NumpyDocstring(docstring4, config_without_param))
++    print(result4)
++    assert "\\*args, \\*\\*kwargs" in result4
++    assert "\\*args**" not in result4 or "\\*\\*kwargs**" in result4  # They should be together
++    print("‚ú? PASS: *args, **kwargs kept together")
++    
++    # Test 5: Three parameters on one line
++    print("\n5. Three parameters on one line")
++    print("-" * 70)
++    docstring5 = """
++Parameters
++----------
++x, y, z : float
++    Coordinates.
++"""
++    result5 = str(NumpyDocstring(docstring5, config_with_param))
++    print(result5)
++    assert ":param x:" in result5
++    assert ":param y:" in result5
++    assert ":param z:" in result5
++    print("‚ú? PASS: x, y, and z are all split correctly")
++    
++    print("\n" + "=" * 70)
++    print("GOOGLE DOCSTRING TESTS")
++    print("=" * 70)
++    
++    # Test 6: Google-style with multiple parameters
++    print("\n6. Google-style with multiple parameters")
++    print("-" * 70)
++    docstring6 = """
++Args:
++    x1, x2 (array_like): Input arrays.
++    x3 (int, optional): Another parameter.
++"""
++    result6 = str(GoogleDocstring(docstring6, config_with_param))
++    print(result6)
++    assert ":param x1:" in result6
++    assert ":param x2:" in result6
++    assert ":param x3:" in result6
++    print("‚ú? PASS: Google-style parameters split correctly")
++    
++    print("\n" + "=" * 70)
++    print("ALL TESTS PASSED!")
++    print("=" * 70)
+diff --git a/sphinx/ext/napoleon/docstring.py b/sphinx/ext/napoleon/docstring.py
+index b3daa06f1..25b77e252 100644
+--- a/sphinx/ext/napoleon/docstring.py
++++ b/sphinx/ext/napoleon/docstring.py
+@@ -391,16 +391,24 @@ class GoogleDocstring:
+                                 ) -> List[str]:
+         lines = []
+         for _name, _type, _desc in fields:
+-            _desc = self._strip_empty(_desc)
+-            if any(_desc):
+-                _desc = self._fix_field_desc(_desc)
+-                field = ':%s %s: ' % (field_role, _name)
+-                lines.extend(self._format_block(field, _desc))
++            # Handle comma-separated parameter names
++            # Don't split special cases like "\*args, \*\*kwargs"
++            if ", " in _name and not _name.strip().startswith("\*"):
++                names = [n.strip() for n in _name.split(",")]
+             else:
+-                lines.append(':%s %s:' % (field_role, _name))
++                names = [_name]
++            
++            _desc = self._strip_empty(_desc)
++            for name in names:
++                if any(_desc):
++                    _desc = self._fix_field_desc(_desc)
++                    field = ':%s %s: ' % (field_role, name)
++                    lines.extend(self._format_block(field, _desc))
++                else:
++                    lines.append(':%s %s:' % (field_role, name))
+ 
+-            if _type:
+-                lines.append(':%s %s: %s' % (type_role, _name, _type))
++                if _type:
++                    lines.append(':%s %s: %s' % (type_role, name, _type))
+         return lines + ['']
+ 
+     def _format_field(self, _name: str, _type: str, _desc: List[str]) -> List[str]:
+@@ -439,14 +447,22 @@ class GoogleDocstring:
+         multi = len(fields) > 1
+         lines = []  # type: List[str]
+         for _name, _type, _desc in fields:
+-            field = self._format_field(_name, _type, _desc)
+-            if multi:
+-                if lines:
+-                    lines.extend(self._format_block(padding + ' * ', field))
+-                else:
+-                    lines.extend(self._format_block(field_type + ' * ', field))
++            # Handle comma-separated parameter names
++            # Don't split special cases like "\*args, \*\*kwargs"
++            if ", " in _name and not _name.strip().startswith("\*"):
++                names = [n.strip() for n in _name.split(",")]
+             else:
+-                lines.extend(self._format_block(field_type + ' ', field))
++                names = [_name]
++            
++            for name in names:
++                field = self._format_field(name, _type, _desc)
++                if multi:
++                    if lines:
++                        lines.extend(self._format_block(padding + ' * ', field))
++                    else:
++                        lines.extend(self._format_block(field_type + ' * ', field))
++                else:
++                    lines.extend(self._format_block(field_type + ' ', field))
+         if lines and lines[-1]:
+             lines.append('')
+         return lines

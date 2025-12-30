@@ -1,0 +1,324 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 000000000..69a96ac4a
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,20 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_roc_curve_with_probability_estimates():
++    """Test from the PR description"""
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    _, _, thresholds = roc_curve(y_true, y_score)
++    
++    # This is the assertion from the PR description (with corrected logic)
++    assert np.logical_and(thresholds <= 1, thresholds >= 0).all(), \
++        f"Thresholds outside [0, 1]: {thresholds}"
++    
++    print("✅ Test from PR description passes!")
++    print(f"   Max threshold: {thresholds.max()}")
++    print(f"   Min threshold: {thresholds.min()}")
++
++if __name__ == "__main__":
++    test_roc_curve_with_probability_estimates()
+diff --git a/fix_code.py b/fix_code.py
+new file mode 100644
+index 000000000..00feb6dfb
+--- /dev/null
++++ b/fix_code.py
+@@ -0,0 +1,37 @@
++import sys
++
++# Read the file
++with open('sklearn/metrics/_ranking.py', 'r') as f:
++    lines = f.readlines()
++
++# Find the line to replace (should be around line 1086)
++target_line = "    thresholds = np.r_[thresholds[0] + 1, thresholds]\n"
++
++# Find the index of this line
++line_idx = None
++for i, line in enumerate(lines):
++    if line == target_line:
++        line_idx = i
++        break
++
++if line_idx is None:
++    print("Could not find target line")
++    sys.exit(1)
++
++print(f"Found target line at index {line_idx} (line {line_idx + 1})")
++
++# Replace with the new code
++new_code = """    # Ensure threshold does not exceed 1 when y_score appears to be probability estimates
++    if thresholds[0] <= 1:
++        thresholds = np.r_[min(thresholds[0] + 1, 1), thresholds]
++    else:
++        thresholds = np.r_[thresholds[0] + 1, thresholds]
++"""
++
++lines[line_idx] = new_code
++
++# Write back
++with open('sklearn/metrics/_ranking.py', 'w') as f:
++    f.writelines(lines)
++
++print("File updated successfully")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..5f7c99b47
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,28 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_roc_curve_with_probability_estimates():
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print("y_true:", y_true)
++    print("y_score:", y_score)
++    print("thresholds:", thresholds)
++    print("Max threshold:", thresholds.max())
++    print("Min threshold:", thresholds.min())
++    
++    # Check if all thresholds are in valid range [0, 1]
++    valid = np.logical_and(thresholds <= 1, thresholds >= 0).all()
++    print("All thresholds in [0, 1]:", valid)
++    
++    if not valid:
++        print("ISSUE: Some thresholds are outside [0, 1] range!")
++        print("Thresholds > 1:", thresholds[thresholds > 1])
++        print("Thresholds < 0:", thresholds[thresholds < 0])
++    else:
++        print("✅ SUCCESS: All thresholds are in valid range!")
++
++if __name__ == "__main__":
++    test_roc_curve_with_probability_estimates()
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 0cdead923..4b9db7611 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1083,7 +1083,11 @@ def roc_curve(
+     # to make sure that the curve starts at (0, 0)
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+-    thresholds = np.r_[thresholds[0] + 1, thresholds]
++    # Ensure threshold does not exceed 1 when y_score appears to be probability estimates
++    if thresholds[0] <= 1:
++        thresholds = np.r_[min(thresholds[0] + 1, 1), thresholds]
++    else:
++        thresholds = np.r_[thresholds[0] + 1, thresholds]
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..c77b79b83
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,75 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_case_1():
++    """Test with probability estimates (values in [0, 1])"""
++    print("Test Case 1: Probability estimates")
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Max threshold: {thresholds.max()}")
++    print(f"  Min threshold: {thresholds.min()}")
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    assert thresholds.min() >= 0.0, f"Min threshold {thresholds.min()} is below 0.0"
++    print("  ✓ All thresholds in valid range [0, 1]")
++
++def test_case_2():
++    """Test with scores > 1 (not probability estimates)"""
++    print("\nTest Case 2: Scores > 1 (not probability estimates)")
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10) * 10  # Scale to [0, 10]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Max threshold: {thresholds.max()}")
++    print(f"  Min threshold: {thresholds.min()}")
++    print(f"  Max score: {y_score.max()}")
++    # In this case, thresholds can exceed 1 since scores are not probabilities
++    print("  ✓ Thresholds can exceed 1 for non-probability scores")
++
++def test_case_3():
++    """Test with all scores exactly 1"""
++    print("\nTest Case 3: All scores exactly 1")
++    y_true = np.array([0, 1, 0, 1])
++    y_score = np.array([1.0, 1.0, 1.0, 1.0])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Max threshold: {thresholds.max()}")
++    print(f"  Min threshold: {thresholds.min()}")
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    print("  ✓ Max threshold capped at 1.0")
++
++def test_case_4():
++    """Test with scores at boundary (max = 1.0)"""
++    print("\nTest Case 4: Scores with max = 1.0")
++    y_true = np.array([0, 1, 0, 1, 0])
++    y_score = np.array([0.1, 0.4, 0.35, 0.8, 1.0])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Max threshold: {thresholds.max()}")
++    print(f"  Min threshold: {thresholds.min()}")
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    assert thresholds.min() >= 0.0, f"Min threshold {thresholds.min()} is below 0.0"
++    print("  ✓ All thresholds in valid range [0, 1]")
++
++def test_case_5():
++    """Test with negative scores"""
++    print("\nTest Case 5: Negative scores")
++    y_true = np.array([0, 1, 0, 1, 0])
++    y_score = np.array([-0.5, -0.2, -0.3, 0.1, 0.5])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Max threshold: {thresholds.max()}")
++    print(f"  Min threshold: {thresholds.min()}")
++    # Negative scores are allowed, threshold can be negative
++    print("  ✓ Negative scores handled correctly")
++
++if __name__ == "__main__":
++    test_case_1()
++    test_case_2()
++    test_case_3()
++    test_case_4()
++    test_case_5()
++    print("\n✅ All tests passed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..0bb7ff94b
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,47 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_threshold_exactly_one():
++    """Test when max score is exactly 1.0"""
++    print("Test: Max score exactly 1.0")
++    y_true = np.array([0, 1, 0, 1])
++    y_score = np.array([0.0, 0.5, 0.3, 1.0])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Scores: {y_score}")
++    print(f"  Thresholds: {thresholds}")
++    print(f"  Max threshold: {thresholds.max()}")
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    print("  ✓ Pass")
++
++def test_threshold_just_below_one():
++    """Test when max score is just below 1.0"""
++    print("\nTest: Max score just below 1.0")
++    y_true = np.array([0, 1, 0, 1])
++    y_score = np.array([0.0, 0.5, 0.3, 0.99])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Scores: {y_score}")
++    print(f"  Thresholds: {thresholds}")
++    print(f"  Max threshold: {thresholds.max()}")
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    print("  ✓ Pass")
++
++def test_threshold_above_one():
++    """Test when max score is above 1.0 (not probability)"""
++    print("\nTest: Max score above 1.0")
++    y_true = np.array([0, 1, 0, 1])
++    y_score = np.array([0.0, 0.5, 0.3, 1.5])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  Scores: {y_score}")
++    print(f"  Thresholds: {thresholds}")
++    print(f"  Max threshold: {thresholds.max()}")
++    # When scores exceed 1, threshold can also exceed 1
++    print(f"  ✓ Pass (threshold can exceed 1 for non-probability scores)")
++
++if __name__ == "__main__":
++    test_threshold_exactly_one()
++    test_threshold_just_below_one()
++    test_threshold_above_one()
++    print("\n✅ All edge case tests passed!")
+diff --git a/verify_roc_functionality.py b/verify_roc_functionality.py
+new file mode 100644
+index 000000000..f1013952f
+--- /dev/null
++++ b/verify_roc_functionality.py
+@@ -0,0 +1,64 @@
++import numpy as np
++from sklearn.metrics import roc_curve, auc
++
++def test_roc_functionality():
++    """Verify ROC curve still works correctly with the fix"""
++    
++    # Test 1: Basic functionality with probability estimates
++    print("Test 1: Basic ROC curve with probabilities")
++    y_true = np.array([0, 0, 1, 1])
++    y_score = np.array([0.1, 0.4, 0.35, 0.8])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  FPR: {fpr}")
++    print(f"  TPR: {tpr}")
++    print(f"  Thresholds: {thresholds}")
++    print(f"  AUC: {auc(fpr, tpr)}")
++    
++    # Verify curve starts at (0, 0) and ends at (1, 1)
++    assert fpr[0] == 0 and tpr[0] == 0, "Curve should start at (0, 0)"
++    assert fpr[-1] == 1 and tpr[-1] == 1, "Curve should end at (1, 1)"
++    
++    # Verify thresholds are in valid range for probabilities
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    assert thresholds.min() >= 0.0, f"Min threshold {thresholds.min()} is below 0.0"
++    
++    print("  ✓ Pass\n")
++    
++    # Test 2: Non-probability scores
++    print("Test 2: ROC curve with non-probability scores")
++    y_true = np.array([0, 0, 1, 1])
++    y_score = np.array([1, 4, 3.5, 8])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  FPR: {fpr}")
++    print(f"  TPR: {tpr}")
++    print(f"  Thresholds: {thresholds}")
++    
++    # Verify curve starts at (0, 0) and ends at (1, 1)
++    assert fpr[0] == 0 and tpr[0] == 0, "Curve should start at (0, 0)"
++    assert fpr[-1] == 1 and tpr[-1] == 1, "Curve should end at (1, 1)"
++    
++    # For non-probability scores, thresholds can exceed 1
++    print(f"  Max threshold: {thresholds.max()} (can exceed 1 for non-probabilities)")
++    
++    print("  ✓ Pass\n")
++    
++    # Test 3: Edge case - all same scores
++    print("Test 3: All same scores")
++    y_true = np.array([0, 0, 1, 1])
++    y_score = np.array([0.5, 0.5, 0.5, 0.5])
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"  FPR: {fpr}")
++    print(f"  TPR: {tpr}")
++    print(f"  Thresholds: {thresholds}")
++    
++    assert thresholds.max() <= 1.0, f"Max threshold {thresholds.max()} exceeds 1.0"
++    
++    print("  ✓ Pass\n")
++    
++    print("✅ All ROC functionality tests passed!")
++
++if __name__ == "__main__":
++    test_roc_functionality()

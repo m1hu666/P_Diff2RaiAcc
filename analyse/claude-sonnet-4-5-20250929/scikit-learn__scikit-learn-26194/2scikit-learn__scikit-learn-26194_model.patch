@@ -1,0 +1,753 @@
+diff --git a/check_test.py b/check_test.py
+new file mode 100644
+index 000000000..bc43e1bd6
+--- /dev/null
++++ b/check_test.py
+@@ -0,0 +1,32 @@
++import numpy as np
++
++# The test from the PR description
++rng = np.random.RandomState(42)
++y_true = rng.randint(0, 2, size=10)
++y_score = rng.rand(10)
++
++# Simulate our thresholds
++thresholds = np.array([1.0000000000000002, 0.96990985, 0.21233911, 0.18182497, 0.15599452, 0.02058449])
++
++# The test as written in PR
++result = np.logical_or(thresholds <= 1, thresholds >= 0).all()
++print(f"Test as written (logical_or): {result}")
++
++# What it should probably be (logical_and)
++result2 = np.logical_and(thresholds <= 1, thresholds >= 0).all()
++print(f"Test with logical_and: {result2}")
++
++# Check individual conditions
++print(f"All >= 0: {(thresholds >= 0).all()}")
++print(f"All <= 1: {(thresholds <= 1).all()}")
++
++# The actual value
++print(f"Max threshold: {thresholds.max()}")
++print(f"Is max > 1: {thresholds.max() > 1}")
++print(f"Is max > 1 + eps: {thresholds.max() > 1 + np.finfo(float).eps}")
++
++# Check if it's within acceptable range for probability estimates
++eps = np.finfo(float).eps
++print(f"\nMachine epsilon: {eps}")
++print(f"1 + eps: {1 + eps}")
++print(f"Max threshold <= 1 + eps: {thresholds.max() <= 1 + eps}")
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..886ecf4e1
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,87 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++print("=" * 70)
++print("COMPREHENSIVE TEST OF ROC_CURVE FIX")
++print("=" * 70)
++
++# Test 1: Original issue - probability estimates
++print("\n1. Original issue - probability estimates in [0, 1]:")
++rng = np.random.RandomState(42)
++y_true = rng.randint(0, 2, size=10)
++y_score = rng.rand(10)
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++print(f"   Max threshold: {thresholds.max():.10f}")
++print(f"   Max threshold <= 1 + eps: {thresholds.max() <= 1 + np.finfo(float).eps}")
++assert thresholds.max() <= 1 + np.finfo(float).eps, "FAILED: threshold exceeds 1 + eps"
++print("   ‚úì PASSED")
++
++# Test 2: Edge case - max score is exactly 1.0
++print("\n2. Edge case - max score is exactly 1.0:")
++y_true = np.array([0, 1, 0, 1, 0])
++y_score = np.array([0.2, 1.0, 0.5, 0.8, 0.3])
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++print(f"   Max threshold: {thresholds.max():.10f}")
++print(f"   Samples with score >= 1.0: {(y_score >= 1.0).sum()}")
++print(f"   Samples with score >= max_threshold: {(y_score >= thresholds.max()).sum()}")
++assert (y_score >= thresholds.max()).sum() == 0, "FAILED: some samples >= threshold"
++assert thresholds.max() <= 1 + np.finfo(float).eps, "FAILED: threshold exceeds 1 + eps"
++print("   ‚úì PASSED")
++
++# Test 3: Non-probability scores (decision function)
++print("\n3. Non-probability scores (decision function values):")
++y_true = rng.randint(0, 2, size=20)
++y_score = rng.randn(20) * 10  # Decision function values
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++print(f"   Max threshold: {thresholds.max():.4f}")
++print(f"   Expected (max + 1): {y_score.max() + 1:.4f}")
++assert abs(thresholds.max() - (y_score.max() + 1)) < 1e-10, "FAILED: threshold != max + 1"
++print("   ‚úì PASSED")
++
++# Test 4: Scores slightly above 1 (should use max + 1)
++print("\n4. Scores slightly above 1 (should use max + 1):")
++y_true = np.array([0, 1, 0, 1])
++y_score = np.array([0.5, 1.1, 0.8, 1.2])
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++print(f"   Max threshold: {thresholds.max():.4f}")
++print(f"   Expected (max + 1): {y_score.max() + 1:.4f}")
++assert abs(thresholds.max() - (y_score.max() + 1)) < 1e-10, "FAILED: threshold != max + 1"
++print("   ‚úì PASSED")
++
++# Test 5: All zeros
++print("\n5. Edge case - all scores are 0:")
++y_true = np.array([0, 1, 0, 1])
++y_score = np.zeros(4)
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++print(f"   Max threshold: {thresholds.max():.10f}")
++assert thresholds.max() <= 1 + np.finfo(float).eps, "FAILED: threshold exceeds 1 + eps"
++print("   ‚úì PASSED")
++
++# Test 6: Mixed positive and negative scores
++print("\n6. Mixed positive and negative scores:")
++y_true = np.array([0, 1, 0, 1, 0, 1])
++y_score = np.array([-2.0, -0.5, 0.3, 0.8, -1.0, 1.5])
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++print(f"   Max threshold: {thresholds.max():.4f}")
++print(f"   Expected (max + 1): {y_score.max() + 1:.4f}")
++assert abs(thresholds.max() - (y_score.max() + 1)) < 1e-10, "FAILED: threshold != max + 1"
++print("   ‚úì PASSED")
++
++# Test 7: Verify ROC curve starts at (0, 0)
++print("\n7. Verify ROC curve starts at (0, 0):")
++y_true = rng.randint(0, 2, size=50)
++y_score = rng.rand(50)
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++print(f"   First point: (fpr={fpr[0]:.4f}, tpr={tpr[0]:.4f})")
++assert fpr[0] == 0 and tpr[0] == 0, "FAILED: curve doesn't start at (0, 0)"
++print("   ‚úì PASSED")
++
++print("\n" + "=" * 70)
++print("ALL TESTS PASSED!")
++print("=" * 70)
+diff --git a/demonstrate_fix.py b/demonstrate_fix.py
+new file mode 100644
+index 000000000..652c09e86
+--- /dev/null
++++ b/demonstrate_fix.py
+@@ -0,0 +1,44 @@
++import numpy as np
++
++print("=" * 80)
++print("DEMONSTRATION OF THE FIX")
++print("=" * 80)
++
++# Simulate the old behavior
++def old_behavior(y_score):
++    thresholds = np.unique(y_score)[::-1]  # Simplified
++    return thresholds[0] + 1
++
++# Simulate the new behavior
++def new_behavior(y_score):
++    thresholds = np.unique(y_score)[::-1]  # Simplified
++    if thresholds.size > 0 and thresholds.max() <= 1:
++        return np.nextafter(1, np.inf)
++    else:
++        return thresholds[0] + 1
++
++# Test case 1: Probability estimates
++print("\nCase 1: Probability estimates (values in [0, 1])")
++print("-" * 80)
++y_score = np.array([0.1, 0.4, 0.35, 0.8, 0.97])
++print(f"y_score: {y_score}")
++print(f"Max score: {y_score.max()}")
++print(f"\nOld behavior - first threshold: {old_behavior(y_score):.10f}")
++print(f"New behavior - first threshold: {new_behavior(y_score):.10f}")
++print(f"Difference: {old_behavior(y_score) - new_behavior(y_score):.10f}")
++
++# Test case 2: Decision function values
++print("\n\nCase 2: Decision function values (can be any range)")
++print("-" * 80)
++y_score = np.array([-2.5, -0.3, 1.2, 3.5, 5.8])
++print(f"y_score: {y_score}")
++print(f"Max score: {y_score.max()}")
++print(f"\nOld behavior - first threshold: {old_behavior(y_score):.10f}")
++print(f"New behavior - first threshold: {new_behavior(y_score):.10f}")
++print(f"Difference: {old_behavior(y_score) - new_behavior(y_score):.10f}")
++
++print("\n" + "=" * 80)
++print("KEY INSIGHT:")
++print("- For probability estimates: threshold changes from ~1.97 to ~1.0")
++print("- For decision functions: threshold remains max + 1 (unchanged)")
++print("=" * 80)
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 000000000..f35c450f8
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,88 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++print("=" * 80)
++print("FINAL VERIFICATION OF THE FIX")
++print("=" * 80)
++
++# Original issue from PR description
++print("\n1. ORIGINAL ISSUE - Thresholds exceeding 1 for probability estimates:")
++print("-" * 80)
++rng = np.random.RandomState(42)
++y_true = rng.randint(0, 2, size=10)
++y_score = rng.rand(10)
++
++print(f"y_score (probability estimates): {y_score}")
++print(f"Max y_score: {y_score.max():.10f}")
++
++fpr, tpr, thresholds = roc_curve(y_true, y_score)
++
++print(f"\nThresholds: {thresholds}")
++print(f"Max threshold: {thresholds.max():.10f}")
++
++# Before fix: max threshold would be ~1.97 (max_score + 1)
++# After fix: max threshold should be ~1.0 (or 1 + epsilon)
++old_behavior_threshold = y_score.max() + 1
++print(f"\nOld behavior would give: {old_behavior_threshold:.10f}")
++print(f"New behavior gives: {thresholds.max():.10f}")
++print(f"Improvement: {old_behavior_threshold - thresholds.max():.10f}")
++
++eps = np.finfo(float).eps
++assert thresholds.max() <= 1 + eps, "FAILED: threshold exceeds 1 + eps"
++print("‚úì PASSED: Threshold does not significantly exceed 1")
++
++# Verify ROC curve correctness
++print("\n2. ROC CURVE CORRECTNESS:")
++print("-" * 80)
++print(f"Curve starts at (0, 0): ({fpr[0]}, {tpr[0]})")
++print(f"Curve ends at (1, 1): ({fpr[-1]}, {tpr[-1]})")
++assert fpr[0] == 0 and tpr[0] == 0, "FAILED: curve doesn't start at (0, 0)"
++assert fpr[-1] == 1 and tpr[-1] == 1, "FAILED: curve doesn't end at (1, 1)"
++print("‚úì PASSED: ROC curve has correct start and end points")
++
++# Verify no samples are classified as positive at first threshold
++n_positive_at_first = (y_score >= thresholds[0]).sum()
++print(f"\nSamples classified as positive at first threshold: {n_positive_at_first}")
++assert n_positive_at_first == 0, "FAILED: some samples classified as positive at first threshold"
++print("‚úì PASSED: First threshold correctly excludes all samples")
++
++# Test with non-probability scores
++print("\n3. NON-PROBABILITY SCORES (decision function):")
++print("-" * 80)
++y_score_decision = rng.randn(10) * 10
++print(f"y_score (decision function): {y_score_decision}")
++print(f"Max y_score: {y_score_decision.max():.4f}")
++
++fpr2, tpr2, thresholds2 = roc_curve(y_true, y_score_decision)
++print(f"\nMax threshold: {thresholds2.max():.4f}")
++print(f"Expected (max + 1): {y_score_decision.max() + 1:.4f}")
++
++assert abs(thresholds2.max() - (y_score_decision.max() + 1)) < 1e-10, \
++    "FAILED: non-probability scores not handled correctly"
++print("‚úì PASSED: Non-probability scores use old behavior (max + 1)")
++
++# Edge case: max score is exactly 1.0
++print("\n4. EDGE CASE - Max score is exactly 1.0:")
++print("-" * 80)
++y_true_edge = np.array([0, 1, 0, 1])
++y_score_edge = np.array([0.5, 1.0, 0.8, 0.9])
++print(f"y_score: {y_score_edge}")
++
++fpr3, tpr3, thresholds3 = roc_curve(y_true_edge, y_score_edge)
++print(f"Thresholds: {thresholds3}")
++print(f"Max threshold: {thresholds3.max():.10f}")
++
++# With max score = 1.0, we need threshold > 1.0 to exclude it
++assert thresholds3.max() > 1.0, "FAILED: threshold should be > 1.0"
++assert thresholds3.max() <= 1 + eps, "FAILED: threshold exceeds 1 + eps"
++assert (y_score_edge >= thresholds3[0]).sum() == 0, "FAILED: samples classified at first threshold"
++print("‚úì PASSED: Edge case handled correctly")
++
++print("\n" + "=" * 80)
++print("ALL VERIFICATIONS PASSED!")
++print("=" * 80)
++print("\nSUMMARY:")
++print("- Probability estimates (max <= 1) now use threshold ‚âà 1.0 instead of max + 1")
++print("- Non-probability scores still use the old behavior (max + 1)")
++print("- ROC curves remain mathematically correct")
++print("- Edge cases (e.g., max score = 1.0) are handled properly")
+diff --git a/fix.py b/fix.py
+new file mode 100644
+index 000000000..7d5caa77f
+--- /dev/null
++++ b/fix.py
+@@ -0,0 +1,39 @@
++import sys
++
++# Read the file
++with open('sklearn/metrics/_ranking.py', 'r') as f:
++    lines = f.readlines()
++
++# Find line 1086 (index 1085) and replace it
++# The current line is:
++#     thresholds = np.r_[thresholds[0] + 1, thresholds]
++# We need to replace it with a smarter approach that handles probability estimates
++
++# Find the line
++for i, line in enumerate(lines):
++    if i == 1085:  # Line 1086 (0-indexed)
++        # Replace with the new logic
++        old_line = line
++        # We'll use np.nextafter to get the next representable float after thresholds[0]
++        # or use max(thresholds) + 1 if it's not a probability estimate
++        new_code = '''    # Add an extra threshold position to make sure that the curve starts at (0, 0)
++    # If thresholds are probability estimates (max <= 1), we use a value slightly
++    # above the maximum to avoid exceeding 1. Otherwise, we use max + 1.
++    if thresholds[0] <= 1:
++        # Use np.nextafter to get the smallest float greater than thresholds[0]
++        # but clip it to 1 to ensure it doesn't exceed 1 for probability estimates
++        thresholds = np.r_[np.nextafter(1, 2), thresholds]
++    else:
++        thresholds = np.r_[thresholds[0] + 1, thresholds]
++'''
++        lines[i] = new_code
++        print(f"Replaced line {i+1}:")
++        print(f"Old: {old_line.rstrip()}")
++        print(f"New: {new_code.rstrip()}")
++        break
++
++# Write the file back
++with open('sklearn/metrics/_ranking.py', 'w') as f:
++    f.writelines(lines)
++
++print("\nFile updated successfully!")
+diff --git a/fix2.py b/fix2.py
+new file mode 100644
+index 000000000..d7ed04649
+--- /dev/null
++++ b/fix2.py
+@@ -0,0 +1,29 @@
++import sys
++
++# Read the file
++with open('sklearn/metrics/_ranking.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the problematic line
++# We need to replace line 1086: thresholds = np.r_[thresholds[0] + 1, thresholds]
++# with a version that handles probability estimates properly
++
++old_code = "    thresholds = np.r_[thresholds[0] + 1, thresholds]"
++
++new_code = """    # Add an extra threshold position to make sure that the curve starts at (0, 0)
++    # For probability estimates (where thresholds are in [0, 1]), we clip the
++    # added threshold to not exceed 1 + eps to maintain semantic validity
++    if thresholds.size > 0 and thresholds.max() <= 1:
++        # Scores are likely probability estimates, so we use a threshold
++        # slightly above the maximum but ensure it doesn't exceed 1 + eps
++        thresholds = np.r_[min(thresholds[0] + 1, 1 + np.finfo(thresholds.dtype).eps), thresholds]
++    else:
++        thresholds = np.r_[thresholds[0] + 1, thresholds]"""
++
++content = content.replace(old_code, new_code)
++
++# Write back
++with open('sklearn/metrics/_ranking.py', 'w') as f:
++    f.write(content)
++
++print("File updated successfully!")
+diff --git a/fix3.py b/fix3.py
+new file mode 100644
+index 000000000..bbfa69bee
+--- /dev/null
++++ b/fix3.py
+@@ -0,0 +1,50 @@
++# Read the file
++with open('sklearn/metrics/_ranking.py', 'r') as f:
++    lines = f.readlines()
++
++# Find the section around line 1082-1086 and replace it properly
++found = False
++for i in range(len(lines)):
++    if i >= 1081 and i <= 1090:  # Around the target area
++        if "# Add an extra threshold position" in lines[i]:
++            # Found the comment, now find and replace the threshold line
++            # Look for the actual threshold assignment in the next few lines
++            for j in range(i, min(i+15, len(lines))):
++                if "thresholds = np.r_[" in lines[j] and "thresholds[0]" in lines[j]:
++                    # Found it! Replace this entire section
++                    # First, remove the old comment and code
++                    start_idx = i
++                    end_idx = j + 1
++                    
++                    # Create new code
++                    new_lines = [
++                        "    # Add an extra threshold position\n",
++                        "    # to make sure that the curve starts at (0, 0)\n",
++                        "    tps = np.r_[0, tps]\n",
++                        "    fps = np.r_[0, fps]\n",
++                        "    # For probability estimates (thresholds in [0, 1]), use a threshold\n",
++                        "    # just above 1 to avoid exceeding 1 significantly. Otherwise, use max + 1.\n",
++                        "    if thresholds.size > 0 and thresholds.max() <= 1:\n",
++                        "        # Scores are probability estimates, use the next float after 1.0\n",
++                        "        thresholds = np.r_[np.nextafter(1, np.inf), thresholds]\n",
++                        "    else:\n",
++                        "        thresholds = np.r_[thresholds[0] + 1, thresholds]\n",
++                    ]
++                    
++                    # Replace the lines
++                    lines[start_idx:end_idx] = new_lines
++                    found = True
++                    print(f"Replaced lines {start_idx+1} to {end_idx+1}")
++                    break
++            if found:
++                break
++
++if not found:
++    print("ERROR: Could not find the target code to replace!")
++    sys.exit(1)
++
++# Write back
++with open('sklearn/metrics/_ranking.py', 'w') as f:
++    f.writelines(lines)
++
++print("File updated successfully!")
+diff --git a/fix_final.py b/fix_final.py
+new file mode 100644
+index 000000000..ff0882834
+--- /dev/null
++++ b/fix_final.py
+@@ -0,0 +1,29 @@
++# Read the file
++with open('sklearn/metrics/_ranking.py', 'r') as f:
++    lines = f.readlines()
++
++# Define the replacement
++# Lines 1082-1086 (indices 1081-1085)
++new_section = [
++    "    # Add an extra threshold position\n",
++    "    # to make sure that the curve starts at (0, 0)\n",
++    "    tps = np.r_[0, tps]\n",
++    "    fps = np.r_[0, fps]\n",
++    "    # For probability estimates (thresholds in [0, 1]), use a threshold\n",
++    "    # just above 1 to avoid exceeding 1 significantly. Otherwise, use max + 1.\n",
++    "    if thresholds.size > 0 and thresholds.max() <= 1:\n",
++    "        # Scores are probability estimates, use the next float after 1.0\n",
++    "        thresholds = np.r_[np.nextafter(1, np.inf), thresholds]\n",
++    "    else:\n",
++    "        thresholds = np.r_[thresholds[0] + 1, thresholds]\n",
++]
++
++# Replace lines 1081-1085 (0-indexed) with new_section
++lines[1081:1086] = new_section
++
++# Write back
++with open('sklearn/metrics/_ranking.py', 'w') as f:
++    f.writelines(lines)
++
++print("File updated successfully!")
++print(f"Replaced lines 1082-1086 with {len(new_section)} new lines")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..8cd4cb75a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,30 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_roc_curve_with_probability_estimates():
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    
++    print("y_true:", y_true)
++    print("y_score:", y_score)
++    print("y_score max:", y_score.max())
++    
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print("\nThresholds:", thresholds)
++    print("Max threshold:", thresholds.max())
++    print("Min threshold:", thresholds.min())
++    
++    # Check if all thresholds are in valid range [0, 1] for probabilities
++    valid = np.logical_and(thresholds <= 1, thresholds >= 0).all()
++    print(f"\nAll thresholds in [0, 1]: {valid}")
++    
++    if not valid:
++        print("ISSUE CONFIRMED: Some thresholds exceed 1!")
++        print(f"Thresholds > 1: {thresholds[thresholds > 1]}")
++    else:
++        print("No issue found")
++
++if __name__ == "__main__":
++    test_roc_curve_with_probability_estimates()
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 0cdead923..65cbc0f89 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1019,7 +1019,8 @@ def roc_curve(
+     thresholds : ndarray of shape = (n_thresholds,)
+         Decreasing thresholds on the decision function used to compute
+         fpr and tpr. `thresholds[0]` represents no instances being predicted
+-        and is arbitrarily set to `max(y_score) + 1`.
++        and is arbitrarily set to `max(y_score) + 1` for non-probability scores,
++        or to a value just above 1 for probability estimates (where `max(y_score) <= 1`).
+ 
+     See Also
+     --------
+@@ -1083,7 +1084,13 @@ def roc_curve(
+     # to make sure that the curve starts at (0, 0)
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+-    thresholds = np.r_[thresholds[0] + 1, thresholds]
++    # For probability estimates (thresholds in [0, 1]), use a threshold
++    # just above 1 to avoid exceeding 1 significantly. Otherwise, use max + 1.
++    if thresholds.size > 0 and thresholds.max() <= 1:
++        # Scores are probability estimates, use the next float after 1.0
++        thresholds = np.r_[np.nextafter(1, np.inf), thresholds]
++    else:
++        thresholds = np.r_[thresholds[0] + 1, thresholds]
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..0293a99ca
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,62 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_roc_curve_with_probability_estimates():
++    """Test that thresholds don't significantly exceed 1 for probability estimates."""
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    
++    print("Testing with probability estimates (values in [0, 1]):")
++    print(f"y_score range: [{y_score.min():.4f}, {y_score.max():.4f}]")
++    
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print(f"Thresholds: {thresholds}")
++    print(f"Max threshold: {thresholds.max()}")
++    
++    # For probability estimates, thresholds should not significantly exceed 1
++    # We allow for machine epsilon to handle edge cases where max(y_score) == 1.0
++    eps = np.finfo(thresholds.dtype).eps
++    max_allowed = 1 + eps
++    
++    assert thresholds.max() <= max_allowed, \
++        f"Max threshold {thresholds.max()} exceeds 1 + eps ({max_allowed})"
++    assert thresholds.min() >= 0, \
++        f"Min threshold {thresholds.min()} is negative"
++    
++    print("‚úì Test passed: thresholds are in valid range for probability estimates")
++    
++    # Test with non-probability scores (e.g., decision function values)
++    print("\nTesting with non-probability scores:")
++    y_score_decision = rng.randn(10) * 10  # Decision function values
++    print(f"y_score range: [{y_score_decision.min():.4f}, {y_score_decision.max():.4f}]")
++    
++    fpr2, tpr2, thresholds2 = roc_curve(y_true, y_score_decision)
++    print(f"Max threshold: {thresholds2.max()}")
++    print(f"Expected (max + 1): {y_score_decision.max() + 1}")
++    
++    # For non-probability scores, the old behavior (max + 1) should still work
++    assert abs(thresholds2.max() - (y_score_decision.max() + 1)) < 1e-10, \
++        "For non-probability scores, threshold should be max + 1"
++    
++    print("‚úì Test passed: non-probability scores handled correctly")
++    
++    # Edge case: all scores are exactly 1.0
++    print("\nTesting edge case: all scores are 1.0:")
++    y_true_edge = np.array([0, 1, 0, 1])
++    y_score_edge = np.ones(4)
++    
++    fpr3, tpr3, thresholds3 = roc_curve(y_true_edge, y_score_edge)
++    print(f"Thresholds: {thresholds3}")
++    print(f"Max threshold: {thresholds3.max()}")
++    
++    # Should use nextafter(1, inf) to ensure no samples are classified as positive
++    assert thresholds3.max() > 1.0, "Threshold should be > 1.0 to exclude scores of 1.0"
++    assert thresholds3.max() <= 1 + eps, "Threshold should not significantly exceed 1.0"
++    
++    print("‚úì Test passed: edge case handled correctly")
++
++if __name__ == "__main__":
++    test_roc_curve_with_probability_estimates()
++    print("\n‚úì All tests passed!")
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 000000000..1ae8498a1
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,33 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_roc_curve_with_probability_estimates():
++    """Test from the PR description (with corrected assertion)."""
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    _, _, thresholds = roc_curve(y_true, y_score)
++    
++    print("Test from PR description:")
++    print(f"y_score: {y_score}")
++    print(f"thresholds: {thresholds}")
++    print(f"Max threshold: {thresholds.max()}")
++    
++    # The original test had a typo (logical_or instead of logical_and)
++    # The correct test should check that all thresholds are in a valid range
++    # For probability estimates, we allow up to 1 + machine epsilon
++    eps = np.finfo(thresholds.dtype).eps
++    
++    # Check that thresholds are in a reasonable range for probability estimates
++    assert (thresholds >= 0).all(), "Some thresholds are negative"
++    assert thresholds.max() <= 1 + eps, f"Max threshold {thresholds.max()} exceeds 1 + eps"
++    
++    # The key fix: thresholds should not significantly exceed 1 for probability estimates
++    # Before the fix, max threshold was ~1.97, now it's ~1.0 (or 1 + eps)
++    assert thresholds.max() < 1.1, "Threshold significantly exceeds 1 for probability estimates"
++    
++    print("‚úì Test passed!")
++    return True
++
++if __name__ == "__main__":
++    test_roc_curve_with_probability_estimates()
+diff --git a/test_threshold.py b/test_threshold.py
+new file mode 100644
+index 000000000..318698910
+--- /dev/null
++++ b/test_threshold.py
+@@ -0,0 +1,26 @@
++import numpy as np
++
++# Test different approaches
++y_score = np.array([0.1, 0.4, 0.35, 0.8, 0.96990985])
++max_score = y_score.max()
++
++print(f"Max score: {max_score}")
++print(f"Max score + 1: {max_score + 1}")
++print(f"np.nextafter(max_score, np.inf): {np.nextafter(max_score, np.inf)}")
++print(f"np.nextafter(1.0, np.inf): {np.nextafter(1.0, np.inf)}")
++print(f"1 + eps: {1 + np.finfo(float).eps}")
++
++# The key insight: for probability estimates, we want a threshold > max(y_score)
++# but <= 1 + small_epsilon to maintain semantic validity
++# Using np.nextafter(max_score, np.inf) gives us the next representable float
++# But if that exceeds 1, we should cap it
++
++threshold_candidate = max_score + 1
++if max_score <= 1:
++    # For probability estimates, use the next float after max_score
++    # but cap it at a reasonable value (e.g., 1 + eps or just slightly above 1)
++    threshold_candidate = min(max_score + 1, np.nextafter(1.0, np.inf))
++    
++print(f"\nProposed threshold: {threshold_candidate}")
++print(f"Is it > max_score? {threshold_candidate > max_score}")
++print(f"Is it <= 1 + eps? {threshold_candidate <= 1 + np.finfo(float).eps}")
+diff --git a/test_threshold_1.py b/test_threshold_1.py
+new file mode 100644
+index 000000000..eba65b2ba
+--- /dev/null
++++ b/test_threshold_1.py
+@@ -0,0 +1,24 @@
++import numpy as np
++
++# Test case from reproduction
++y_score = np.array([0.15599452, 0.05808361, 0.86617615, 0.60111501, 0.70807258, 
++                     0.02058449, 0.96990985, 0.83244264, 0.21233911, 0.18182497])
++
++max_score = y_score.max()
++print(f"Max score: {max_score}")
++print(f"Max score < 1: {max_score < 1}")
++
++# If we use threshold = 1.0
++threshold = 1.0
++print(f"\nUsing threshold = 1.0:")
++print(f"Threshold > max_score: {threshold > max_score}")
++print(f"Number of samples >= threshold: {(y_score >= threshold).sum()}")
++
++# Edge case: what if max_score == 1.0?
++y_score_edge = np.array([0.5, 0.8, 1.0])
++max_score_edge = y_score_edge.max()
++print(f"\nEdge case with max_score = {max_score_edge}:")
++print(f"Using threshold = 1.0:")
++print(f"Number of samples >= threshold: {(y_score_edge >= 1.0).sum()}")
++print(f"Using threshold = np.nextafter(1, np.inf):")
++print(f"Number of samples >= threshold: {(y_score_edge >= np.nextafter(1, np.inf)).sum()}")
+diff --git a/update_docstring.py b/update_docstring.py
+new file mode 100644
+index 000000000..822961a52
+--- /dev/null
++++ b/update_docstring.py
+@@ -0,0 +1,21 @@
++# Read the file
++with open('sklearn/metrics/_ranking.py', 'r') as f:
++    lines = f.readlines()
++
++# Update line 1022 (index 1021)
++old_line = lines[1021]
++new_line = "        and is arbitrarily set to `max(y_score) + 1` for non-probability scores,\n"
++lines[1021] = new_line
++
++# Insert a new line after it
++lines.insert(1022, "        or to a value just above 1 for probability estimates (where `max(y_score) <= 1`).\n")
++
++# Write back
++with open('sklearn/metrics/_ranking.py', 'w') as f:
++    f.writelines(lines)
++
++print("Docstring updated successfully!")
++print(f"Old line 1022: {old_line.rstrip()}")
++print(f"New lines 1022-1023:")
++print(f"  {lines[1021].rstrip()}")
++print(f"  {lines[1022].rstrip()}")
+diff --git a/verify_roc_correctness.py b/verify_roc_correctness.py
+new file mode 100644
+index 000000000..95ef2153c
+--- /dev/null
++++ b/verify_roc_correctness.py
+@@ -0,0 +1,40 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++import matplotlib
++matplotlib.use('Agg')  # Non-interactive backend
++import matplotlib.pyplot as plt
++
++# Test case from the failing test
++y_true = [0, 0, 0, 0, 1, 1]
++y_score = [0.0, 0.2, 0.5, 0.6, 0.7, 1.0]
++
++fpr, tpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
++
++print("Test case from failing test:")
++print(f"y_true: {y_true}")
++print(f"y_score: {y_score}")
++print(f"FPR: {fpr}")
++print(f"TPR: {tpr}")
++print(f"Thresholds: {thresholds}")
++
++# Verify the ROC curve properties
++print("\nROC curve properties:")
++print(f"Starts at (0, 0): fpr[0]={fpr[0]}, tpr[0]={tpr[0]}")
++print(f"Ends at (1, 1): fpr[-1]={fpr[-1]}, tpr[-1]={tpr[-1]}")
++print(f"FPR is non-decreasing: {np.all(np.diff(fpr) >= 0)}")
++print(f"TPR is non-decreasing: {np.all(np.diff(tpr) >= 0)}")
++
++# Verify threshold behavior
++print(f"\nThreshold analysis:")
++print(f"Max threshold: {thresholds.max()}")
++print(f"Max threshold > max(y_score): {thresholds.max() > max(y_score)}")
++print(f"Samples with score >= max_threshold: {sum(s >= thresholds.max() for s in y_score)}")
++
++# The key point: with threshold ~1.0 (instead of 2.0), no samples should be >= threshold
++# This ensures FPR=0 and TPR=0 at the start
++assert fpr[0] == 0, "FPR should be 0 at start"
++assert tpr[0] == 0, "TPR should be 0 at start"
++assert sum(s >= thresholds[0] for s in y_score) == 0, "No samples should be >= first threshold"
++
++print("\n‚úì ROC curve is correct!")
++print(f"‚úì First threshold ({thresholds[0]:.10f}) correctly ensures no samples are classified as positive")

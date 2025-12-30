@@ -1,0 +1,162 @@
+diff --git a/pylint/config/argument.py b/pylint/config/argument.py
+index 30a5fd175..a158f2ab8 100644
+--- a/pylint/config/argument.py
++++ b/pylint/config/argument.py
+@@ -112,17 +112,118 @@ def _regex_transformer(value: str) -> Pattern[str]:
+ 
+ 
+ def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+-    """Transforms a comma separated list of regular expressions."""
++    """Transforms a comma separated list of regular expressions.
++
++    This splitter is aware of regex syntax and will not split on commas that are
++    inside character classes [], groups (), or quantifiers {}. It also supports
++    escaping with backslashes and optional surrounding quotes.
++    """
++    def _regex_csv_split(s: str) -> list[str]:
++        parts: list[str] = []
++        buf: list[str] = []
++        depth_paren = 0
++        depth_brace = 0
++        in_char_class = False  # Inside [...]
++        escape = False
++        for ch in s:
++            if escape:
++                buf.append(ch)
++                escape = False
++                continue
++            if ch == "\\":
++                buf.append(ch)
++                escape = True
++                continue
++            if not in_char_class:
++                if ch == "[":
++                    in_char_class = True
++                elif ch == "(":
++                    depth_paren += 1
++                elif ch == ")":
++                    if depth_paren > 0:
++                        depth_paren -= 1
++                elif ch == "{":
++                    depth_brace += 1
++                elif ch == "}":
++                    if depth_brace > 0:
++                        depth_brace -= 1
++            else:
++                # Inside a character class, only ']' (when not escaped) closes it
++                if ch == "]":
++                    in_char_class = False
++            # Split on commas only when not inside any regex construct
++            if ch == "," and not in_char_class and depth_paren == 0 and depth_brace == 0:
++                token = "".join(buf).strip()
++                if token:
++                    from pylint import utils as pylint_utils  # local import to avoid cycles in static tools
++                    parts.append(pylint_utils._unquote(token))
++                buf = []
++                continue
++            buf.append(ch)
++        # Flush remainder
++        token = "".join(buf).strip()
++        if token:
++            from pylint import utils as pylint_utils  # local import to avoid cycles in static tools
++            parts.append(pylint_utils._unquote(token))
++        return parts
++
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in _regex_csv_split(value):
+         patterns.append(_regex_transformer(pattern))
+     return patterns
++def _regexp_paths_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
++    """Transforms a comma separated list of regular expressions paths.
+ 
++    Use the same regex-aware CSV splitting logic as for regular expressions.
++    """
++    def _regex_csv_split(s: str) -> list[str]:
++        parts: list[str] = []
++        buf: list[str] = []
++        depth_paren = 0
++        depth_brace = 0
++        in_char_class = False
++        escape = False
++        for ch in s:
++            if escape:
++                buf.append(ch)
++                escape = False
++                continue
++            if ch == "\\":
++                buf.append(ch)
++                escape = True
++                continue
++            if not in_char_class:
++                if ch == "[":
++                    in_char_class = True
++                elif ch == "(":
++                    depth_paren += 1
++                elif ch == ")":
++                    if depth_paren > 0:
++                        depth_paren -= 1
++                elif ch == "{":
++                    depth_brace += 1
++                elif ch == "}":
++                    if depth_brace > 0:
++                        depth_brace -= 1
++            else:
++                if ch == "]":
++                    in_char_class = False
++            if ch == "," and not in_char_class and depth_paren == 0 and depth_brace == 0:
++                token = "".join(buf).strip()
++                if token:
++                    from pylint import utils as pylint_utils  # local import to avoid cycles in static tools
++                    parts.append(pylint_utils._unquote(token))
++                buf = []
++                continue
++            buf.append(ch)
++        token = "".join(buf).strip()
++        if token:
++            from pylint import utils as pylint_utils  # local import to avoid cycles in static tools
++            parts.append(pylint_utils._unquote(token))
++        return parts
+ 
+-def _regexp_paths_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+-    """Transforms a comma separated list of regular expressions paths."""
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in _regex_csv_split(value):
+         patterns.append(
+             re.compile(
+                 str(pathlib.PureWindowsPath(pattern)).replace("\\", "\\\\")
+@@ -131,33 +232,6 @@ def _regexp_paths_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+             )
+         )
+     return patterns
+-
+-
+-_TYPE_TRANSFORMERS: dict[str, Callable[[str], _ArgumentTypes]] = {
+-    "choice": str,
+-    "csv": _csv_transformer,
+-    "float": float,
+-    "int": int,
+-    "confidence": _confidence_transformer,
+-    "non_empty_string": _non_empty_string_transformer,
+-    "path": _path_transformer,
+-    "glob_paths_csv": _glob_paths_csv_transformer,
+-    "py_version": _py_version_transformer,
+-    "regexp": _regex_transformer,
+-    "regexp_csv": _regexp_csv_transfomer,
+-    "regexp_paths_csv": _regexp_paths_csv_transfomer,
+-    "string": pylint_utils._unquote,
+-    "yn": _yn_transformer,
+-}
+-"""Type transformers for all argument types.
+-
+-A transformer should accept a string and return one of the supported
+-Argument types. It will only be called when parsing 1) command-line,
+-2) configuration files and 3) a string default value.
+-Non-string default values are assumed to be of the correct type.
+-"""
+-
+-
+ class _Argument:
+     """Class representing an argument to be parsed by an argparse.ArgumentsParser.
+ 

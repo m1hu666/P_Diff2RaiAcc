@@ -1,0 +1,346 @@
+diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py
+index abdeba8ef..0e0bdd60b 100644
+--- a/astropy/io/ascii/rst.py
++++ b/astropy/io/ascii/rst.py
+@@ -57,10 +57,17 @@ class RST(FixedWidth):
+     data_class = SimpleRSTData
+     header_class = SimpleRSTHeader
+ 
+-    def __init__(self):
+-        super().__init__(delimiter_pad=None, bookend=False)
++    def __init__(self, header_rows=None):
++        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)
++        # Adjust data start line based on number of header rows
++        # RST format: position_line (=), header_rows, separator (=), data
++        # So data starts at: 1 (position line) + len(header_rows) + 1 (separator) = 2 + len(header_rows)
++        self.data.start_line = 2 + len(self.header.header_rows)
+ 
+     def write(self, lines):
+         lines = super().write(lines)
+-        lines = [lines[1]] + lines + [lines[1]]
++        # The position line is at index len(header_rows) in the lines list
++        # (after all header rows and before data rows)
++        position_line_index = len(self.header.header_rows)
++        lines = [lines[position_line_index]] + lines + [lines[position_line_index]]
+         return lines
+diff --git a/test_final_validation.py b/test_final_validation.py
+new file mode 100644
+index 000000000..fca6c1e04
+--- /dev/null
++++ b/test_final_validation.py
+@@ -0,0 +1,82 @@
++"""Final validation test for RST header_rows support"""
++from astropy.table import QTable, Table
++import astropy.units as u
++from io import StringIO
++
++def test_rst_header_rows():
++    """Test RST format with various header_rows configurations"""
++    
++    # Test with QTable (has units)
++    tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++    
++    # Test 1: Default (only name)
++    output = StringIO()
++    tbl.write(output, format="ascii.rst")
++    result = output.getvalue()
++    assert "====" in result
++    assert "wave" in result
++    assert "response" in result
++    assert "350.0" in result
++    print("✓ Test 1 passed: Default header_rows")
++    
++    # Test 2: Explicit name only
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=["name"])
++    result = output.getvalue()
++    assert "====" in result
++    assert "wave" in result
++    assert "response" in result
++    assert "nm" not in result  # unit should not be present
++    print("✓ Test 2 passed: Explicit header_rows=['name']")
++    
++    # Test 3: Name and unit
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=["name", "unit"])
++    result = output.getvalue()
++    lines = result.strip().split('\n')
++    assert lines[0].startswith("=====")  # First line is position line
++    assert "wave" in lines[1]  # Second line is name
++    assert "nm" in lines[2]  # Third line is unit
++    assert lines[3].startswith("=====")  # Fourth line is separator
++    assert "350.0" in lines[4]  # Fifth line is data
++    print("✓ Test 3 passed: header_rows=['name', 'unit']")
++    
++    # Test 4: Multiple header rows
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=["name", "unit", "dtype"])
++    result = output.getvalue()
++    lines = result.strip().split('\n')
++    assert lines[0].startswith("=====")  # Position line
++    assert "wave" in lines[1]  # Name
++    assert "nm" in lines[2]  # Unit
++    assert "float64" in lines[3]  # Dtype
++    assert lines[4].startswith("=====")  # Separator
++    print("✓ Test 4 passed: header_rows=['name', 'unit', 'dtype']")
++    
++    # Test 5: Empty header_rows
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=[])
++    result = output.getvalue()
++    lines = result.strip().split('\n')
++    assert lines[0].startswith("=====")  # Position line
++    assert lines[1].startswith("=====")  # Separator (no header rows in between)
++    assert "350.0" in lines[2]  # Data starts immediately
++    print("✓ Test 5 passed: header_rows=[]")
++    
++    # Test 6: Table without units
++    tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})
++    output = StringIO()
++    tbl_no_units.write(output, format="ascii.rst", header_rows=["name", "unit"])
++    result = output.getvalue()
++    lines = result.strip().split('\n')
++    assert "col1" in lines[1]  # Name row
++    # Unit row should be empty or contain spaces
++    assert lines[2].strip() == "" or all(c in " =" for c in lines[2])
++    print("✓ Test 6 passed: Table without units")
++    
++    print("\n" + "=" * 70)
++    print("All tests passed! RST format now supports header_rows parameter.")
++    print("=" * 70)
++
++if __name__ == "__main__":
++    test_rst_header_rows()
+diff --git a/test_pr_example.py b/test_pr_example.py
+new file mode 100644
+index 000000000..ac6ebbbee
+--- /dev/null
++++ b/test_pr_example.py
+@@ -0,0 +1,32 @@
++"""Test the exact example from the PR description"""
++from astropy.table import QTable
++import astropy.units as u
++import sys
++from io import StringIO
++
++print("Testing the exact example from the PR description:")
++print("=" * 70)
++
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("\n1. Basic RST output:")
++print("-" * 70)
++output = StringIO()
++tbl.write(output, format="ascii.rst")
++print(output.getvalue())
++
++print("\n2. Fixed width with header_rows:")
++print("-" * 70)
++output = StringIO()
++tbl.write(output, format="ascii.fixed_width", header_rows=["name", "unit"])
++print(output.getvalue())
++
++print("\n3. RST with header_rows (this was failing before):")
++print("-" * 70)
++try:
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=["name", "unit"])
++    print(output.getvalue())
++    print("SUCCESS! No error occurred.")
++except TypeError as e:
++    print(f"FAILED with error: {e}")
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 000000000..97eabcc03
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,26 @@
++"""Test the exact scenario from the PR description"""
++from astropy.table import QTable
++import astropy.units as u
++import sys
++from io import StringIO
++
++print("Reproducing the exact scenario from the PR description:")
++print("=" * 70)
++
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("\n>>> tbl.write(sys.stdout, format='ascii.rst')")
++tbl.write(sys.stdout, format="ascii.rst")
++
++print("\n>>> tbl.write(sys.stdout, format='ascii.fixed_width', header_rows=['name', 'unit'])")
++tbl.write(sys.stdout, format="ascii.fixed_width", header_rows=["name", "unit"])
++
++print("\n>>> tbl.write(sys.stdout, format='ascii.rst', header_rows=['name', 'unit'])")
++print("(This was failing before with TypeError)")
++try:
++    tbl.write(sys.stdout, format="ascii.rst", header_rows=["name", "unit"])
++    print("\n✓ SUCCESS! No TypeError occurred.")
++    print("✓ The RST format now supports the header_rows parameter.")
++except TypeError as e:
++    print(f"\n✗ FAILED: {e}")
++    sys.exit(1)
+diff --git a/test_rst_comprehensive.py b/test_rst_comprehensive.py
+new file mode 100644
+index 000000000..103639874
+--- /dev/null
++++ b/test_rst_comprehensive.py
+@@ -0,0 +1,54 @@
++import sys
++from astropy.table import QTable
++import astropy.units as u
++from io import StringIO
++
++# Create a test table
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("=" * 60)
++print("Test 1: Basic RST output (default, only name)")
++print("=" * 60)
++output = StringIO()
++tbl.write(output, format="ascii.rst")
++print(output.getvalue())
++
++print("=" * 60)
++print("Test 2: RST with header_rows=['name']")
++print("=" * 60)
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=["name"])
++print(output.getvalue())
++
++print("=" * 60)
++print("Test 3: RST with header_rows=['name', 'unit']")
++print("=" * 60)
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=["name", "unit"])
++print(output.getvalue())
++
++print("=" * 60)
++print("Test 4: RST with header_rows=['unit', 'name'] (reversed)")
++print("=" * 60)
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=["unit", "name"])
++print(output.getvalue())
++
++print("=" * 60)
++print("Test 5: RST with header_rows=['name', 'unit', 'dtype']")
++print("=" * 60)
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=["name", "unit", "dtype"])
++print(output.getvalue())
++
++print("=" * 60)
++print("Test 6: Verify reading still works")
++print("=" * 60)
++from astropy.io import ascii
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=["name", "unit"])
++output.seek(0)
++print("Written table:")
++print(output.getvalue())
++# Note: Reading with multiple header rows is not supported yet, 
++# but basic reading should still work
+diff --git a/test_rst_edge_cases.py b/test_rst_edge_cases.py
+new file mode 100644
+index 000000000..7b94dc916
+--- /dev/null
++++ b/test_rst_edge_cases.py
+@@ -0,0 +1,33 @@
++import sys
++from astropy.table import QTable
++import astropy.units as u
++from io import StringIO
++
++# Create a test table
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("=" * 60)
++print("Test 1: RST with header_rows=[] (no header)")
++print("=" * 60)
++try:
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=[])
++    print(output.getvalue())
++except Exception as e:
++    print(f"Error: {e}")
++
++print("=" * 60)
++print("Test 2: RST with None (should use default)")
++print("=" * 60)
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=None)
++print(output.getvalue())
++
++print("=" * 60)
++print("Test 3: Table without units")
++print("=" * 60)
++from astropy.table import Table
++tbl_no_units = Table({'col1': [1, 2], 'col2': [3, 4]})
++output = StringIO()
++tbl_no_units.write(output, format="ascii.rst", header_rows=["name", "unit"])
++print(output.getvalue())
+diff --git a/test_rst_header_rows.py b/test_rst_header_rows.py
+new file mode 100644
+index 000000000..926fadb95
+--- /dev/null
++++ b/test_rst_header_rows.py
+@@ -0,0 +1,20 @@
++import sys
++from astropy.table import QTable
++import astropy.units as u
++
++# Create a test table
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("Test 1: Basic RST output (should work)")
++tbl.write(sys.stdout, format="ascii.rst")
++print()
++
++print("Test 2: Fixed width with header_rows (should work)")
++tbl.write(sys.stdout, format="ascii.fixed_width", header_rows=["name", "unit"])
++print()
++
++print("Test 3: RST with header_rows (currently fails)")
++try:
++    tbl.write(sys.stdout, format="ascii.rst", header_rows=["name", "unit"])
++except TypeError as e:
++    print(f"Error: {e}")
+diff --git a/test_rst_read.py b/test_rst_read.py
+new file mode 100644
+index 000000000..ce92cf815
+--- /dev/null
++++ b/test_rst_read.py
+@@ -0,0 +1,32 @@
++"""Test that RST reading still works after our changes"""
++from astropy.io import ascii
++from io import StringIO
++
++# Test reading a basic RST table
++rst_table = """
++===== ========
++ wave response
++===== ========
++350.0      0.7
++950.0      1.2
++===== ========
++"""
++
++print("Testing RST reading functionality:")
++print("=" * 70)
++
++# Read the table
++tbl = ascii.read(rst_table, format='rst')
++print("Successfully read RST table:")
++print(tbl)
++print()
++
++# Verify the data
++assert len(tbl) == 2
++assert tbl['wave'][0] == 350.0
++assert tbl['wave'][1] == 950.0
++assert tbl['response'][0] == 0.7
++assert tbl['response'][1] == 1.2
++
++print("✓ All assertions passed!")
++print("✓ RST reading functionality is intact")

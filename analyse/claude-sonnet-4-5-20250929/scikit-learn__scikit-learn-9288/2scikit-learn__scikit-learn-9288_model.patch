@@ -1,0 +1,392 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 000000000..391448ca5
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,29 @@
++# Fix for KMeans n_jobs Consistency Issue
++
++## Problem
++KMeans was giving slightly different results when n_jobs=1 vs n_jobs>1 with the same random_state.
++
++## Root Cause
++In the k_means function in /testbed/sklearn/cluster/k_means_.py, the handling of random state was different for single-threaded vs parallel execution:
++
++- Single-threaded (n_jobs=1): The same random_state object was passed to each iteration, causing the random state to evolve across iterations.
++- Parallel (n_jobs>1): Seeds were pre-generated using random_state.randint(), and each parallel job received a different seed.
++
++This inconsistency meant that the sequence of random numbers used in each case was different, leading to different initialization points and ultimately different clustering results.
++
++## Solution
++Modified the k_means function to generate seeds upfront for all cases, regardless of n_jobs value.
++
++## Changes Made
++- File: /testbed/sklearn/cluster/k_means_.py
++- Lines modified: approximately 363-397
++- Key change: Moved seed generation before the if effective_n_jobs(n_jobs) == 1: check
++- Updated single-threaded loop to iterate over seeds instead of using random_state directly
++
++## Testing
++All existing tests pass (123 tests in test_k_means.py), and the fix has been verified to:
++1. Produce identical results for n_jobs=1, 2, 3, 4 with the same random_state
++2. Still produce different results for different random_state values
++3. Work correctly with different n_init values
++4. Work correctly with both 'full' and 'elkan' algorithms
++5. Work correctly with sparse data
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 000000000..cc9ad6148
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,106 @@
++"""
++Final verification that the fix for KMeans n_jobs consistency is working.
++
++This test verifies that KMeans produces identical results regardless of the
++n_jobs parameter when using the same random_state.
++
++Issue: https://github.com/scikit-learn/scikit-learn/issues/...
++KMeans was giving slightly different results for n_jobs=1 vs. n_jobs>1
++because the random state was being used differently in the two cases.
++
++Fix: Generate seeds upfront for all n_init runs, regardless of n_jobs value.
++"""
++
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++def test_kmeans_n_jobs_consistency():
++    """Test that KMeans gives the same results for different n_jobs values."""
++    print("Testing KMeans n_jobs consistency fix")
++    print("=" * 70)
++    
++    # Generate test data
++    X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++    
++    # Test with various n_jobs values
++    print("\n1. Testing with original issue parameters:")
++    print("   (n_samples=10000, centers=10, n_features=2, random_state=2)")
++    results = {}
++    for n_jobs in range(1, 5):
++        kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs)
++        kmeans.fit(X)
++        results[n_jobs] = {
++            'inertia': kmeans.inertia_,
++            'centers': kmeans.cluster_centers_.copy(),
++            'labels': kmeans.labels_.copy()
++        }
++        print(f"   n_jobs={n_jobs}: inertia={kmeans.inertia_}")
++    
++    # Verify all results are identical
++    reference = results[1]
++    all_match = True
++    for n_jobs in range(2, 5):
++        if results[n_jobs]['inertia'] != reference['inertia']:
++            print(f"   [FAIL] n_jobs={n_jobs} inertia doesn't match n_jobs=1")
++            all_match = False
++        if not np.allclose(results[n_jobs]['centers'], reference['centers']):
++            print(f"   [FAIL] n_jobs={n_jobs} centers don't match n_jobs=1")
++            all_match = False
++        if not np.array_equal(results[n_jobs]['labels'], reference['labels']):
++            print(f"   [FAIL] n_jobs={n_jobs} labels don't match n_jobs=1")
++            all_match = False
++    
++    if all_match:
++        print("   [PASS] All n_jobs values produce identical results!")
++    
++    # Test with different n_init values
++    print("\n2. Testing with different n_init values:")
++    for n_init in [1, 5, 10, 20]:
++        inertias = []
++        for n_jobs in [1, 2, 4]:
++            kmeans = KMeans(n_clusters=10, random_state=42, n_jobs=n_jobs, n_init=n_init)
++            kmeans.fit(X)
++            inertias.append(kmeans.inertia_)
++        
++        if len(set(inertias)) == 1:
++            print(f"   n_init={n_init:2d}: [PASS] All n_jobs match (inertia={inertias[0]:.6f})")
++        else:
++            print(f"   n_init={n_init:2d}: [FAIL] Mismatch: {inertias}")
++    
++    # Test with different algorithms
++    print("\n3. Testing with different algorithms:")
++    for algorithm in ['full', 'elkan']:
++        inertias = []
++        for n_jobs in [1, 2, 3]:
++            kmeans = KMeans(n_clusters=10, random_state=42, n_jobs=n_jobs, algorithm=algorithm)
++            kmeans.fit(X)
++            inertias.append(kmeans.inertia_)
++        
++        if len(set(inertias)) == 1:
++            print(f"   algorithm={algorithm:6s}: [PASS] All n_jobs match")
++        else:
++            print(f"   algorithm={algorithm:6s}: [FAIL] Mismatch: {inertias}")
++    
++    # Verify different random states still give different results
++    print("\n4. Verifying different random_state values give different results:")
++    inertias = []
++    for rs in [1, 2, 3, 4, 5]:
++        kmeans = KMeans(n_clusters=10, random_state=rs, n_jobs=1, n_init=1)
++        kmeans.fit(X)
++        inertias.append(kmeans.inertia_)
++    
++    unique_count = len(set(inertias))
++    print(f"   {unique_count} unique results out of 5 random states")
++    if unique_count > 1:
++        print("   [PASS] Different random states produce different results")
++    else:
++        print("   [FAIL] All random states produced the same result")
++    
++    print("\n" + "=" * 70)
++    print("Verification complete!")
++    return all_match
++
++if __name__ == "__main__":
++    success = test_kmeans_n_jobs_consistency()
++    exit(0 if success else 1)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..72a9eb7ff
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,11 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++
++# Generate some data
++X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++
++# Run KMeans with various n_jobs values
++for n_jobs in range(1, 5):
++    kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs)
++    kmeans.fit(X)
++    print(f'(n_jobs={n_jobs}) kmeans.inertia_ = {kmeans.inertia_}')
+diff --git a/sklearn/cluster/k_means_.py b/sklearn/cluster/k_means_.py
+index b7fbdf7da..d80671be4 100644
+--- a/sklearn/cluster/k_means_.py
++++ b/sklearn/cluster/k_means_.py
+@@ -360,16 +360,19 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
+     else:
+         raise ValueError("Algorithm must be 'auto', 'full' or 'elkan', got"
+                          " %s" % str(algorithm))
++    # Generate seeds for each run to ensure consistent behavior
++    # regardless of n_jobs value
++    seeds = random_state.randint(np.iinfo(np.int32).max, size=n_init)
+     if effective_n_jobs(n_jobs) == 1:
+         # For a single thread, less memory is needed if we just store one set
+         # of the best results (as opposed to one set per run per thread).
+-        for it in range(n_init):
++        for seed in seeds:
+             # run a k-means once
+             labels, inertia, centers, n_iter_ = kmeans_single(
+                 X, sample_weight, n_clusters, max_iter=max_iter, init=init,
+                 verbose=verbose, precompute_distances=precompute_distances,
+                 tol=tol, x_squared_norms=x_squared_norms,
+-                random_state=random_state)
++                random_state=seed)
+             # determine if these results are the best so far
+             if best_inertia is None or inertia < best_inertia:
+                 best_labels = labels.copy()
+@@ -378,7 +381,6 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
+                 best_n_iter = n_iter_
+     else:
+         # parallelisation of k-means runs
+-        seeds = random_state.randint(np.iinfo(np.int32).max, size=n_init)
+         results = Parallel(n_jobs=n_jobs, verbose=0)(
+             delayed(kmeans_single)(X, sample_weight, n_clusters,
+                                    max_iter=max_iter, init=init,
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..5b81fd1e3
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,68 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++print("Testing edge cases for the n_jobs fix")
++print("=" * 60)
++
++# Test 1: n_init=1 (single initialization)
++print("\nTest 1: n_init=1 (single initialization)")
++X, y = make_blobs(n_samples=1000, centers=5, n_features=2, random_state=42)
++for n_jobs in [1, 2, 3]:
++    kmeans = KMeans(n_clusters=5, random_state=42, n_jobs=n_jobs, n_init=1)
++    kmeans.fit(X)
++    print(f"  n_jobs={n_jobs}: inertia={kmeans.inertia_:.6f}")
++
++# Test 2: Large n_init
++print("\nTest 2: Large n_init (n_init=20)")
++for n_jobs in [1, 2, 4]:
++    kmeans = KMeans(n_clusters=5, random_state=42, n_jobs=n_jobs, n_init=20)
++    kmeans.fit(X)
++    print(f"  n_jobs={n_jobs}: inertia={kmeans.inertia_:.6f}")
++
++# Test 3: Different algorithms
++print("\nTest 3: Different algorithms")
++for algorithm in ['full', 'elkan']:
++    results = []
++    for n_jobs in [1, 2]:
++        kmeans = KMeans(n_clusters=5, random_state=42, n_jobs=n_jobs, algorithm=algorithm)
++        kmeans.fit(X)
++        results.append(kmeans.inertia_)
++        print(f"  algorithm={algorithm}, n_jobs={n_jobs}: inertia={kmeans.inertia_:.6f}")
++    if results[0] == results[1]:
++        print(f"  [PASS] {algorithm}: n_jobs=1 and n_jobs=2 match")
++    else:
++        print(f"  [FAIL] {algorithm}: n_jobs=1 and n_jobs=2 don't match")
++
++# Test 4: Sparse data
++print("\nTest 4: Sparse data")
++from scipy.sparse import csr_matrix
++X_sparse = csr_matrix(X)
++for n_jobs in [1, 2]:
++    kmeans = KMeans(n_clusters=5, random_state=42, n_jobs=n_jobs, algorithm='full')
++    kmeans.fit(X_sparse)
++    print(f"  n_jobs={n_jobs}: inertia={kmeans.inertia_:.6f}")
++
++# Test 5: Very small dataset
++print("\nTest 5: Very small dataset (n_samples=50)")
++X_small, _ = make_blobs(n_samples=50, centers=3, n_features=2, random_state=42)
++for n_jobs in [1, 2]:
++    kmeans = KMeans(n_clusters=3, random_state=42, n_jobs=n_jobs)
++    kmeans.fit(X_small)
++    print(f"  n_jobs={n_jobs}: inertia={kmeans.inertia_:.6f}")
++
++# Test 6: Verify that different random_state still gives different results
++print("\nTest 6: Different random_state should give different results")
++kmeans1 = KMeans(n_clusters=5, random_state=1, n_jobs=1)
++kmeans1.fit(X)
++kmeans2 = KMeans(n_clusters=5, random_state=999, n_jobs=1)
++kmeans2.fit(X)
++if kmeans1.inertia_ != kmeans2.inertia_:
++    print(f"  [PASS] Different random states give different results")
++    print(f"    random_state=1: {kmeans1.inertia_:.6f}")
++    print(f"    random_state=999: {kmeans2.inertia_:.6f}")
++else:
++    print(f"  [FAIL] Different random states should give different results")
++
++print("\n" + "=" * 60)
++print("All edge case tests completed!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..dfd328e95
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,72 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++print("Test 1: Original issue - different n_jobs values")
++X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++results = []
++for n_jobs in range(1, 5):
++    kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs)
++    kmeans.fit(X)
++    results.append(kmeans.inertia_)
++    print(f'(n_jobs={n_jobs}) kmeans.inertia_ = {kmeans.inertia_}')
++
++# Check all results are the same
++if len(set(results)) == 1:
++    print("[PASS] Test 1: All n_jobs values produce the same result")
++else:
++    print("[FAIL] Test 1: Different results for different n_jobs values")
++
++print("\nTest 2: Different random states should give different results")
++kmeans1 = KMeans(n_clusters=10, random_state=1, n_jobs=1)
++kmeans1.fit(X)
++kmeans2 = KMeans(n_clusters=10, random_state=2, n_jobs=1)
++kmeans2.fit(X)
++if kmeans1.inertia_ != kmeans2.inertia_:
++    print(f"[PASS] Test 2: Different random states give different results")
++    print(f"  random_state=1: {kmeans1.inertia_}")
++    print(f"  random_state=2: {kmeans2.inertia_}")
++else:
++    print("[FAIL] Test 2: Different random states should give different results")
++
++print("\nTest 3: Same random state with n_jobs=1 and n_jobs=2 should match")
++kmeans_single = KMeans(n_clusters=10, random_state=42, n_jobs=1)
++kmeans_single.fit(X)
++kmeans_parallel = KMeans(n_clusters=10, random_state=42, n_jobs=2)
++kmeans_parallel.fit(X)
++if kmeans_single.inertia_ == kmeans_parallel.inertia_:
++    print(f"[PASS] Test 3: n_jobs=1 and n_jobs=2 with same random_state match")
++    print(f"  Inertia: {kmeans_single.inertia_}")
++else:
++    print(f"[FAIL] Test 3: n_jobs=1 and n_jobs=2 should match")
++    print(f"  n_jobs=1: {kmeans_single.inertia_}")
++    print(f"  n_jobs=2: {kmeans_parallel.inertia_}")
++
++print("\nTest 4: Check cluster centers are also the same")
++kmeans1 = KMeans(n_clusters=5, random_state=10, n_jobs=1)
++kmeans1.fit(X)
++kmeans2 = KMeans(n_clusters=5, random_state=10, n_jobs=3)
++kmeans2.fit(X)
++centers_match = np.allclose(kmeans1.cluster_centers_, kmeans2.cluster_centers_)
++if centers_match:
++    print("[PASS] Test 4: Cluster centers match for n_jobs=1 and n_jobs=3")
++else:
++    print("[FAIL] Test 4: Cluster centers should match")
++
++print("\nTest 5: Check labels are also the same")
++labels_match = np.array_equal(kmeans1.labels_, kmeans2.labels_)
++if labels_match:
++    print("[PASS] Test 5: Labels match for n_jobs=1 and n_jobs=3")
++else:
++    print("[FAIL] Test 5: Labels should match")
++
++print("\nTest 6: Test with different n_init values")
++for n_init in [1, 5, 10]:
++    kmeans1 = KMeans(n_clusters=5, random_state=7, n_jobs=1, n_init=n_init)
++    kmeans1.fit(X)
++    kmeans2 = KMeans(n_clusters=5, random_state=7, n_jobs=2, n_init=n_init)
++    kmeans2.fit(X)
++    if kmeans1.inertia_ == kmeans2.inertia_:
++        print(f"[PASS] n_init={n_init}: Results match (inertia={kmeans1.inertia_})")
++    else:
++        print(f"[FAIL] n_init={n_init}: Results don't match (n_jobs=1: {kmeans1.inertia_}, n_jobs=2: {kmeans2.inertia_})")
+diff --git a/test_random_state.py b/test_random_state.py
+new file mode 100644
+index 000000000..bc0ce6273
+--- /dev/null
++++ b/test_random_state.py
+@@ -0,0 +1,36 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++print("Testing that different random states can give different results")
++X, y = make_blobs(n_samples=1000, centers=5, n_features=2, random_state=42)
++
++# With n_init=1, different random states should give different results
++print("\nWith n_init=1:")
++results = []
++for rs in [1, 2, 3, 4, 5]:
++    kmeans = KMeans(n_clusters=5, random_state=rs, n_jobs=1, n_init=1)
++    kmeans.fit(X)
++    results.append(kmeans.inertia_)
++    print(f"  random_state={rs}: inertia={kmeans.inertia_:.6f}")
++
++unique_results = len(set(results))
++print(f"\nNumber of unique results: {unique_results} out of 5")
++if unique_results > 1:
++    print("[PASS] Different random states give different results with n_init=1")
++else:
++    print("[FAIL] All random states gave the same result")
++
++# Verify n_jobs consistency for each random state
++print("\nVerifying n_jobs consistency for each random state:")
++for rs in [1, 2, 3]:
++    inertias = []
++    for n_jobs in [1, 2, 3]:
++        kmeans = KMeans(n_clusters=5, random_state=rs, n_jobs=n_jobs, n_init=5)
++        kmeans.fit(X)
++        inertias.append(kmeans.inertia_)
++    
++    if len(set(inertias)) == 1:
++        print(f"  random_state={rs}: [PASS] All n_jobs values match (inertia={inertias[0]:.6f})")
++    else:
++        print(f"  random_state={rs}: [FAIL] n_jobs values don't match: {inertias}")
