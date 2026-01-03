@@ -1,0 +1,71 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index 7d226955d5..1f88d6e02c 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -1,4 +1,5 @@
+ import builtins
++import importlib
+ import collections.abc
+ import datetime
+ import decimal
+@@ -90,14 +91,39 @@ class DeconstructableSerializer(BaseSerializer):
+ 
+     @staticmethod
+     def _serialize_path(path):
+-        module, name = path.rsplit(".", 1)
+-        if module == "django.db.models":
+-            imports = {"from django.db import models"}
+-            name = "models.%s" % name
+-        else:
+-            imports = {"import %s" % module}
+-            name = path
+-        return name, imports
++        # Determine the longest importable module prefix from the path.
++        parts = path.split('.')
++        import_module_path = None
++        for i in range(len(parts), 0, -1):
++            candidate = '.'.join(parts[:i])
++            try:
++                importlib.import_module(candidate)
++            except Exception:
++                continue
++            else:
++                import_module_path = candidate
++                break
++        # Fallback: split on last dot if nothing importable is found.
++        if not import_module_path:
++            module, name = path.rsplit('.', 1)
++            if module == 'django.db.models':
++                imports = {'from django.db import models'}
++                name = 'models.%s' % name
++            else:
++                imports = {'import %s' % module}
++                name = path
++            return name, imports
++        # Special-case django.db.models short import.
++        if import_module_path == 'django.db.models':
++            # Name should be models.<QualName> when possible.
++            if path.startswith('django.db.models.'):
++                name_tail = path[len('django.db.models.'):]
++            else:
++                name_tail = path.rsplit('.', 1)[-1]
++            return 'models.%s' % name_tail, {'from django.db import models'}
++        # Otherwise, import the module prefix and use the full path reference.
++        return path, {f'import {import_module_path}'}
++
+ 
+     def serialize(self):
+         return self.serialize_deconstructed(*self.value.deconstruct())
+@@ -267,9 +293,10 @@ class TypeSerializer(BaseSerializer):
+         if hasattr(self.value, "__module__"):
+             module = self.value.__module__
+             if module == builtins.__name__:
+-                return self.value.__name__, set()
++                name = getattr(self.value, "__qualname__", self.value.__name__)
++                return name, set()
+             else:
+-                return "%s.%s" % (module, self.value.__name__), {"import %s" % module}
++                return "%s.%s" % (module, getattr(self.value, "__qualname__", self.value.__name__)), {"import %s" % module}
+ 
+ 
+ class UUIDSerializer(BaseSerializer):

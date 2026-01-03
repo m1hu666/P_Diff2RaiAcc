@@ -1,0 +1,1225 @@
+diff --git a/astropy/coordinates/builtin_frames/__init__.py b/astropy/coordinates/builtin_frames/__init__.py
+index 6fd688c28..17b524478 100644
+--- a/astropy/coordinates/builtin_frames/__init__.py
++++ b/astropy/coordinates/builtin_frames/__init__.py
+@@ -48,6 +48,7 @@ from . import supergalactic_transforms
+ from . import icrs_cirs_transforms
+ from . import cirs_observed_transforms
+ from . import icrs_observed_transforms
++from . import itrs_observed_transforms
+ from . import intermediate_rotation_transforms
+ from . import ecliptic_transforms
+ 
+diff --git a/astropy/coordinates/builtin_frames/itrs_observed_transforms.py b/astropy/coordinates/builtin_frames/itrs_observed_transforms.py
+new file mode 100644
+index 000000000..3747d2df4
+--- /dev/null
++++ b/astropy/coordinates/builtin_frames/itrs_observed_transforms.py
+@@ -0,0 +1,95 @@
++# Licensed under a 3-clause BSD style license - see LICENSE.rst
++"""
++Contains the transformation functions for getting to "observed" systems from ITRS.
++This is a direct approach that stays within the ITRS frame.
++"""
++
++import numpy as np
++
++from astropy import units as u
++from astropy.coordinates.matrix_utilities import rotation_matrix, matrix_transpose
++from astropy.coordinates.baseframe import frame_transform_graph
++from astropy.coordinates.transformations import FunctionTransformWithFiniteDifference
++
++from .altaz import AltAz
++from .hadec import HADec
++from .itrs import ITRS
++from .utils import PIOVER2
++
++
++def itrs_to_observed_mat(observed_frame):
++    """
++    Compute the transformation matrix from ITRS to the observed frame (AltAz or HADec).
++    
++    Parameters
++    ----------
++    observed_frame : AltAz or HADec frame
++        The target observed frame
++        
++    Returns
++    -------
++    mat : array
++        3x3 rotation matrix for the transformation
++    """
++    lon, lat, height = observed_frame.location.to_geodetic('WGS84')
++    elong = lon.to_value(u.radian)
++
++    if isinstance(observed_frame, AltAz):
++        # form ITRS to AltAz matrix
++        elat = lat.to_value(u.radian)
++        # AltAz frame is left handed
++        minus_x = np.eye(3)
++        minus_x[0][0] = -1.0
++        mat = (minus_x
++               @ rotation_matrix(PIOVER2 - elat, 'y', unit=u.radian)
++               @ rotation_matrix(elong, 'z', unit=u.radian))
++
++    else:
++        # form ITRS to HADec matrix
++        # HADec frame is left handed
++        minus_y = np.eye(3)
++        minus_y[1][1] = -1.0
++        mat = (minus_y
++               @ rotation_matrix(elong, 'z', unit=u.radian))
++    return mat
++
++
++@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, ITRS, AltAz)
++@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, ITRS, HADec)
++def itrs_to_observed(itrs_coo, observed_frame):
++    """
++    Transform from ITRS to observed frame (AltAz or HADec).
++    
++    This transformation treats ITRS coordinates as time-invariant, which is
++    appropriate for Earth-fixed coordinates. The obstime of the output frame
++    is adopted without transforming the ITRS position.
++    """
++    # Trying to synchronize the obstimes here makes no sense. In fact,
++    # it's a real gotcha as doing an ITRS->ITRS transform references 
++    # ITRS coordinates, which should be tied to the Earth, to the SSB.
++    # Instead, we treat ITRS coordinates as time invariant here.
++
++    # form the Topocentric ITRS position
++    topocentric_itrs_repr = (itrs_coo.cartesian
++                             - observed_frame.location.get_itrs().cartesian)
++    rep = topocentric_itrs_repr.transform(itrs_to_observed_mat(observed_frame))
++    return observed_frame.realize_frame(rep)
++
++
++@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, AltAz, ITRS)
++@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, HADec, ITRS)
++def observed_to_itrs(observed_coo, itrs_frame):
++    """
++    Transform from observed frame (AltAz or HADec) to ITRS.
++    
++    This transformation treats ITRS coordinates as time-invariant, which is
++    appropriate for Earth-fixed coordinates.
++    """
++    # form the Topocentric ITRS position
++    topocentric_itrs_repr = observed_coo.cartesian.transform(matrix_transpose(
++                            itrs_to_observed_mat(observed_coo)))
++    # form the Geocentric ITRS position
++    rep = topocentric_itrs_repr + observed_coo.location.get_itrs().cartesian
++    return itrs_frame.realize_frame(rep)
++
++
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..59d3bb15e
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,171 @@
++"""Test edge cases for ITRS to Observed transformations."""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec
++from astropy.time import Time
++
++print("=" * 80)
++print("EDGE CASE TESTING")
++print("=" * 80)
++
++obstime = Time('2020-01-01T12:00:00')
++
++# Test 1: North Pole
++print("\n1. Testing at North Pole:")
++north_pole = EarthLocation(lat=90*u.deg, lon=0*u.deg, height=0*u.m)
++pole_itrs = north_pole.get_itrs(obstime)
++
++# Point 1000m above the pole
++itrs_above_pole = ITRS(
++    x=pole_itrs.x,
++    y=pole_itrs.y,
++    z=pole_itrs.z + 1000*u.m,
++    obstime=obstime
++)
++
++altaz_pole = itrs_above_pole.transform_to(AltAz(obstime=obstime, location=north_pole))
++print(f"   Point above North Pole: alt={altaz_pole.alt:.6f}, dist={altaz_pole.distance:.2f}")
++print(f"   Expected: alt ‚âà 90¬∞, dist ‚âà 1000m")
++assert abs(altaz_pole.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_pole.distance - 1000*u.m) < 1e-6*u.m
++print("   ‚úì North Pole test passed")
++
++# Test 2: South Pole
++print("\n2. Testing at South Pole:")
++south_pole = EarthLocation(lat=-90*u.deg, lon=0*u.deg, height=0*u.m)
++pole_itrs_s = south_pole.get_itrs(obstime)
++
++itrs_above_pole_s = ITRS(
++    x=pole_itrs_s.x,
++    y=pole_itrs_s.y,
++    z=pole_itrs_s.z - 1000*u.m,  # Down is up at South Pole
++    obstime=obstime
++)
++
++altaz_pole_s = itrs_above_pole_s.transform_to(AltAz(obstime=obstime, location=south_pole))
++print(f"   Point above South Pole: alt={altaz_pole_s.alt:.6f}, dist={altaz_pole_s.distance:.2f}")
++print(f"   Expected: alt ‚âà 90¬∞, dist ‚âà 1000m")
++assert abs(altaz_pole_s.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_pole_s.distance - 1000*u.m) < 1e-6*u.m
++print("   ‚úì South Pole test passed")
++
++# Test 3: Equator
++print("\n3. Testing at Equator:")
++equator = EarthLocation(lat=0*u.deg, lon=0*u.deg, height=0*u.m)
++eq_itrs = equator.get_itrs(obstime)
++
++itrs_above_eq = ITRS(
++    x=eq_itrs.x + 1000*u.m,  # Radially outward
++    y=eq_itrs.y,
++    z=eq_itrs.z,
++    obstime=obstime
++)
++
++altaz_eq = itrs_above_eq.transform_to(AltAz(obstime=obstime, location=equator))
++print(f"   Point above Equator: alt={altaz_eq.alt:.6f}, dist={altaz_eq.distance:.2f}")
++print(f"   Expected: alt ‚âà 90¬∞, dist ‚âà 1000m")
++assert abs(altaz_eq.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_eq.distance - 1000*u.m) < 1e-6*u.m
++print("   ‚úì Equator test passed")
++
++# Test 4: Prime Meridian
++print("\n4. Testing at Prime Meridian:")
++prime = EarthLocation(lat=51.5*u.deg, lon=0*u.deg, height=0*u.m)
++prime_itrs = prime.get_itrs(obstime)
++
++lat_rad = prime.lat.to_value(u.radian)
++up_x = np.cos(lat_rad)
++up_z = np.sin(lat_rad)
++
++itrs_above_prime = ITRS(
++    x=prime_itrs.x + 2000*u.m * up_x,
++    y=prime_itrs.y,
++    z=prime_itrs.z + 2000*u.m * up_z,
++    obstime=obstime
++)
++
++altaz_prime = itrs_above_prime.transform_to(AltAz(obstime=obstime, location=prime))
++print(f"   Point above Prime Meridian: alt={altaz_prime.alt:.6f}, dist={altaz_prime.distance:.2f}")
++assert abs(altaz_prime.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_prime.distance - 2000*u.m) < 1e-6*u.m
++print("   ‚úì Prime Meridian test passed")
++
++# Test 5: International Date Line
++print("\n5. Testing at International Date Line:")
++dateline = EarthLocation(lat=0*u.deg, lon=180*u.deg, height=0*u.m)
++dl_itrs = dateline.get_itrs(obstime)
++
++itrs_above_dl = ITRS(
++    x=dl_itrs.x - 1500*u.m,  # Radially outward (x is negative at lon=180)
++    y=dl_itrs.y,
++    z=dl_itrs.z,
++    obstime=obstime
++)
++
++altaz_dl = itrs_above_dl.transform_to(AltAz(obstime=obstime, location=dateline))
++print(f"   Point above Date Line: alt={altaz_dl.alt:.6f}, dist={altaz_dl.distance:.2f}")
++assert abs(altaz_dl.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_dl.distance - 1500*u.m) < 1e-6*u.m
++print("   ‚úì International Date Line test passed")
++
++# Test 6: Very high altitude
++print("\n6. Testing very high altitude (geostationary orbit):")
++geo_location = EarthLocation(lat=0*u.deg, lon=0*u.deg, height=0*u.m)
++geo_itrs = geo_location.get_itrs(obstime)
++
++# Geostationary orbit is about 35,786 km above equator
++geo_alt = 35786 * u.km
++itrs_geo = ITRS(
++    x=geo_itrs.x + geo_alt,
++    y=geo_itrs.y,
++    z=geo_itrs.z,
++    obstime=obstime
++)
++
++altaz_geo = itrs_geo.transform_to(AltAz(obstime=obstime, location=geo_location))
++print(f"   Geostationary satellite: alt={altaz_geo.alt:.6f}, dist={altaz_geo.distance:.2f}")
++assert abs(altaz_geo.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_geo.distance - geo_alt) < 1*u.m
++print("   ‚úì High altitude test passed")
++
++# Test 7: Round-trip for all edge cases
++print("\n7. Testing round-trip accuracy for all edge cases:")
++test_cases = [
++    ("North Pole", altaz_pole, north_pole),
++    ("South Pole", altaz_pole_s, south_pole),
++    ("Equator", altaz_eq, equator),
++    ("Prime Meridian", altaz_prime, prime),
++    ("Date Line", altaz_dl, dateline),
++    ("Geostationary", altaz_geo, geo_location),
++]
++
++all_passed = True
++for name, altaz_coord, location in test_cases:
++    itrs_back = altaz_coord.transform_to(ITRS(obstime=obstime))
++    # Get the original ITRS coordinate
++    if name == "North Pole":
++        original = itrs_above_pole
++    elif name == "South Pole":
++        original = itrs_above_pole_s
++    elif name == "Equator":
++        original = itrs_above_eq
++    elif name == "Prime Meridian":
++        original = itrs_above_prime
++    elif name == "Date Line":
++        original = itrs_above_dl
++    else:  # Geostationary
++        original = itrs_geo
++    
++    cart_diff = (original.cartesian - itrs_back.cartesian).norm()
++    print(f"   {name}: {cart_diff:.12f}")
++    if cart_diff > 1e-6*u.m:
++        all_passed = False
++
++if all_passed:
++    print("   ‚úì All round-trip tests passed (error < 1 Œºm)")
++else:
++    print("   ‚úó Some round-trip tests failed")
++
++print("\n" + "=" * 80)
++print("ALL EDGE CASE TESTS PASSED!")
++print("=" * 80)
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 000000000..424155170
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,149 @@
++"""Final verification of ITRS to Observed transformations."""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec, frame_transform_graph
++from astropy.time import Time
++
++print("=" * 80)
++print("FINAL VERIFICATION OF ITRS TO OBSERVED TRANSFORMATIONS")
++print("=" * 80)
++
++# Test 1: Verify direct transformation path
++print("\n1. Transformation Path Verification:")
++print("   ITRS -> AltAz:", frame_transform_graph.find_shortest_path(ITRS, AltAz))
++print("   ITRS -> HADec:", frame_transform_graph.find_shortest_path(ITRS, HADec))
++print("   AltAz -> ITRS:", frame_transform_graph.find_shortest_path(AltAz, ITRS))
++print("   HADec -> ITRS:", frame_transform_graph.find_shortest_path(HADec, ITRS))
++assert frame_transform_graph.find_shortest_path(ITRS, AltAz)[1] == 1.0
++assert frame_transform_graph.find_shortest_path(ITRS, HADec)[1] == 1.0
++print("   ‚úì All paths are direct (cost = 1.0)")
++
++# Test 2: Basic transformation accuracy
++print("\n2. Basic Transformation Accuracy:")
++location = EarthLocation(lat=40*u.deg, lon=-75*u.deg, height=100*u.m)
++obstime = Time('2020-01-01T12:00:00')
++observer_itrs = location.get_itrs(obstime)
++
++# Point directly above
++lat_rad = location.lat.to_value(u.radian)
++lon_rad = location.lon.to_value(u.radian)
++up_x = np.cos(lat_rad) * np.cos(lon_rad)
++up_y = np.cos(lat_rad) * np.sin(lon_rad)
++up_z = np.sin(lat_rad)
++
++itrs_above = ITRS(
++    x=observer_itrs.x + 1000*u.m * up_x,
++    y=observer_itrs.y + 1000*u.m * up_y,
++    z=observer_itrs.z + 1000*u.m * up_z,
++    obstime=obstime
++)
++
++altaz = itrs_above.transform_to(AltAz(obstime=obstime, location=location))
++assert abs(altaz.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz.distance - 1000*u.m) < 1e-6*u.m
++print(f"   Point above: alt={altaz.alt:.9f} (expected 90¬∞)")
++print(f"   Distance: {altaz.distance:.9f} (expected 1000 m)")
++print("   ‚úì Overhead point is at alt=90¬∞ and distance=1000m")
++
++hadec = itrs_above.transform_to(HADec(obstime=obstime, location=location))
++assert abs(hadec.dec - location.lat) < 1e-6*u.deg
++assert abs(hadec.distance - 1000*u.m) < 1e-6*u.m
++print(f"   Point above: dec={hadec.dec:.9f} (expected {location.lat:.9f})")
++print("   ‚úì Overhead point has dec=latitude")
++
++# Test 3: Round-trip accuracy
++print("\n3. Round-Trip Accuracy:")
++itrs_back = altaz.transform_to(ITRS(obstime=obstime))
++cart_diff = (itrs_above.cartesian - itrs_back.cartesian).norm()
++assert cart_diff < 1e-9*u.m
++print(f"   AltAz round-trip error: {cart_diff:.12f}")
++print("   ‚úì Round-trip error < 1 nm")
++
++itrs_back2 = hadec.transform_to(ITRS(obstime=obstime))
++cart_diff2 = (itrs_above.cartesian - itrs_back2.cartesian).norm()
++assert cart_diff2 < 1e-9*u.m
++print(f"   HADec round-trip error: {cart_diff2:.12f}")
++print("   ‚úì Round-trip error < 1 nm")
++
++# Test 4: Cardinal directions
++print("\n4. Cardinal Directions:")
++# East
++east_x = -np.sin(lon_rad)
++east_y = np.cos(lon_rad)
++east_z = 0
++itrs_east = ITRS(
++    x=observer_itrs.x + 1000*u.m * east_x,
++    y=observer_itrs.y + 1000*u.m * east_y,
++    z=observer_itrs.z + 1000*u.m * east_z,
++    obstime=obstime
++)
++altaz_east = itrs_east.transform_to(AltAz(obstime=obstime, location=location))
++assert abs(altaz_east.az - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_east.alt) < 1e-6*u.deg
++print(f"   East: az={altaz_east.az:.6f}, alt={altaz_east.alt:.6f}")
++print("   ‚úì East direction is at az=90¬∞, alt=0¬∞")
++
++# North
++north_x = -np.sin(lat_rad) * np.cos(lon_rad)
++north_y = -np.sin(lat_rad) * np.sin(lon_rad)
++north_z = np.cos(lat_rad)
++itrs_north = ITRS(
++    x=observer_itrs.x + 1000*u.m * north_x,
++    y=observer_itrs.y + 1000*u.m * north_y,
++    z=observer_itrs.z + 1000*u.m * north_z,
++    obstime=obstime
++)
++altaz_north = itrs_north.transform_to(AltAz(obstime=obstime, location=location))
++assert abs(altaz_north.az) < 1e-6*u.deg or abs(altaz_north.az - 360*u.deg) < 1e-6*u.deg
++assert abs(altaz_north.alt) < 1e-6*u.deg
++print(f"   North: az={altaz_north.az:.6f}, alt={altaz_north.alt:.6f}")
++print("   ‚úì North direction is at az=0¬∞, alt=0¬∞")
++
++# Test 5: Time-invariance
++print("\n5. Time-Invariance:")
++obstime2 = Time('2020-01-01T18:00:00')
++altaz2 = itrs_above.transform_to(AltAz(obstime=obstime2, location=location))
++itrs_back3 = altaz2.transform_to(ITRS(obstime=obstime))
++cart_diff3 = (itrs_above.cartesian - itrs_back3.cartesian).norm()
++assert cart_diff3 < 1e-9*u.m
++print(f"   ITRS position preservation: {cart_diff3:.12f}")
++print("   ‚úì ITRS position is preserved across different obstimes")
++
++# Test 6: Different locations
++print("\n6. Different Locations:")
++location2 = EarthLocation(lat=-30*u.deg, lon=120*u.deg, height=500*u.m)
++observer_itrs2 = location2.get_itrs(obstime)
++
++lat_rad2 = location2.lat.to_value(u.radian)
++lon_rad2 = location2.lon.to_value(u.radian)
++up_x2 = np.cos(lat_rad2) * np.cos(lon_rad2)
++up_y2 = np.cos(lat_rad2) * np.sin(lon_rad2)
++up_z2 = np.sin(lat_rad2)
++
++itrs_above2 = ITRS(
++    x=observer_itrs2.x + 5000*u.m * up_x2,
++    y=observer_itrs2.y + 5000*u.m * up_y2,
++    z=observer_itrs2.z + 5000*u.m * up_z2,
++    obstime=obstime
++)
++
++altaz_loc2 = itrs_above2.transform_to(AltAz(obstime=obstime, location=location2))
++assert abs(altaz_loc2.alt - 90*u.deg) < 1e-6*u.deg
++assert abs(altaz_loc2.distance - 5000*u.m) < 1e-6*u.m
++print(f"   Location 2 (lat=-30¬∞, lon=120¬∞): alt={altaz_loc2.alt:.6f}, dist={altaz_loc2.distance:.2f}")
++print("   ‚úì Works correctly for different locations")
++
++print("\n" + "=" * 80)
++print("ALL TESTS PASSED!")
++print("=" * 80)
++print("\nSummary:")
++print("  ‚úì Direct ITRS <-> AltAz/HADec transformations are working")
++print("  ‚úì Transformations are accurate to sub-nanometer precision")
++print("  ‚úì ITRS coordinates are treated as time-invariant (Earth-fixed)")
++print("  ‚úì Cardinal directions are correctly transformed")
++print("  ‚úì Works for different observer locations")
++print("\nThe implementation successfully addresses the issue described in the PR:")
++print("  - Provides a direct approach that stays within ITRS")
++print("  - Treats ITRS positions as time-invariant")
++print("  - Avoids the problematic ITRS->ITRS transform through SSB")
++print("=" * 80)
+diff --git a/test_itrs_detailed.py b/test_itrs_detailed.py
+new file mode 100644
+index 000000000..9715c95df
+--- /dev/null
++++ b/test_itrs_detailed.py
+@@ -0,0 +1,112 @@
++"""More detailed test of ITRS to Observed transformations."""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec
++from astropy.time import Time
++
++print("=" * 80)
++print("Detailed test of ITRS to Observed transformations")
++print("=" * 80)
++
++# Create a location (Greenwich)
++location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++obstime = Time('2020-01-01T00:00:00')
++
++# Get the ITRS position of the location
++itrs_loc = location.get_itrs(obstime)
++print(f"\n1. Location in ITRS: {itrs_loc.cartesian}")
++
++# Create a point in the local vertical direction
++# We need to compute the local vertical unit vector
++lat_rad = location.lat.to_value(u.radian)
++lon_rad = location.lon.to_value(u.radian)
++
++# Local vertical in ITRS is approximately the radial direction from Earth center
++# For a more accurate local vertical, we use the geodetic normal
++# The unit vector pointing up (local vertical) in ITRS coordinates
++up_x = np.cos(lat_rad) * np.cos(lon_rad)
++up_y = np.cos(lat_rad) * np.sin(lon_rad)
++up_z = np.sin(lat_rad)
++
++# Create a point 1000m above the location
++offset = 1000 * u.m
++itrs_above = ITRS(
++    x=itrs_loc.x + offset * up_x,
++    y=itrs_loc.y + offset * up_y,
++    z=itrs_loc.z + offset * up_z,
++    obstime=obstime
++)
++
++print(f"Point 1000m above in ITRS: {itrs_above.cartesian}")
++
++# Transform to AltAz
++altaz_frame = AltAz(obstime=obstime, location=location)
++altaz_above = itrs_above.transform_to(altaz_frame)
++print(f"\n2. Point in AltAz: az={altaz_above.az:.6f}, alt={altaz_above.alt:.6f}, distance={altaz_above.distance:.2f}")
++print(f"   Expected: alt ‚âà 90¬∞, distance ‚âà 1000m")
++print(f"   Altitude error: {abs(90*u.deg - altaz_above.alt):.6f}")
++print(f"   Distance error: {abs(1000*u.m - altaz_above.distance):.2f}")
++
++# Transform to HADec
++hadec_frame = HADec(obstime=obstime, location=location)
++hadec_above = itrs_above.transform_to(hadec_frame)
++print(f"\n3. Point in HADec: ha={hadec_above.ha:.6f}, dec={hadec_above.dec:.6f}, distance={hadec_above.distance:.2f}")
++print(f"   Expected: dec ‚âà {location.lat:.4f}, distance ‚âà 1000m")
++print(f"   Declination error: {abs(location.lat - hadec_above.dec):.6f}")
++print(f"   Distance error: {abs(1000*u.m - hadec_above.distance):.2f}")
++
++# Test with a point to the East
++print("\n4. Testing a point to the East:")
++# East direction in ITRS
++east_x = -np.sin(lon_rad)
++east_y = np.cos(lon_rad)
++east_z = 0
++
++itrs_east = ITRS(
++    x=itrs_loc.x + 1000 * u.m * east_x,
++    y=itrs_loc.y + 1000 * u.m * east_y,
++    z=itrs_loc.z + 1000 * u.m * east_z,
++    obstime=obstime
++)
++
++altaz_east = itrs_east.transform_to(altaz_frame)
++print(f"Point to East in AltAz: az={altaz_east.az:.6f}, alt={altaz_east.alt:.6f}, distance={altaz_east.distance:.2f}")
++print(f"Expected: az ‚âà 90¬∞, alt ‚âà 0¬∞")
++
++# Test with a point to the North
++print("\n5. Testing a point to the North:")
++# North direction in ITRS
++north_x = -np.sin(lat_rad) * np.cos(lon_rad)
++north_y = -np.sin(lat_rad) * np.sin(lon_rad)
++north_z = np.cos(lat_rad)
++
++itrs_north = ITRS(
++    x=itrs_loc.x + 1000 * u.m * north_x,
++    y=itrs_loc.y + 1000 * u.m * north_y,
++    z=itrs_loc.z + 1000 * u.m * north_z,
++    obstime=obstime
++)
++
++altaz_north = itrs_north.transform_to(altaz_frame)
++print(f"Point to North in AltAz: az={altaz_north.az:.6f}, alt={altaz_north.alt:.6f}, distance={altaz_north.distance:.2f}")
++print(f"Expected: az ‚âà 0¬∞ (or 360¬∞), alt ‚âà 0¬∞")
++
++# Test time invariance more carefully
++print("\n6. Testing time invariance with Earth rotation:")
++obstime2 = Time('2020-01-01T06:00:00')  # 6 hours later
++altaz_frame2 = AltAz(obstime=obstime2, location=location)
++altaz_above2 = itrs_above.transform_to(altaz_frame2)
++print(f"Point at t=0h in AltAz: az={altaz_above.az:.6f}, alt={altaz_above.alt:.6f}")
++print(f"Point at t=6h in AltAz: az={altaz_above2.az:.6f}, alt={altaz_above2.alt:.6f}")
++print(f"Azimuth change: {(altaz_above2.az - altaz_above.az):.6f}")
++print("Note: The azimuth should change by ~90¬∞ due to Earth's rotation (6h = 1/4 day)")
++
++# Verify the ITRS position is preserved
++itrs_back = altaz_above2.transform_to(ITRS(obstime=obstime))
++cart_diff = (itrs_above.cartesian - itrs_back.cartesian).norm()
++print(f"\n7. ITRS position preservation:")
++print(f"Original ITRS: {itrs_above.cartesian}")
++print(f"After round-trip: {itrs_back.cartesian}")
++print(f"Difference: {cart_diff:.9f}")
++
++print("\n" + "=" * 80)
+diff --git a/test_itrs_observed.py b/test_itrs_observed.py
+new file mode 100644
+index 000000000..801df00fe
+--- /dev/null
++++ b/test_itrs_observed.py
+@@ -0,0 +1,53 @@
++"""Test script to understand current ITRS to AltAz transformation behavior."""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec
++from astropy.time import Time
++
++# Create a location (e.g., Greenwich)
++location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++
++# Create a time
++obstime = Time('2020-01-01T00:00:00')
++
++# Create an ITRS coordinate (a point near the location)
++# Let's create a point 1000m above the location
++itrs_location = location.get_itrs(obstime)
++print(f"ITRS location: {itrs_location.cartesian}")
++
++# Create a point 1000m above in the local vertical
++# For simplicity, let's just add to the z-component (approximately)
++offset = 1000 * u.m
++itrs_point = ITRS(
++    x=itrs_location.x,
++    y=itrs_location.y, 
++    z=itrs_location.z + offset,
++    obstime=obstime
++)
++print(f"ITRS point: {itrs_point.cartesian}")
++
++# Try to transform to AltAz
++altaz_frame = AltAz(obstime=obstime, location=location)
++try:
++    altaz_point = itrs_point.transform_to(altaz_frame)
++    print(f"AltAz point: az={altaz_point.az}, alt={altaz_point.alt}, distance={altaz_point.distance}")
++except Exception as e:
++    print(f"Error transforming ITRS to AltAz: {e}")
++
++# Try to transform to HADec
++hadec_frame = HADec(obstime=obstime, location=location)
++try:
++    hadec_point = itrs_point.transform_to(hadec_frame)
++    print(f"HADec point: ha={hadec_point.ha}, dec={hadec_point.dec}, distance={hadec_point.distance}")
++except Exception as e:
++    print(f"Error transforming ITRS to HADec: {e}")
++
++print("\n--- Testing the issue with ITRS->ITRS transform ---")
++# Test the ITRS->ITRS transform issue mentioned in the PR
++itrs_t1 = ITRS(x=itrs_location.x, y=itrs_location.y, z=itrs_location.z, obstime=obstime)
++obstime2 = Time('2020-01-02T00:00:00')
++itrs_t2_frame = ITRS(obstime=obstime2)
++itrs_t2 = itrs_t1.transform_to(itrs_t2_frame)
++print(f"ITRS at t1: {itrs_t1.cartesian}")
++print(f"ITRS at t2: {itrs_t2.cartesian}")
++print(f"Difference: {(itrs_t2.cartesian - itrs_t1.cartesian).norm()}")
+diff --git a/test_itrs_observed_new.py b/test_itrs_observed_new.py
+new file mode 100644
+index 000000000..f17193d55
+--- /dev/null
++++ b/test_itrs_observed_new.py
+@@ -0,0 +1,106 @@
++"""Test script to verify the new ITRS to AltAz/HADec transformations."""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec, frame_transform_graph
++from astropy.time import Time
++
++print("=" * 80)
++print("Testing new ITRS to Observed transformations")
++print("=" * 80)
++
++# Check the transformation path
++print("\n1. Checking transformation paths:")
++print("ITRS to AltAz path:", frame_transform_graph.find_shortest_path(ITRS, AltAz))
++print("ITRS to HADec path:", frame_transform_graph.find_shortest_path(ITRS, HADec))
++
++# Create a location (e.g., Greenwich)
++location = EarthLocation(lat=51.4769*u.deg, lon=0*u.deg, height=0*u.m)
++
++# Create a time
++obstime = Time('2020-01-01T00:00:00')
++
++# Create an ITRS coordinate (a point near the location)
++itrs_location = location.get_itrs(obstime)
++print(f"\n2. ITRS location: {itrs_location.cartesian}")
++
++# Create a point 1000m directly above the location (in local vertical)
++# We'll use a simple approximation by adding to the radial direction
++offset = 1000 * u.m
++itrs_point = ITRS(
++    x=itrs_location.x,
++    y=itrs_location.y, 
++    z=itrs_location.z + offset,
++    obstime=obstime
++)
++print(f"ITRS point (1000m above): {itrs_point.cartesian}")
++
++# Transform to AltAz
++print("\n3. Testing ITRS to AltAz transformation:")
++altaz_frame = AltAz(obstime=obstime, location=location)
++altaz_point = itrs_point.transform_to(altaz_frame)
++print(f"AltAz: az={altaz_point.az:.6f}, alt={altaz_point.alt:.6f}, distance={altaz_point.distance:.2f}")
++
++# For a point directly above, we expect:
++# - Altitude close to 90 degrees (straight up)
++# - Distance close to 1000m
++print(f"Expected: alt ‚âà 90¬∞, distance ‚âà 1000m")
++print(f"Altitude error: {abs(90*u.deg - altaz_point.alt):.6f}")
++print(f"Distance error: {abs(1000*u.m - altaz_point.distance):.2f}")
++
++# Transform to HADec
++print("\n4. Testing ITRS to HADec transformation:")
++hadec_frame = HADec(obstime=obstime, location=location)
++hadec_point = itrs_point.transform_to(hadec_frame)
++print(f"HADec: ha={hadec_point.ha:.6f}, dec={hadec_point.dec:.6f}, distance={hadec_point.distance:.2f}")
++
++# For a point directly above at Greenwich (lon=0), we expect:
++# - Declination close to the latitude (51.4769¬∞)
++# - Distance close to 1000m
++print(f"Expected: dec ‚âà {location.lat:.4f}, distance ‚âà 1000m")
++print(f"Declination error: {abs(location.lat - hadec_point.dec):.6f}")
++print(f"Distance error: {abs(1000*u.m - hadec_point.distance):.2f}")
++
++# Test round-trip transformation
++print("\n5. Testing round-trip transformations:")
++print("AltAz -> ITRS -> AltAz:")
++itrs_from_altaz = altaz_point.transform_to(ITRS(obstime=obstime))
++altaz_roundtrip = itrs_from_altaz.transform_to(altaz_frame)
++print(f"Original AltAz: az={altaz_point.az:.6f}, alt={altaz_point.alt:.6f}, distance={altaz_point.distance:.2f}")
++print(f"Round-trip AltAz: az={altaz_roundtrip.az:.6f}, alt={altaz_roundtrip.alt:.6f}, distance={altaz_roundtrip.distance:.2f}")
++az_diff = abs(altaz_point.az - altaz_roundtrip.az)
++alt_diff = abs(altaz_point.alt - altaz_roundtrip.alt)
++dist_diff = abs(altaz_point.distance - altaz_roundtrip.distance)
++print(f"Differences: az={az_diff:.9f}, alt={alt_diff:.9f}, distance={dist_diff:.6f}")
++
++print("\nHADec -> ITRS -> HADec:")
++itrs_from_hadec = hadec_point.transform_to(ITRS(obstime=obstime))
++hadec_roundtrip = itrs_from_hadec.transform_to(hadec_frame)
++print(f"Original HADec: ha={hadec_point.ha:.6f}, dec={hadec_point.dec:.6f}, distance={hadec_point.distance:.2f}")
++print(f"Round-trip HADec: ha={hadec_roundtrip.ha:.6f}, dec={hadec_roundtrip.dec:.6f}, distance={hadec_roundtrip.distance:.2f}")
++ha_diff = abs(hadec_point.ha - hadec_roundtrip.ha)
++dec_diff = abs(hadec_point.dec - hadec_roundtrip.dec)
++dist_diff = abs(hadec_point.distance - hadec_roundtrip.distance)
++print(f"Differences: ha={ha_diff:.9f}, dec={dec_diff:.9f}, distance={dist_diff:.6f}")
++
++# Test that ITRS coordinates are treated as time-invariant
++print("\n6. Testing time-invariance of ITRS coordinates:")
++print("This tests that transforming ITRS to AltAz doesn't change the ITRS position")
++print("even when the AltAz frame has a different obstime.")
++obstime2 = Time('2020-01-02T00:00:00')
++altaz_frame2 = AltAz(obstime=obstime2, location=location)
++altaz_point2 = itrs_point.transform_to(altaz_frame2)
++print(f"AltAz at t1: az={altaz_point.az:.6f}, alt={altaz_point.alt:.6f}")
++print(f"AltAz at t2: az={altaz_point2.az:.6f}, alt={altaz_point2.alt:.6f}")
++print("Note: These should be different because the Earth has rotated,")
++print("but the ITRS position itself should not have moved in space.")
++
++# Convert back to ITRS to verify the position is the same
++itrs_from_altaz2 = altaz_point2.transform_to(ITRS(obstime=obstime))
++print(f"\nOriginal ITRS: {itrs_point.cartesian}")
++print(f"ITRS from AltAz at t2: {itrs_from_altaz2.cartesian}")
++cart_diff = (itrs_point.cartesian - itrs_from_altaz2.cartesian).norm()
++print(f"Cartesian difference: {cart_diff:.6f}")
++
++print("\n" + "=" * 80)
++print("All tests completed!")
++print("=" * 80)
+diff --git a/test_loopback.py b/test_loopback.py
+new file mode 100644
+index 000000000..c8eb0569d
+--- /dev/null
++++ b/test_loopback.py
+@@ -0,0 +1,61 @@
++"""Test loopback transformations for AltAz and HADec through ITRS."""
++from astropy import units as u
++from astropy.coordinates import EarthLocation, AltAz, HADec
++from astropy.time import Time
++
++print("Testing loopback transformations")
++print("=" * 80)
++
++# Create a location and time
++location = EarthLocation(lat=40*u.deg, lon=-75*u.deg, height=100*u.m)
++obstime1 = Time('2020-01-01T12:00:00')
++obstime2 = Time('2020-01-01T18:00:00')
++
++# Create an AltAz coordinate
++altaz1 = AltAz(az=45*u.deg, alt=30*u.deg, distance=1000*u.m,
++               obstime=obstime1, location=location)
++
++print(f"\n1. AltAz loopback test (same obstime):")
++print(f"   Original: az={altaz1.az:.6f}, alt={altaz1.alt:.6f}, dist={altaz1.distance:.2f}")
++
++# Transform to same frame (should be identity)
++altaz1_same = altaz1.transform_to(AltAz(obstime=obstime1, location=location))
++print(f"   Same frame: az={altaz1_same.az:.6f}, alt={altaz1_same.alt:.6f}, dist={altaz1_same.distance:.2f}")
++
++az_diff = abs(altaz1.az - altaz1_same.az)
++alt_diff = abs(altaz1.alt - altaz1_same.alt)
++dist_diff = abs(altaz1.distance - altaz1_same.distance)
++print(f"   Differences: az={az_diff:.12f}, alt={alt_diff:.12f}, dist={dist_diff:.9f}")
++
++print(f"\n2. AltAz loopback test (different obstime):")
++# Transform to different obstime (should preserve ITRS position)
++altaz2 = altaz1.transform_to(AltAz(obstime=obstime2, location=location))
++print(f"   At t1: az={altaz1.az:.6f}, alt={altaz1.alt:.6f}, dist={altaz1.distance:.2f}")
++print(f"   At t2: az={altaz2.az:.6f}, alt={altaz2.alt:.6f}, dist={altaz2.distance:.2f}")
++print(f"   Note: Coordinates should be the same because ITRS is time-invariant")
++
++# Create a HADec coordinate
++hadec1 = HADec(ha=2*u.hourangle, dec=40*u.deg, distance=1000*u.m,
++               obstime=obstime1, location=location)
++
++print(f"\n3. HADec loopback test (same obstime):")
++print(f"   Original: ha={hadec1.ha:.6f}, dec={hadec1.dec:.6f}, dist={hadec1.distance:.2f}")
++
++# Transform to same frame (should be identity)
++hadec1_same = hadec1.transform_to(HADec(obstime=obstime1, location=location))
++print(f"   Same frame: ha={hadec1_same.ha:.6f}, dec={hadec1_same.dec:.6f}, dist={hadec1_same.distance:.2f}")
++
++ha_diff = abs(hadec1.ha - hadec1_same.ha)
++dec_diff = abs(hadec1.dec - hadec1_same.dec)
++dist_diff = abs(hadec1.distance - hadec1_same.distance)
++print(f"   Differences: ha={ha_diff:.12f}, dec={dec_diff:.12f}, dist={dist_diff:.9f}")
++
++print(f"\n4. HADec loopback test (different obstime):")
++# Transform to different obstime (should preserve ITRS position)
++hadec2 = hadec1.transform_to(HADec(obstime=obstime2, location=location))
++print(f"   At t1: ha={hadec1.ha:.6f}, dec={hadec1.dec:.6f}, dist={hadec1.distance:.2f}")
++print(f"   At t2: ha={hadec2.ha:.6f}, dec={hadec2.dec:.6f}, dist={hadec2.distance:.2f}")
++print(f"   Note: Coordinates should be the same because ITRS is time-invariant")
++
++print("\n" + "=" * 80)
++print("Loopback tests completed!")
+diff --git a/test_loopback_path.py b/test_loopback_path.py
+new file mode 100644
+index 000000000..ed764d06b
+--- /dev/null
++++ b/test_loopback_path.py
+@@ -0,0 +1,44 @@
++"""Test to see which path the loopback is using."""
++from astropy import units as u
++from astropy.coordinates import EarthLocation, AltAz, HADec, ITRS, ICRS
++from astropy.time import Time
++
++# Monkey-patch to trace transformations
++original_transform = None
++transform_path = []
++
++def trace_transform(self, new_frame):
++    """Trace which frames are being used in transformations."""
++    transform_path.append((type(self).__name__, type(new_frame).__name__))
++    return original_transform(self, new_frame)
++
++# Apply monkey patch
++from astropy.coordinates.baseframe import BaseCoordinateFrame
++original_transform = BaseCoordinateFrame.transform_to
++BaseCoordinateFrame.transform_to = trace_transform
++
++location = EarthLocation(lat=40*u.deg, lon=-75*u.deg, height=100*u.m)
++obstime1 = Time('2020-01-01T12:00:00')
++obstime2 = Time('2020-01-01T18:00:00')
++
++# Create an AltAz coordinate
++altaz1 = AltAz(az=45*u.deg, alt=30*u.deg, distance=1000*u.m,
++               obstime=obstime1, location=location)
++
++print("Testing AltAz loopback transformation path:")
++print("=" * 80)
++
++# Transform to different obstime
++transform_path = []
++altaz2 = altaz1.transform_to(AltAz(obstime=obstime2, location=location))
++
++print("\nTransformation path:")
++for i, (from_frame, to_frame) in enumerate(transform_path):
++    print(f"  {i+1}. {from_frame} -> {to_frame}")
++
++print(f"\nResult:")
++print(f"  Original (t1): az={altaz1.az:.6f}, alt={altaz1.alt:.6f}, dist={altaz1.distance:.2f}")
++print(f"  Transformed (t2): az={altaz2.az:.6f}, alt={altaz2.alt:.6f}, dist={altaz2.distance:.2f}")
++
++# Restore original
++BaseCoordinateFrame.transform_to = original_transform
+diff --git a/test_main_use_case.py b/test_main_use_case.py
+new file mode 100644
+index 000000000..d29af7631
+--- /dev/null
++++ b/test_main_use_case.py
+@@ -0,0 +1,84 @@
++"""Test the main use case: ITRS to AltAz/HADec and back."""
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec
++from astropy.time import Time
++import numpy as np
++
++print("=" * 80)
++print("Testing main use case: ITRS <-> AltAz/HADec transformations")
++print("=" * 80)
++
++# Observer location
++observer = EarthLocation(lat=40*u.deg, lon=-75*u.deg, height=100*u.m)
++obstime = Time('2020-01-01T12:00:00')
++
++# Get observer's ITRS position
++observer_itrs = observer.get_itrs(obstime)
++
++# Create a satellite 400 km above the observer
++lat_rad = observer.lat.to_value(u.radian)
++lon_rad = observer.lon.to_value(u.radian)
++up_x = np.cos(lat_rad) * np.cos(lon_rad)
++up_y = np.cos(lat_rad) * np.sin(lon_rad)
++up_z = np.sin(lat_rad)
++
++altitude = 400 * u.km
++satellite_itrs = ITRS(
++    x=observer_itrs.x + altitude * up_x,
++    y=observer_itrs.y + altitude * up_y,
++    z=observer_itrs.z + altitude * up_z,
++    obstime=obstime
++)
++
++print(f"\n1. Satellite in ITRS: {satellite_itrs.cartesian}")
++
++# Transform to AltAz
++altaz_frame = AltAz(obstime=obstime, location=observer)
++satellite_altaz = satellite_itrs.transform_to(altaz_frame)
++print(f"\n2. Satellite in AltAz:")
++print(f"   az={satellite_altaz.az:.6f}, alt={satellite_altaz.alt:.6f}, dist={satellite_altaz.distance:.2f}")
++
++# Transform back to ITRS
++satellite_itrs_back = satellite_altaz.transform_to(ITRS(obstime=obstime))
++print(f"\n3. Satellite back in ITRS: {satellite_itrs_back.cartesian}")
++
++# Check round-trip accuracy
++cart_diff = (satellite_itrs.cartesian - satellite_itrs_back.cartesian).norm()
++print(f"\n4. Round-trip accuracy:")
++print(f"   Cartesian difference: {cart_diff:.9f}")
++print(f"   This should be very small (< 1 mm)")
++
++# Test with HADec
++hadec_frame = HADec(obstime=obstime, location=observer)
++satellite_hadec = satellite_itrs.transform_to(hadec_frame)
++print(f"\n5. Satellite in HADec:")
++print(f"   ha={satellite_hadec.ha:.6f}, dec={satellite_hadec.dec:.6f}, dist={satellite_hadec.distance:.2f}")
++
++# Transform back to ITRS
++satellite_itrs_back2 = satellite_hadec.transform_to(ITRS(obstime=obstime))
++print(f"\n6. Satellite back in ITRS: {satellite_itrs_back2.cartesian}")
++
++# Check round-trip accuracy
++cart_diff2 = (satellite_itrs.cartesian - satellite_itrs_back2.cartesian).norm()
++print(f"\n7. Round-trip accuracy:")
++print(f"   Cartesian difference: {cart_diff2:.9f}")
++print(f"   This should be very small (< 1 mm)")
++
++# Test time-invariance
++print(f"\n8. Testing time-invariance:")
++obstime2 = Time('2020-01-01T18:00:00')
++altaz_frame2 = AltAz(obstime=obstime2, location=observer)
++satellite_altaz2 = satellite_itrs.transform_to(altaz_frame2)
++print(f"   At t=12h: az={satellite_altaz.az:.6f}, alt={satellite_altaz.alt:.6f}")
++print(f"   At t=18h: az={satellite_altaz2.az:.6f}, alt={satellite_altaz2.alt:.6f}")
++
++# Transform back to ITRS to verify position is preserved
++satellite_itrs_back3 = satellite_altaz2.transform_to(ITRS(obstime=obstime))
++cart_diff3 = (satellite_itrs.cartesian - satellite_itrs_back3.cartesian).norm()
++print(f"\n9. ITRS position preservation across time:")
++print(f"   Cartesian difference: {cart_diff3:.9f}")
++print(f"   This should be very small (< 1 mm)")
++
++print("\n" + "=" * 80)
++print("All tests passed!")
++print("=" * 80)
+diff --git a/test_pr_issue_demonstration.py b/test_pr_issue_demonstration.py
+new file mode 100644
+index 000000000..0936cf2f6
+--- /dev/null
++++ b/test_pr_issue_demonstration.py
+@@ -0,0 +1,137 @@
++"""
++Demonstrate the issue mentioned in the PR and how the new implementation solves it.
++
++The PR mentions: "I tire of explaining the problem of geocentric versus topocentric 
++aberration and proposing the entirely nonintuitive solution laid out in 
++test_intermediate_transformations.test_straight_overhead()."
++
++This test shows that with the new direct ITRS<->AltAz/HADec transformations,
++the behavior is much more intuitive for Earth-fixed objects like satellites.
++"""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec
++from astropy.time import Time
++
++print("=" * 80)
++print("DEMONSTRATION: Solving the ITRS to Observed transformation issue")
++print("=" * 80)
++
++# Scenario: Tracking a satellite in low Earth orbit
++print("\nScenario: Tracking a satellite 400 km above a ground station")
++print("-" * 80)
++
++# Ground station location
++station = EarthLocation(lat=35*u.deg, lon=-106*u.deg, height=1500*u.m)
++obstime = Time('2020-06-15T12:00:00')
++
++print(f"Ground station: lat={station.lat}, lon={station.lon}, height={station.height}")
++print(f"Observation time: {obstime.iso}")
++
++# Satellite position in ITRS (400 km directly above the station)
++station_itrs = station.get_itrs(obstime)
++lat_rad = station.lat.to_value(u.radian)
++lon_rad = station.lon.to_value(u.radian)
++
++# Local vertical direction
++up_x = np.cos(lat_rad) * np.cos(lon_rad)
++up_y = np.cos(lat_rad) * np.sin(lon_rad)
++up_z = np.sin(lat_rad)
++
++# Satellite 400 km above
++altitude = 400 * u.km
++satellite_itrs = ITRS(
++    x=station_itrs.x + altitude * up_x,
++    y=station_itrs.y + altitude * up_y,
++    z=station_itrs.z + altitude * up_z,
++    obstime=obstime
++)
++
++print(f"\nSatellite ITRS position: {satellite_itrs.cartesian}")
++
++# Transform to AltAz using the new direct transformation
++print("\n" + "=" * 80)
++print("NEW BEHAVIOR: Direct ITRS -> AltAz transformation")
++print("=" * 80)
++
++altaz_frame = AltAz(obstime=obstime, location=station)
++satellite_altaz = satellite_itrs.transform_to(altaz_frame)
++
++print(f"\nSatellite in AltAz coordinates:")
++print(f"  Azimuth:  {satellite_altaz.az:.6f}")
++print(f"  Altitude: {satellite_altaz.alt:.6f}")
++print(f"  Distance: {satellite_altaz.distance:.2f}")
++
++print(f"\nExpected values for a satellite directly overhead:")
++print(f"  Azimuth:  (can be any value)")
++print(f"  Altitude: 90.0¬∞ (straight up)")
++print(f"  Distance: 400 km")
++
++print(f"\nActual vs Expected:")
++print(f"  Altitude error: {abs(90*u.deg - satellite_altaz.alt):.9f}")
++print(f"  Distance error: {abs(400*u.km - satellite_altaz.distance):.6f}")
++
++if abs(90*u.deg - satellite_altaz.alt) < 1e-6*u.deg:
++    print("\n‚úì SUCCESS: The satellite appears directly overhead (alt=90¬∞)")
++else:
++    print("\n‚úó FAILURE: The satellite does not appear overhead")
++
++if abs(400*u.km - satellite_altaz.distance) < 1e-3*u.km:
++    print("‚úì SUCCESS: The distance is correct (400 km)")
++else:
++    print("‚úó FAILURE: The distance is incorrect")
++
++# Test round-trip to verify ITRS position is preserved
++print("\n" + "=" * 80)
++print("VERIFICATION: Round-trip transformation preserves ITRS position")
++print("=" * 80)
++
++satellite_itrs_back = satellite_altaz.transform_to(ITRS(obstime=obstime))
++cart_diff = (satellite_itrs.cartesian - satellite_itrs_back.cartesian).norm()
++
++print(f"\nOriginal ITRS:   {satellite_itrs.cartesian}")
++print(f"After round-trip: {satellite_itrs_back.cartesian}")
++print(f"Difference:       {cart_diff:.12f}")
++
++if cart_diff < 1e-6*u.m:
++    print("\n‚úì SUCCESS: ITRS position is preserved to sub-micrometer precision")
++else:
++    print("\n‚úó FAILURE: ITRS position is not preserved")
++
++# Test time-invariance
++print("\n" + "=" * 80)
++print("KEY FEATURE: ITRS coordinates are treated as time-invariant")
++print("=" * 80)
++
++print("\nThe PR states: 'This approach treats the ITRS position as time invariant.'")
++print("This means the ITRS position doesn't move when we transform to AltAz")
++print("at different times, which is correct for Earth-fixed objects.")
++
++obstime2 = Time('2020-06-15T18:00:00')  # 6 hours later
++altaz_frame2 = AltAz(obstime=obstime2, location=station)
++satellite_altaz2 = satellite_itrs.transform_to(altaz_frame2)
++
++print(f"\nSatellite in AltAz at t=12h: az={satellite_altaz.az:.6f}, alt={satellite_altaz.alt:.6f}")
++print(f"Satellite in AltAz at t=18h: az={satellite_altaz2.az:.6f}, alt={satellite_altaz2.alt:.6f}")
++
++# Verify ITRS position is preserved
++satellite_itrs_back2 = satellite_altaz2.transform_to(ITRS(obstime=obstime))
++cart_diff2 = (satellite_itrs.cartesian - satellite_itrs_back2.cartesian).norm()
++
++print(f"\nITRS position preservation: {cart_diff2:.12f}")
++
++if cart_diff2 < 1e-6*u.m:
++    print("‚úì SUCCESS: ITRS position is preserved across different obstimes")
++else:
++    print("‚úó FAILURE: ITRS position is not preserved")
++
++print("\n" + "=" * 80)
++print("SUMMARY")
++print("=" * 80)
++print("\nThe new direct ITRS <-> AltAz/HADec transformations:")
++print("  ‚úì Provide intuitive behavior for Earth-fixed objects")
++print("  ‚úì Treat ITRS coordinates as time-invariant (Earth-fixed)")
++print("  ‚úì Avoid the problematic ITRS->ITRS transform through SSB")
++print("  ‚úì Give accurate results for satellites, buildings, and other nearby objects")
++print("\nThis solves the issue described in PR #13319 and related issues.")
++print("=" * 80)
+diff --git a/test_satellite_scenario.py b/test_satellite_scenario.py
+new file mode 100644
+index 000000000..4a7c7062f
+--- /dev/null
++++ b/test_satellite_scenario.py
+@@ -0,0 +1,135 @@
++"""
++Test the satellite/nearby object scenario mentioned in the PR.
++This demonstrates the improvement over the old ITRS->CIRS->AltAz path.
++"""
++import numpy as np
++from astropy import units as u
++from astropy.coordinates import EarthLocation, ITRS, AltAz, HADec
++from astropy.time import Time
++
++print("=" * 80)
++print("Testing satellite/nearby object scenario")
++print("=" * 80)
++
++# Observer location (e.g., a ground station)
++observer = EarthLocation(lat=40*u.deg, lon=-75*u.deg, height=100*u.m)
++obstime = Time('2020-01-01T12:00:00')
++
++print(f"\n1. Observer location: lat={observer.lat}, lon={observer.lon}, height={observer.height}")
++print(f"   Observation time: {obstime.iso}")
++
++# Create a satellite position in ITRS (e.g., 400 km above the observer)
++# This simulates a low Earth orbit satellite
++observer_itrs = observer.get_itrs(obstime)
++
++# Calculate local vertical direction
++lat_rad = observer.lat.to_value(u.radian)
++lon_rad = observer.lon.to_value(u.radian)
++up_x = np.cos(lat_rad) * np.cos(lon_rad)
++up_y = np.cos(lat_rad) * np.sin(lon_rad)
++up_z = np.sin(lat_rad)
++
++# Satellite 400 km above
++altitude = 400 * u.km
++satellite_itrs = ITRS(
++    x=observer_itrs.x + altitude * up_x,
++    y=observer_itrs.y + altitude * up_y,
++    z=observer_itrs.z + altitude * up_z,
++    obstime=obstime
++)
++
++print(f"\n2. Satellite ITRS position: {satellite_itrs.cartesian}")
++
++# Transform to AltAz
++altaz_frame = AltAz(obstime=obstime, location=observer)
++satellite_altaz = satellite_itrs.transform_to(altaz_frame)
++
++print(f"\n3. Satellite in AltAz coordinates:")
++print(f"   Azimuth: {satellite_altaz.az:.6f}")
++print(f"   Altitude: {satellite_altaz.alt:.6f}")
++print(f"   Distance: {satellite_altaz.distance:.2f}")
++print(f"\n   Expected: alt ‚âà 90¬∞ (overhead), distance ‚âà 400 km")
++print(f"   Altitude error: {abs(90*u.deg - satellite_altaz.alt):.6f}")
++print(f"   Distance error: {abs(400*u.km - satellite_altaz.distance):.2f}")
++
++# Transform to HADec
++hadec_frame = HADec(obstime=obstime, location=observer)
++satellite_hadec = satellite_itrs.transform_to(hadec_frame)
++
++print(f"\n4. Satellite in HADec coordinates:")
++print(f"   Hour Angle: {satellite_hadec.ha:.6f}")
++print(f"   Declination: {satellite_hadec.dec:.6f}")
++print(f"   Distance: {satellite_hadec.distance:.2f}")
++print(f"\n   Expected: dec ‚âà {observer.lat:.4f}, distance ‚âà 400 km")
++print(f"   Declination error: {abs(observer.lat - satellite_hadec.dec):.6f}")
++print(f"   Distance error: {abs(400*u.km - satellite_hadec.distance):.2f}")
++
++# Test round-trip to verify accuracy
++print(f"\n5. Round-trip test (AltAz -> ITRS -> AltAz):")
++itrs_from_altaz = satellite_altaz.transform_to(ITRS(obstime=obstime))
++altaz_roundtrip = itrs_from_altaz.transform_to(altaz_frame)
++
++print(f"   Original: az={satellite_altaz.az:.9f}, alt={satellite_altaz.alt:.9f}, dist={satellite_altaz.distance:.6f}")
++print(f"   Round-trip: az={altaz_roundtrip.az:.9f}, alt={altaz_roundtrip.alt:.9f}, dist={altaz_roundtrip.distance:.6f}")
++
++az_diff = abs(satellite_altaz.az - altaz_roundtrip.az)
++alt_diff = abs(satellite_altaz.alt - altaz_roundtrip.alt)
++dist_diff = abs(satellite_altaz.distance - altaz_roundtrip.distance)
++print(f"   Differences: az={az_diff:.12f}, alt={alt_diff:.12f}, dist={dist_diff:.9f}")
++
++# Test that ITRS coordinates are treated as time-invariant
++print(f"\n6. Time-invariance test:")
++print("   Testing that ITRS coordinates don't move when transforming to AltAz at different times")
++obstime2 = Time('2020-01-01T18:00:00')  # 6 hours later
++altaz_frame2 = AltAz(obstime=obstime2, location=observer)
++satellite_altaz2 = satellite_itrs.transform_to(altaz_frame2)
++
++print(f"   At t=12h: az={satellite_altaz.az:.6f}, alt={satellite_altaz.alt:.6f}")
++print(f"   At t=18h: az={satellite_altaz2.az:.6f}, alt={satellite_altaz2.alt:.6f}")
++print(f"   Azimuth change: {(satellite_altaz2.az - satellite_altaz.az):.6f}")
++print("   Note: Azimuth should change due to Earth's rotation")
++
++# Verify ITRS position is preserved
++itrs_back = satellite_altaz2.transform_to(ITRS(obstime=obstime))
++cart_diff = (satellite_itrs.cartesian - itrs_back.cartesian).norm()
++print(f"\n   ITRS position preservation:")
++print(f"   Original ITRS: {satellite_itrs.cartesian}")
++print(f"   After round-trip: {itrs_back.cartesian}")
++print(f"   Cartesian difference: {cart_diff:.9f}")
++
++# Test a satellite at different positions
++print(f"\n7. Testing satellite at different positions:")
++
++# Satellite to the East
++east_x = -np.sin(lon_rad)
++east_y = np.cos(lon_rad)
++east_z = 0
++
++satellite_east = ITRS(
++    x=observer_itrs.x + 100*u.km * east_x,
++    y=observer_itrs.y + 100*u.km * east_y,
++    z=observer_itrs.z + 100*u.km * east_z,
++    obstime=obstime
++)
++altaz_east = satellite_east.transform_to(altaz_frame)
++print(f"   Satellite to East: az={altaz_east.az:.2f}, alt={altaz_east.alt:.2f}, dist={altaz_east.distance:.2f}")
++print(f"   Expected: az ‚âà 90¬∞, alt ‚âà 0¬∞")
++
++# Satellite to the North
++north_x = -np.sin(lat_rad) * np.cos(lon_rad)
++north_y = -np.sin(lat_rad) * np.sin(lon_rad)
++north_z = np.cos(lat_rad)
++
++satellite_north = ITRS(
++    x=observer_itrs.x + 100*u.km * north_x,
++    y=observer_itrs.y + 100*u.km * north_y,
++    z=observer_itrs.z + 100*u.km * north_z,
++    obstime=obstime
++)
++altaz_north = satellite_north.transform_to(altaz_frame)
++print(f"   Satellite to North: az={altaz_north.az:.2f}, alt={altaz_north.alt:.2f}, dist={altaz_north.distance:.2f}")
++print(f"   Expected: az ‚âà 0¬∞ (or 360¬∞), alt ‚âà 0¬∞")
++
++print("\n" + "=" * 80)
++print("All tests completed successfully!")
++print("=" * 80)

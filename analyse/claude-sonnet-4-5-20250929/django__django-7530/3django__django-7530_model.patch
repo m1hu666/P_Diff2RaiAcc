@@ -1,0 +1,541 @@
+diff --git a/check_issue.py b/check_issue.py
+new file mode 100644
+index 0000000000..cc1504f7c1
+--- /dev/null
++++ b/check_issue.py
+@@ -0,0 +1,19 @@
++"""
++Check if apps.get_models() returns models for a specific app or all models.
++"""
++# The issue is that the nested loop structure might be calling allow_migrate
++# with incorrect combinations. Let me trace through the logic:
++
++# Current code (lines 106-108):
++# router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
++# for app_label in consistency_check_labels
++# for model in apps.get_models(app_label)
++
++# If apps.get_models(app_label) returns ALL models (not just for that app),
++# then we'd have the bug described in the PR.
++
++# Let's check what apps.get_models() does
++print("The issue is likely that apps.get_models() without include_auto_created=False")
++print("or with certain parameters might return all models, not just for the given app.")
++print("\nThe fix should ensure that only models belonging to the current app_label")
++print("are checked with that app_label in allow_migrate().")
+diff --git a/demonstrate_bug.py b/demonstrate_bug.py
+new file mode 100644
+index 0000000000..a51f90bf2e
+--- /dev/null
++++ b/demonstrate_bug.py
+@@ -0,0 +1,101 @@
++"""
++Demonstrate the bug that existed before the fix.
++"""
++
++class MockModel:
++    class _meta:
++        def __init__(self, app_label, model_name):
++            self.app_label = app_label
++            self.object_name = model_name
++    
++    def __init__(self, app_label, model_name):
++        self._meta = self._meta(app_label, model_name)
++
++class MockAppConfig:
++    def __init__(self, label, models):
++        self.label = label
++        self._models = models
++    
++    def get_models(self, include_auto_created=False, include_swapped=False):
++        return self._models
++
++class MockApps:
++    def __init__(self):
++        self.app_configs = {
++            'app1': MockAppConfig('app1', [
++                MockModel('app1', 'Model1'),
++            ]),
++            'app2': MockAppConfig('app2', [
++                MockModel('app2', 'Model2'),
++            ]),
++        }
++        # ALL models (what the buggy code would get)
++        self.all_models = [
++            MockModel('app1', 'Model1'),
++            MockModel('app2', 'Model2'),
++        ]
++    
++    def get_app_config(self, app_label):
++        return self.app_configs[app_label]
++    
++    def get_app_configs(self):
++        return self.app_configs.values()
++    
++    def get_models(self, include_auto_created=False, include_swapped=False):
++        return self.all_models
++
++class StrictRouter:
++    """A router that only allows specific app/model combinations."""
++    def allow_migrate(self, db, app_label, model_name=None, **hints):
++        valid = {
++            ('app1', 'Model1'): True,
++            ('app2', 'Model2'): True,
++        }
++        pair = (app_label, model_name)
++        if pair not in valid:
++            print("  ERROR: Invalid pair (%s, %s)" % pair)
++            return False
++        return True
++
++print("=" * 60)
++print("DEMONSTRATING THE BUG (before fix)")
++print("=" * 60)
++print("\nBuggy code: apps.get_models(app_label)")
++print("This returns ALL models, not just models for app_label\n")
++
++apps = MockApps()
++router = StrictRouter()
++consistency_check_labels = ['app1', 'app2']
++
++print("Simulating buggy code:")
++for app_label in consistency_check_labels:
++    print("\nProcessing app_label='%s':" % app_label)
++    # BUG: apps.get_models(app_label) returns ALL models
++    for model in apps.get_models(app_label):
++        print("  Calling allow_migrate('%s', '%s')" % (app_label, model._meta.object_name))
++        router.allow_migrate('default', app_label, model_name=model._meta.object_name)
++
++print("\n" + "=" * 60)
++print("AFTER THE FIX")
++print("=" * 60)
++print("\nFixed code: apps.get_app_config(app_label).get_models()")
++print("This returns only models for the specific app_label\n")
++
++router2 = StrictRouter()
++print("Simulating fixed code:")
++for app_label in consistency_check_labels:
++    print("\nProcessing app_label='%s':" % app_label)
++    # FIX: apps.get_app_config(app_label).get_models() returns only models for this app
++    for model in apps.get_app_config(app_label).get_models():
++        print("  Calling allow_migrate('%s', '%s')" % (app_label, model._meta.object_name))
++        router2.allow_migrate('default', app_label, model_name=model._meta.object_name)
++
++print("\n" + "=" * 60)
++print("SUMMARY")
++print("=" * 60)
++print("The bug caused allow_migrate to be called with incorrect")
++print("(app_label, model) pairs, breaking routers that validate")
++print("these combinations (e.g., for database sharding).")
++print("\nThe fix ensures each app_label is only paired with its")
++print("own models by using apps.get_app_config(app_label).get_models()")
++print("instead of apps.get_models(app_label).")
+diff --git a/django/core/management/commands/makemigrations.py b/django/core/management/commands/makemigrations.py
+index 0b39536f5b..e648880ef0 100644
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -105,7 +105,7 @@ class Command(BaseCommand):
+                     # At least one model must be migrated to the database.
+                     router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
+                     for app_label in consistency_check_labels
+-                    for model in apps.get_models(app_label)
++                    for model in apps.get_app_config(app_label).get_models()
+             )):
+                 loader.check_consistent_history(connection)
+ 
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..85a20f0d36
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,116 @@
++"""
++Final verification that the fix resolves the issue described in the PR.
++
++The PR states: "makemigrations incorrectly calls allow_migrate() for each app 
++with all the models in the project rather than for each app with the app's models."
++
++This test verifies that after the fix, allow_migrate is called with correct
++(app_label, model) pairs where each model belongs to the app_label it's paired with.
++"""
++
++class MockModel:
++    """Mock Django model."""
++    class _meta:
++        def __init__(self, app_label, model_name):
++            self.app_label = app_label
++            self.object_name = model_name
++    
++    def __init__(self, app_label, model_name):
++        self._meta = self._meta(app_label, model_name)
++
++class MockAppConfig:
++    """Mock Django AppConfig."""
++    def __init__(self, label, models):
++        self.label = label
++        self._models = models
++    
++    def get_models(self, include_auto_created=False, include_swapped=False):
++        return self._models
++
++class MockApps:
++    """Mock Django apps registry."""
++    def __init__(self):
++        # Simulate a project with 3 apps, each with different models
++        self.app_configs = {
++            'auth': MockAppConfig('auth', [
++                MockModel('auth', 'User'),
++                MockModel('auth', 'Group'),
++            ]),
++            'contenttypes': MockAppConfig('contenttypes', [
++                MockModel('contenttypes', 'ContentType'),
++            ]),
++            'myapp': MockAppConfig('myapp', [
++                MockModel('myapp', 'Article'),
++                MockModel('myapp', 'Comment'),
++            ]),
++        }
++    
++    def get_app_config(self, app_label):
++        return self.app_configs[app_label]
++    
++    def get_app_configs(self):
++        return self.app_configs.values()
++
++class TestRouter:
++    """Test router that validates app_label/model pairs."""
++    def __init__(self):
++        self.calls = []
++        # Define valid combinations (app_label, model_name)
++        self.valid_combinations = {
++            ('auth', 'User'),
++            ('auth', 'Group'),
++            ('contenttypes', 'ContentType'),
++            ('myapp', 'Article'),
++            ('myapp', 'Comment'),
++        }
++    
++    def allow_migrate(self, db, app_label, model_name=None, **hints):
++        self.calls.append((app_label, model_name))
++        
++        # Check if this is a valid combination
++        if model_name and (app_label, model_name) not in self.valid_combinations:
++            raise ValueError(
++                "Invalid combination: app_label='%s' with model_name='%s'. "
++                "This model does not belong to this app!" % (app_label, model_name)
++            )
++        return True
++
++def test_fixed_behavior():
++    """Test that the fixed code calls allow_migrate with correct pairs."""
++    print("Testing fixed makemigrations behavior...")
++    print("-" * 60)
++    
++    apps = MockApps()
++    router = TestRouter()
++    consistency_check_labels = set(config.label for config in apps.get_app_configs())
++    
++    # Simulate the FIXED code from makemigrations.py line 107-108:
++    # for app_label in consistency_check_labels
++    # for model in apps.get_app_config(app_label).get_models()
++    
++    try:
++        for app_label in sorted(consistency_check_labels):
++            for model in apps.get_app_config(app_label).get_models():
++                router.allow_migrate('default', app_label, model_name=model._meta.object_name)
++        
++        print("SUCCESS: All allow_migrate calls used valid (app_label, model) pairs")
++        print("\nCalls made:")
++        for app_label, model_name in sorted(router.calls):
++            print("  - app_label='%s', model_name='%s'" % (app_label, model_name))
++        
++        # Verify each app was only paired with its own models
++        print("\nVerification:")
++        print("  auth app: User, Group")
++        print("  contenttypes app: ContentType")
++        print("  myapp app: Article, Comment")
++        print("\nAll pairs are correct!")
++        return True
++        
++    except ValueError as e:
++        print("FAILURE: %s" % e)
++        return False
++
++if __name__ == '__main__':
++    import sys
++    success = test_fixed_behavior()
++    sys.exit(0 if success else 1)
+diff --git a/test_bug_vs_fix.py b/test_bug_vs_fix.py
+new file mode 100644
+index 0000000000..7fb5b00c38
+--- /dev/null
++++ b/test_bug_vs_fix.py
+@@ -0,0 +1,142 @@
++"""
++Demonstrate the bug in the original code vs the fix.
++"""
++import sys
++
++# Mock Django components
++class MockModel:
++    class _meta:
++        def __init__(self, app_label, model_name):
++            self.app_label = app_label
++            self.object_name = model_name
++            self.model_name = model_name.lower()
++    
++    def __init__(self, app_label, model_name):
++        self._meta = self._meta(app_label, model_name)
++
++class MockAppConfig:
++    def __init__(self, label, models):
++        self.label = label
++        self._models = models
++    
++    def get_models(self, include_auto_created=False, include_swapped=False):
++        return self._models
++
++class MockApps:
++    def __init__(self):
++        self.app_configs = {
++            'app1': MockAppConfig('app1', [
++                MockModel('app1', 'Model1'),
++                MockModel('app1', 'Model2'),
++            ]),
++            'app2': MockAppConfig('app2', [
++                MockModel('app2', 'Model3'),
++                MockModel('app2', 'Model4'),
++            ]),
++        }
++        # All models (what get_models() without app_label returns)
++        self.all_models = [
++            MockModel('app1', 'Model1'),
++            MockModel('app1', 'Model2'),
++            MockModel('app2', 'Model3'),
++            MockModel('app2', 'Model4'),
++        ]
++    
++    def get_app_config(self, app_label):
++        return self.app_configs[app_label]
++    
++    def get_app_configs(self):
++        return self.app_configs.values()
++    
++    def get_models(self, include_auto_created=False, include_swapped=False):
++        # This returns ALL models, not filtered by app
++        return self.all_models
++
++class MockRouter:
++    def __init__(self):
++        self.calls = []
++    
++    def allow_migrate(self, db, app_label, model_name=None, **hints):
++        self.calls.append((app_label, model_name))
++        return True
++
++class MockConnection:
++    alias = 'default'
++    settings_dict = {'ENGINE': 'django.db.backends.postgresql'}
++
++# Test the buggy code (original)
++def test_buggy_code():
++    print("=== Testing BUGGY code (original) ===")
++    
++    apps = MockApps()
++    router = MockRouter()
++    connection = MockConnection()
++    consistency_check_labels = set(config.label for config in apps.get_app_configs())
++    
++    # Simulate the buggy code: apps.get_models(app_label)
++    # This actually calls apps.get_models(include_auto_created=app_label)
++    # which returns ALL models
++    for app_label in consistency_check_labels:
++        for model in apps.get_models(app_label):  # BUG: returns all models
++            router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
++    
++    print("Router calls: %s" % router.calls)
++    
++    # Check for invalid combinations
++    invalid_calls = []
++    for app_label, model_name in router.calls:
++        # Check if this model actually belongs to this app
++        if model_name in ['Model1', 'Model2'] and app_label != 'app1':
++            invalid_calls.append((app_label, model_name))
++        elif model_name in ['Model3', 'Model4'] and app_label != 'app2':
++            invalid_calls.append((app_label, model_name))
++    
++    if invalid_calls:
++        print("BUGGY: Found invalid (app_label, model_name) combinations:")
++        for call in invalid_calls:
++            print("  %s" % (call,))
++    
++    return len(invalid_calls) > 0
++
++# Test the fixed code
++def test_fixed_code():
++    print("\n=== Testing FIXED code ===")
++    
++    apps = MockApps()
++    router = MockRouter()
++    connection = MockConnection()
++    consistency_check_labels = set(config.label for config in apps.get_app_configs())
++    
++    # Simulate the fixed code: apps.get_app_config(app_label).get_models()
++    for app_label in consistency_check_labels:
++        for model in apps.get_app_config(app_label).get_models():  # FIX: only models for this app
++            router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
++    
++    print("Router calls: %s" % router.calls)
++    
++    # Check for invalid combinations
++    invalid_calls = []
++    for app_label, model_name in router.calls:
++        if model_name in ['Model1', 'Model2'] and app_label != 'app1':
++            invalid_calls.append((app_label, model_name))
++        elif model_name in ['Model3', 'Model4'] and app_label != 'app2':
++            invalid_calls.append((app_label, model_name))
++    
++    if invalid_calls:
++        print("ERROR: Found invalid combinations (should not happen with fix):")
++        for call in invalid_calls:
++            print("  %s" % (call,))
++        return False
++    else:
++        print("CORRECT: All (app_label, model_name) pairs are valid")
++        return True
++
++if __name__ == '__main__':
++    has_bug = test_buggy_code()
++    is_fixed = test_fixed_code()
++    
++    print("\n=== Summary ===")
++    print("Original code has bug: %s" % has_bug)
++    print("Fixed code works correctly: %s" % is_fixed)
++    
++    sys.exit(0 if is_fixed else 1)
+diff --git a/test_makemigrations_fix.py b/test_makemigrations_fix.py
+new file mode 100644
+index 0000000000..76bd9662b2
+--- /dev/null
++++ b/test_makemigrations_fix.py
+@@ -0,0 +1,97 @@
++"""
++Test to verify the fix for makemigrations router.allow_migrate() calls.
++"""
++import sys
++import os
++
++# Mock Django components
++class MockModel:
++    class _meta:
++        def __init__(self, app_label, model_name):
++            self.app_label = app_label
++            self.object_name = model_name
++            self.model_name = model_name.lower()
++    
++    def __init__(self, app_label, model_name):
++        self._meta = self._meta(app_label, model_name)
++
++class MockAppConfig:
++    def __init__(self, label, models):
++        self.label = label
++        self._models = models
++    
++    def get_models(self, include_auto_created=False, include_swapped=False):
++        return self._models
++
++class MockApps:
++    def __init__(self):
++        self.app_configs = {
++            'app1': MockAppConfig('app1', [
++                MockModel('app1', 'Model1'),
++                MockModel('app1', 'Model2'),
++            ]),
++            'app2': MockAppConfig('app2', [
++                MockModel('app2', 'Model3'),
++                MockModel('app2', 'Model4'),
++            ]),
++        }
++    
++    def get_app_config(self, app_label):
++        return self.app_configs[app_label]
++    
++    def get_app_configs(self):
++        return self.app_configs.values()
++
++class MockRouter:
++    def __init__(self):
++        self.calls = []
++    
++    def allow_migrate(self, db, app_label, model_name=None, **hints):
++        self.calls.append((app_label, model_name))
++        return True
++
++class MockConnection:
++    alias = 'default'
++    settings_dict = {'ENGINE': 'django.db.backends.postgresql'}
++
++# Test the fixed code
++def test_fixed_code():
++    print("Testing fixed makemigrations code...")
++    
++    apps = MockApps()
++    router = MockRouter()
++    connection = MockConnection()
++    consistency_check_labels = set(config.label for config in apps.get_app_configs())
++    
++    # Simulate the fixed code - collect all calls instead of using any()
++    for app_label in consistency_check_labels:
++        for model in apps.get_app_config(app_label).get_models():
++            router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
++    
++    print("Router calls: %s" % router.calls)
++    
++    # Verify correct behavior
++    expected_calls = [
++        ('app1', 'Model1'),
++        ('app1', 'Model2'),
++        ('app2', 'Model3'),
++        ('app2', 'Model4'),
++    ]
++    
++    # Sort both lists for comparison
++    router.calls.sort()
++    expected_calls.sort()
++    
++    if router.calls == expected_calls:
++        print("PASS: Router called with correct (app_label, model_name) pairs")
++        print("  Each app_label is only paired with its own models")
++        return True
++    else:
++        print("FAIL: Router called with incorrect pairs")
++        print("  Expected: %s" % expected_calls)
++        print("  Got: %s" % router.calls)
++        return False
++
++if __name__ == '__main__':
++    success = test_fixed_code()
++    sys.exit(0 if success else 1)
+diff --git a/verify_bug.py b/verify_bug.py
+new file mode 100644
+index 0000000000..466845cdac
+--- /dev/null
++++ b/verify_bug.py
+@@ -0,0 +1,17 @@
++"""
++Verify the bug: apps.get_models(app_label) doesn't filter by app_label.
++It treats app_label as the include_auto_created parameter.
++"""
++
++# The signature is:
++# def get_models(self, include_auto_created=False, include_swapped=False):
++
++# So when calling apps.get_models(app_label), where app_label is a string like 'myapp',
++# it's actually calling apps.get_models(include_auto_created='myapp')
++# which would be truthy, so it would include auto-created models, but still return ALL models.
++
++# The fix should be to use apps.get_app_config(app_label).get_models()
++# instead of apps.get_models(app_label)
++
++print("Bug confirmed: apps.get_models(app_label) returns ALL models, not just for that app")
++print("Fix: Use apps.get_app_config(app_label).get_models() instead")

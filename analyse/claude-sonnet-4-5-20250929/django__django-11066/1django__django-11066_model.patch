@@ -1,0 +1,458 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 0000000000..353d5a91e0
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,12 @@
++# Fix Summary for RenameContentType Database Issue
++
++## Problem
++The `RenameContentType._rename()` method was not saving the content type to the correct database. Even though the save operation was wrapped in `transaction.atomic(using=db)`, the actual `save()` call didn't specify which database to use, causing it to default to the 'default' database instead of the one specified by `schema_editor.connection.alias`.
++
++This caused issues for users with:
++- Dynamic database routers
++- Custom database configurations
++- Non-default databases for migrations
++
++## Solution
++Changed line 27 in `django/contrib/contenttypes/management/__init__.py` from:
+diff --git a/django/contrib/contenttypes/management/__init__.py b/django/contrib/contenttypes/management/__init__.py
+index 2b5f688136..563cba2fdf 100644
+--- a/django/contrib/contenttypes/management/__init__.py
++++ b/django/contrib/contenttypes/management/__init__.py
+@@ -24,7 +24,7 @@ class RenameContentType(migrations.RunPython):
+             content_type.model = new_model
+             try:
+                 with transaction.atomic(using=db):
+-                    content_type.save(update_fields={'model'})
++                    content_type.save(using=db, update_fields={'model'})
+             except IntegrityError:
+                 # Gracefully fallback if a stale content type causes a
+                 # conflict as remove_stale_contenttypes will take care of
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..affcd26816
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,45 @@
++"""
++Final verification that the fix is correct and complete.
++"""
++import os
++import sys
++
++# Read the fixed file
++with open('django/contrib/contenttypes/management/__init__.py', 'r') as f:
++    content = f.read()
++
++# Verify the fix is present
++if 'content_type.save(using=db, update_fields={\'model\'})' in content:
++    print("PASS: Fix is present: content_type.save(using=db, update_fields={'model'})")
++else:
++    print("FAIL: Fix is NOT present!")
++    sys.exit(1)
++
++# Verify it's in the correct context (within transaction.atomic)
++lines = content.split('\n')
++for i, line in enumerate(lines):
++    if 'content_type.save(using=db, update_fields={\'model\'})' in line:
++        # Check that transaction.atomic(using=db) is a few lines above
++        context = '\n'.join(lines[max(0, i-5):i+1])
++        if 'transaction.atomic(using=db)' in context:
++            print("PASS: Fix is in correct context (within transaction.atomic(using=db))")
++        else:
++            print("FAIL: Fix is NOT in correct context!")
++            sys.exit(1)
++        
++        # Check that db = schema_editor.connection.alias is defined earlier
++        earlier_context = '\n'.join(lines[:i])
++        if 'db = schema_editor.connection.alias' in earlier_context:
++            print("PASS: db variable is properly defined from schema_editor.connection.alias")
++        else:
++            print("FAIL: db variable is NOT properly defined!")
++            sys.exit(1)
++        break
++
++print("\n" + "="*60)
++print("All verifications passed!")
++print("The fix correctly addresses the issue described in the PR:")
++print("- content_type.save() now uses the 'using=db' parameter")
++print("- This ensures it saves to the correct database specified by")
++print("  schema_editor.connection.alias, not the default database")
++print("="*60)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..cd255bc2f5
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,153 @@
++"""
++Comprehensive test for RenameContentType fix.
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            },
++            'other': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import connection, connections
++from django.contrib.contenttypes.models import ContentType
++from django.contrib.contenttypes.management import RenameContentType
++from django.db import migrations
++from django.db.utils import IntegrityError
++from unittest.mock import Mock, patch, MagicMock
++
++def test_successful_rename():
++    """Test successful rename with correct database."""
++    print("\n=== Test 1: Successful rename ===")
++    
++    schema_editor = Mock()
++    schema_editor.connection.alias = 'other'
++    apps = Mock()
++    
++    MockContentType = Mock()
++    mock_content_type_instance = Mock()
++    mock_content_type_instance.model = 'oldmodel'
++    
++    save_calls = []
++    def track_save(**kwargs):
++        save_calls.append(kwargs)
++        mock_content_type_instance.model = 'newmodel'
++    
++    mock_content_type_instance.save = track_save
++    MockContentType.objects.db_manager.return_value.get_by_natural_key.return_value = mock_content_type_instance
++    MockContentType.DoesNotExist = ContentType.DoesNotExist
++    MockContentType.objects.clear_cache = Mock()
++    
++    apps.get_model.return_value = MockContentType
++    
++    rename_op = RenameContentType('testapp', 'oldmodel', 'newmodel')
++    
++    with patch('django.contrib.contenttypes.management.router') as mock_router:
++        mock_router.allow_migrate_model.return_value = True
++        rename_op._rename(apps, schema_editor, 'oldmodel', 'newmodel')
++    
++    if save_calls and 'using' in save_calls[0] and save_calls[0]['using'] == 'other':
++        print("PASS: save() called with correct database")
++        return True
++    else:
++        print(f"FAIL: save() not called correctly. Calls: {save_calls}")
++        return False
++
++def test_integrity_error_rollback():
++    """Test that IntegrityError causes rollback with correct database."""
++    print("\n=== Test 2: IntegrityError rollback ===")
++    
++    schema_editor = Mock()
++    schema_editor.connection.alias = 'other'
++    apps = Mock()
++    
++    MockContentType = Mock()
++    mock_content_type_instance = Mock()
++    mock_content_type_instance.model = 'oldmodel'
++    
++    save_calls = []
++    def track_save(**kwargs):
++        save_calls.append(kwargs)
++        raise IntegrityError("Duplicate entry")
++    
++    mock_content_type_instance.save = track_save
++    MockContentType.objects.db_manager.return_value.get_by_natural_key.return_value = mock_content_type_instance
++    MockContentType.DoesNotExist = ContentType.DoesNotExist
++    
++    apps.get_model.return_value = MockContentType
++    
++    rename_op = RenameContentType('testapp', 'oldmodel', 'newmodel')
++    
++    with patch('django.contrib.contenttypes.management.router') as mock_router:
++        mock_router.allow_migrate_model.return_value = True
++        rename_op._rename(apps, schema_editor, 'oldmodel', 'newmodel')
++    
++    # Check that save was attempted with correct database
++    if save_calls and 'using' in save_calls[0] and save_calls[0]['using'] == 'other':
++        # Check that model was rolled back
++        if mock_content_type_instance.model == 'oldmodel':
++            print("PASS: IntegrityError handled correctly with proper database")
++            return True
++        else:
++            print("FAIL: Model not rolled back after IntegrityError")
++            return False
++    else:
++        print(f"FAIL: save() not called with correct database. Calls: {save_calls}")
++        return False
++
++def test_content_type_does_not_exist():
++    """Test when ContentType doesn't exist."""
++    print("\n=== Test 3: ContentType doesn't exist ===")
++    
++    schema_editor = Mock()
++    schema_editor.connection.alias = 'other'
++    apps = Mock()
++    
++    MockContentType = Mock()
++    MockContentType.objects.db_manager.return_value.get_by_natural_key.side_effect = ContentType.DoesNotExist
++    MockContentType.DoesNotExist = ContentType.DoesNotExist
++    
++    apps.get_model.return_value = MockContentType
++    
++    rename_op = RenameContentType('testapp', 'oldmodel', 'newmodel')
++    
++    with patch('django.contrib.contenttypes.management.router') as mock_router:
++        mock_router.allow_migrate_model.return_value = True
++        rename_op._rename(apps, schema_editor, 'oldmodel', 'newmodel')
++    
++    print("PASS: No error when ContentType doesn't exist")
++    return True
++
++if __name__ == '__main__':
++    results = [
++        test_successful_rename(),
++        test_integrity_error_rollback(),
++        test_content_type_does_not_exist(),
++    ]
++    
++    print("\n" + "="*50)
++    if all(results):
++        print("ALL TESTS PASSED")
++        sys.exit(0)
++    else:
++        print("SOME TESTS FAILED")
++        sys.exit(1)
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..562b608e29
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,104 @@
++"""
++Test the specific scenario described in the PR:
++- Using a dynamic database router
++- Specifying a non-default database for migrations
++- Ensuring RenameContentType saves to the correct database
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings similar to the PR scenario
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',  # This simulates the "never actually generated" database
++            },
++            'custom_db': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import connection, connections
++from django.contrib.contenttypes.models import ContentType
++from django.contrib.contenttypes.management import RenameContentType
++from django.db import migrations
++from unittest.mock import Mock, patch
++
++def test_pr_scenario():
++    """
++    Simulate the PR scenario where:
++    1. A custom database is specified via schema_editor.connection.alias
++    2. The default database doesn't exist/isn't used
++    3. RenameContentType should save to the custom database, not default
++    """
++    print("Testing PR scenario: RenameContentType with custom database...")
++    
++    # Create a mock schema_editor pointing to 'custom_db'
++    schema_editor = Mock()
++    schema_editor.connection.alias = 'custom_db'
++    
++    # Create a mock apps
++    apps = Mock()
++    
++    # Create a mock ContentType model
++    MockContentType = Mock()
++    mock_content_type_instance = Mock()
++    mock_content_type_instance.model = 'oldmodel'
++    
++    # Track which database is used in save()
++    save_database = None
++    def track_save(**kwargs):
++        nonlocal save_database
++        save_database = kwargs.get('using', 'default')  # Default to 'default' if not specified
++        mock_content_type_instance.model = 'newmodel'
++    
++    mock_content_type_instance.save = track_save
++    
++    # Setup the mock to return our instance
++    MockContentType.objects.db_manager.return_value.get_by_natural_key.return_value = mock_content_type_instance
++    MockContentType.DoesNotExist = ContentType.DoesNotExist
++    MockContentType.objects.clear_cache = Mock()
++    
++    apps.get_model.return_value = MockContentType
++    
++    # Create RenameContentType instance
++    rename_op = RenameContentType('testapp', 'oldmodel', 'newmodel')
++    
++    # Mock router to allow migration
++    with patch('django.contrib.contenttypes.management.router') as mock_router:
++        mock_router.allow_migrate_model.return_value = True
++        
++        # Call _rename with custom_db
++        rename_op._rename(apps, schema_editor, 'oldmodel', 'newmodel')
++    
++    # Verify the database used
++    print(f"Database used for save(): {save_database}")
++    
++    if save_database == 'custom_db':
++        print("SUCCESS: ContentType.save() used the correct custom database!")
++        print("This fix resolves the issue described in the PR.")
++        return True
++    elif save_database == 'default':
++        print("FAILURE: ContentType.save() used the default database instead of custom_db!")
++        print("This would cause the OperationalError described in the PR.")
++        return False
++    else:
++        print(f"UNEXPECTED: Database used was {save_database}")
++        return False
++
++if __name__ == '__main__':
++    result = test_pr_scenario()
++    sys.exit(0 if result else 1)
+diff --git a/test_rename_contenttype.py b/test_rename_contenttype.py
+new file mode 100644
+index 0000000000..6c541862cf
+--- /dev/null
++++ b/test_rename_contenttype.py
+@@ -0,0 +1,101 @@
++"""
++Test script to verify the RenameContentType fix.
++This script simulates the issue where content_type.save() doesn't use the correct database.
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            },
++            'other': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import connection, connections
++from django.contrib.contenttypes.models import ContentType
++from django.contrib.contenttypes.management import RenameContentType
++from django.db import migrations
++from unittest.mock import Mock, patch, MagicMock
++
++def test_rename_contenttype_uses_correct_database():
++    """
++    Test that RenameContentType._rename() uses the correct database for save().
++    """
++    print("Testing RenameContentType._rename() database usage...")
++    
++    # Create a mock schema_editor with a specific database alias
++    schema_editor = Mock()
++    schema_editor.connection.alias = 'other'
++    
++    # Create a mock apps
++    apps = Mock()
++    
++    # Create a mock ContentType model
++    MockContentType = Mock()
++    mock_content_type_instance = Mock()
++    mock_content_type_instance.model = 'oldmodel'
++    
++    # Track which database is used in save()
++    save_calls = []
++    def track_save(**kwargs):
++        save_calls.append(kwargs)
++    
++    mock_content_type_instance.save = track_save
++    
++    # Setup the mock to return our instance
++    MockContentType.objects.db_manager.return_value.get_by_natural_key.return_value = mock_content_type_instance
++    MockContentType.DoesNotExist = ContentType.DoesNotExist
++    
++    apps.get_model.return_value = MockContentType
++    
++    # Create RenameContentType instance
++    rename_op = RenameContentType('testapp', 'oldmodel', 'newmodel')
++    
++    # Mock router to allow migration
++    with patch('django.contrib.contenttypes.management.router') as mock_router:
++        mock_router.allow_migrate_model.return_value = True
++        
++        # Call _rename
++        rename_op._rename(apps, schema_editor, 'oldmodel', 'newmodel')
++    
++    # Check if save was called with the correct database
++    print(f"Save calls: {save_calls}")
++    
++    if save_calls:
++        if 'using' in save_calls[0]:
++            print(f"PASS: save() was called with 'using' parameter: {save_calls[0]['using']}")
++            if save_calls[0]['using'] == 'other':
++                print("PASS: Correct database 'other' was used")
++                return True
++            else:
++                print(f"FAIL: Wrong database used: {save_calls[0]['using']} (expected 'other')")
++                return False
++        else:
++            print("FAIL: save() was called WITHOUT 'using' parameter")
++            print("This means it will use the default database instead of the specified one")
++            return False
++    else:
++        print("FAIL: save() was not called")
++        return False
++
++if __name__ == '__main__':
++    result = test_rename_contenttype_uses_correct_database()
++    sys.exit(0 if result else 1)

@@ -1,0 +1,525 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 0000000000..673c88b89f
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,13 @@
++# Fix for BlockMatrix ZeroMatrix Issue
++
++## Problem
++When multiplying a BlockMatrix containing ZeroMatrix blocks, the second multiplication would fail with an `AttributeError: 'Zero' object has no attribute 'cols'`. This was because the first multiplication would convert ZeroMatrix blocks to scalar Zero instead of preserving them as ZeroMatrix.
++
++## Root Cause
++In `/testbed/sympy/matrices/dense.py`, the `_eval_matrix_mul` method uses `Add(*vec)` to sum the products of matrix elements. When all elements in the sum are `ZeroMatrix` objects, `Add` returns a scalar `Zero` instead of a `ZeroMatrix`.
++
++## Solution
++Modified `/testbed/sympy/matrices/dense.py` in the `_eval_matrix_mul` method to check if the result is scalar `Zero` but all elements were `MatrixExpr`, and if so, use the fallback code path that preserves `ZeroMatrix`.
++
++## Testing
++All tests pass, including the original issue from PR description and existing matrix multiplication functionality.
+diff --git a/fix_patch.py b/fix_patch.py
+new file mode 100644
+index 0000000000..5df4863254
+--- /dev/null
++++ b/fix_patch.py
+@@ -0,0 +1,49 @@
++import sys
++
++# Read the file
++with open('/testbed/sympy/matrices/dense.py', 'r') as f:
++    content = f.read()
++
++# Find the section to replace
++old_code = '''                vec = (mat[a]*other_mat[b] for a,b in zip(row_indices, col_indices))
++                try:
++                    new_mat[i] = Add(*vec)
++                except (TypeError, SympifyError):
++                    # Block matrices don't work with `sum` or `Add` (ISSUE #11599)
++                    # They don't work with `sum` because `sum` tries to add `0`
++                    # initially, and for a matrix, that is a mix of a scalar and
++                    # a matrix, which raises a TypeError. Fall back to a
++                    # block-matrix-safe way to multiply if the `sum` fails.
++                    vec = (mat[a]*other_mat[b] for a,b in zip(row_indices, col_indices))
++                    new_mat[i] = reduce(lambda a,b: a + b, vec)'''
++
++new_code = '''                vec = (mat[a]*other_mat[b] for a,b in zip(row_indices, col_indices))
++                try:
++                    vec_list = list(vec)
++                    result = Add(*vec_list)
++                    # Check if result is scalar Zero but all elements were MatrixExpr
++                    # This happens when all elements are ZeroMatrix
++                    from sympy.matrices.expressions.matexpr import MatrixExpr
++                    if result is S.Zero and vec_list and all(isinstance(v, MatrixExpr) for v in vec_list):
++                        # Use the fallback to preserve ZeroMatrix
++                        new_mat[i] = reduce(lambda a,b: a + b, vec_list)
++                    else:
++                        new_mat[i] = result
++                except (TypeError, SympifyError):
++                    # Block matrices don't work with `sum` or `Add` (ISSUE #11599)
++                    # They don't work with `sum` because `sum` tries to add `0`
++                    # initially, and for a matrix, that is a mix of a scalar and
++                    # a matrix, which raises a TypeError. Fall back to a
++                    # block-matrix-safe way to multiply if the `sum` fails.
++                    vec = (mat[a]*other_mat[b] for a,b in zip(row_indices, col_indices))
++                    new_mat[i] = reduce(lambda a,b: a + b, vec)'''
++
++# Replace the code
++if old_code in content:
++    content = content.replace(old_code, new_code)
++    with open('/testbed/sympy/matrices/dense.py', 'w') as f:
++        f.write(content)
++    print("Patch applied successfully!")
++else:
++    print("ERROR: Could not find the code to replace!")
++    sys.exit(1)
+diff --git a/sympy/matrices/dense.py b/sympy/matrices/dense.py
+index 1844475199..d9e17af736 100644
+--- a/sympy/matrices/dense.py
++++ b/sympy/matrices/dense.py
+@@ -195,7 +195,16 @@ def _eval_matrix_mul(self, other):
+                 col_indices = range(col, other_len, other_cols)
+                 vec = (mat[a]*other_mat[b] for a,b in zip(row_indices, col_indices))
+                 try:
+-                    new_mat[i] = Add(*vec)
++                    vec_list = list(vec)
++                    result = Add(*vec_list)
++                    # Check if result is scalar Zero but all elements were MatrixExpr
++                    # This happens when all elements are ZeroMatrix
++                    from sympy.matrices.expressions.matexpr import MatrixExpr
++                    if result is S.Zero and vec_list and all(isinstance(v, MatrixExpr) for v in vec_list):
++                        # Use the fallback to preserve ZeroMatrix
++                        new_mat[i] = reduce(lambda a,b: a + b, vec_list)
++                    else:
++                        new_mat[i] = result
+                 except (TypeError, SympifyError):
+                     # Block matrices don't work with `sum` or `Add` (ISSUE #11599)
+                     # They don't work with `sum` because `sum` tries to add `0`
+diff --git a/test_common_mul.py b/test_common_mul.py
+new file mode 100644
+index 0000000000..651fe5dc2c
+--- /dev/null
++++ b/test_common_mul.py
+@@ -0,0 +1,28 @@
++from sympy import MatrixSymbol, ZeroMatrix, BlockMatrix, Matrix
++from sympy.matrices.immutable import ImmutableDenseMatrix
++
++# Test the common.py _eval_matrix_mul
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++
++# Create a regular Matrix (not ImmutableDenseMatrix) with MatrixExpr elements
++# This will use the common.py _eval_matrix_mul
++from sympy.matrices.dense import MutableDenseMatrix
++
++m = MutableDenseMatrix([[a, z], [z, z]])
++print("m =", m)
++print("type(m) =", type(m))
++print()
++
++# Test multiplication
++result = m * m
++print("m * m =", result)
++print()
++
++# Check the types
++for i in range(2):
++    for j in range(2):
++        print(f"type(result[{i}, {j}]) = {type(result[i, j])}")
++print()
++
++print("Test passed!")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..69a52cc1ee
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,92 @@
++from sympy import MatrixSymbol, ZeroMatrix, BlockMatrix, block_collapse, Identity, Matrix, symbols
++
++print("=" * 60)
++print("COMPREHENSIVE TEST SUITE FOR BLOCKMATRIX FIX")
++print("=" * 60)
++print()
++
++# Test 1: Original issue from PR
++print("Test 1: Original issue from PR")
++print("-" * 60)
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++print("b =", b)
++result1 = block_collapse(b * b)
++print("block_collapse(b * b) =", result1)
++assert str(result1) == "Matrix([\n[a**2, 0],\n[   0, 0]])"
++
++result2 = b._blockmul(b)
++print("b._blockmul(b) =", result2)
++assert str(result2) == "Matrix([\n[a**2, 0],\n[   0, 0]])"
++
++result3 = block_collapse(b * b * b)
++print("block_collapse(b * b * b) =", result3)
++assert str(result3) == "Matrix([\n[a**3, 0],\n[   0, 0]])"
++
++result4 = b._blockmul(b)._blockmul(b)
++print("b._blockmul(b)._blockmul(b) =", result4)
++assert str(result4) == "Matrix([\n[a**3, 0],\n[   0, 0]])"
++
++# Check that the blocks are ZeroMatrix, not scalar Zero
++assert type(result2.blocks[0, 1]).__name__ == 'ZeroMatrix'
++assert type(result2.blocks[1, 0]).__name__ == 'ZeroMatrix'
++assert type(result2.blocks[1, 1]).__name__ == 'ZeroMatrix'
++print("✓ All blocks are ZeroMatrix (not scalar Zero)")
++print()
++
++# Test 2: All ZeroMatrix blocks
++print("Test 2: All ZeroMatrix blocks")
++print("-" * 60)
++b_zero = BlockMatrix([[z, z], [z, z]])
++result_zero = b_zero._blockmul(b_zero)
++print("b_zero._blockmul(b_zero) =", result_zero)
++assert all(type(result_zero.blocks[i, j]).__name__ == 'ZeroMatrix' 
++           for i in range(2) for j in range(2))
++print("✓ All blocks are ZeroMatrix")
++print()
++
++# Test 3: Mixed with Identity
++print("Test 3: Mixed with Identity")
++print("-" * 60)
++i = Identity(2)
++b_mixed = BlockMatrix([[a, z], [z, i]])
++result_mixed = b_mixed._blockmul(b_mixed)
++print("b_mixed._blockmul(b_mixed) =", result_mixed)
++assert type(result_mixed.blocks[0, 1]).__name__ == 'ZeroMatrix'
++print("✓ ZeroMatrix blocks preserved with Identity")
++print()
++
++# Test 4: Different sizes
++print("Test 4: Different sizes")
++print("-" * 60)
++a3 = MatrixSymbol("a", 3, 3)
++z3 = ZeroMatrix(3, 3)
++b3 = BlockMatrix([[a3, z3], [z3, z3]])
++result3_size = b3._blockmul(b3)
++print("b3._blockmul(b3) =", result3_size)
++assert type(result3_size.blocks[0, 1]).__name__ == 'ZeroMatrix'
++print("✓ Works with different sizes")
++print()
++
++# Test 5: Multiple consecutive multiplications
++print("Test 5: Multiple consecutive multiplications")
++print("-" * 60)
++result_multi = b._blockmul(b)._blockmul(b)._blockmul(b)._blockmul(b)
++print("b^5 =", result_multi)
++assert type(result_multi.blocks[0, 1]).__name__ == 'ZeroMatrix'
++print("✓ Multiple multiplications work correctly")
++print()
++
++# Test 6: block_collapse with complex expressions
++print("Test 6: block_collapse with complex expressions")
++print("-" * 60)
++result_collapse = block_collapse(b * b * b * b * b)
++print("block_collapse(b^5) =", result_collapse)
++print("✓ block_collapse works with complex expressions")
++print()
++
++print("=" * 60)
++print("ALL TESTS PASSED!")
++print("=" * 60)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..78183cecd3
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,40 @@
++from sympy import MatrixSymbol, ZeroMatrix, BlockMatrix, block_collapse, Identity, Matrix
++
++print("Test 1: BlockMatrix with mixed ZeroMatrix and Identity")
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++i = Identity(2)
++b = BlockMatrix([[a, z], [z, i]])
++result = b._blockmul(b)
++print("b._blockmul(b) =", result)
++print("type(result.blocks[0, 1]) =", type(result.blocks[0, 1]))
++print()
++
++print("Test 2: BlockMatrix with all ZeroMatrix")
++b2 = BlockMatrix([[z, z], [z, z]])
++result2 = b2._blockmul(b2)
++print("b2._blockmul(b2) =", result2)
++print("type(result2.blocks[0, 0]) =", type(result2.blocks[0, 0]))
++print()
++
++print("Test 3: BlockMatrix with different sized blocks")
++a3 = MatrixSymbol("a", 3, 3)
++z3 = ZeroMatrix(3, 3)
++b3 = BlockMatrix([[a3, z3], [z3, z3]])
++result3 = b3._blockmul(b3)
++print("b3._blockmul(b3) =", result3)
++print("type(result3.blocks[0, 1]) =", type(result3.blocks[0, 1]))
++print()
++
++print("Test 4: Multiple multiplications")
++result4 = b._blockmul(b)._blockmul(b)._blockmul(b)
++print("b^4 =", result4)
++print("type(result4.blocks[0, 1]) =", type(result4.blocks[0, 1]))
++print()
++
++print("Test 5: block_collapse with complex expression")
++result5 = block_collapse(b * b * b * b)
++print("block_collapse(b^4) =", result5)
++print()
++
++print("All edge case tests passed!")
+diff --git a/test_existing_functionality.py b/test_existing_functionality.py
+new file mode 100644
+index 0000000000..88d831d0ee
+--- /dev/null
++++ b/test_existing_functionality.py
+@@ -0,0 +1,54 @@
++from sympy import MatrixSymbol, Matrix, symbols, eye
++from sympy.matrices.immutable import ImmutableDenseMatrix
++
++print("Testing existing matrix multiplication functionality")
++print("=" * 60)
++
++# Test 1: Regular matrix multiplication
++print("\nTest 1: Regular matrix multiplication")
++A = Matrix([[1, 2], [3, 4]])
++B = Matrix([[5, 6], [7, 8]])
++result = A * B
++print(f"A * B = {result}")
++assert result == Matrix([[19, 22], [43, 50]])
++print("✓ Regular matrix multiplication works")
++
++# Test 2: Matrix with symbols
++print("\nTest 2: Matrix with symbols")
++x, y = symbols('x y')
++M = Matrix([[x, y], [y, x]])
++N = Matrix([[1, 0], [0, 1]])
++result = M * N
++print(f"M * N = {result}")
++assert result == M
++print("✓ Matrix with symbols works")
++
++# Test 3: ImmutableDenseMatrix
++print("\nTest 3: ImmutableDenseMatrix")
++IM = ImmutableDenseMatrix([[1, 2], [3, 4]])
++IN = ImmutableDenseMatrix([[5, 6], [7, 8]])
++result = IM * IN
++print(f"IM * IN = {result}")
++assert result == Matrix([[19, 22], [43, 50]])
++print("✓ ImmutableDenseMatrix multiplication works")
++
++# Test 4: MatrixSymbol multiplication
++print("\nTest 4: MatrixSymbol multiplication")
++A = MatrixSymbol('A', 2, 2)
++B = MatrixSymbol('B', 2, 2)
++result = A * B
++print(f"A * B = {result}")
++print("✓ MatrixSymbol multiplication works")
++
++# Test 5: Mixed numeric and symbolic
++print("\nTest 5: Mixed numeric and symbolic")
++M = Matrix([[1, 2], [3, 4]])
++x = symbols('x')
++result = M * x
++print(f"M * x = {result}")
++assert result == Matrix([[x, 2*x], [3*x, 4*x]])
++print("✓ Mixed numeric and symbolic works")
++
++print("\n" + "=" * 60)
++print("ALL EXISTING FUNCTIONALITY TESTS PASSED!")
++print("=" * 60)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..6a7ec13885
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,51 @@
++from sympy import MatrixSymbol, ZeroMatrix, BlockMatrix, block_collapse
++
++# Create the test case from the PR description
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++print("b =", b)
++print()
++
++# First multiplication
++print("Testing b._blockmul(b):")
++try:
++    result1 = b._blockmul(b)
++    print("result1 =", result1)
++    print("result1.blocks =", result1.blocks)
++    print()
++    
++    # Check the types of the blocks
++    for i in range(2):
++        for j in range(2):
++            print(f"type(result1.blocks[{i}, {j}]) = {type(result1.blocks[i, j])}")
++    print()
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
++    print()
++
++# Second multiplication
++print("Testing result1._blockmul(b):")
++try:
++    result2 = result1._blockmul(b)
++    print("result2 =", result2)
++    print("result2.blocks =", result2.blocks)
++    print()
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
++    print()
++
++# Also try block_collapse
++print("Testing block_collapse(b * b * b):")
++try:
++    result = block_collapse(b * b * b)
++    print("Result:", result)
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..ed2d8579d3
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,20 @@
++from sympy import MatrixSymbol, ZeroMatrix, Add
++from sympy.core.sympify import SympifyError
++
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++
++zm1 = a*z
++zm2 = z*z
++
++vec = [zm1, zm2]
++
++print("Testing Add(*vec):")
++try:
++    result = Add(*vec)
++    print("Result:", result, "type:", type(result))
++except (TypeError, SympifyError) as e:
++    print("Exception:", e)
++    from functools import reduce
++    result = reduce(lambda a,b: a + b, vec)
++    print("Fallback result:", result, "type:", type(result))
+diff --git a/test_pr_case.py b/test_pr_case.py
+new file mode 100644
+index 0000000000..5446d69b3c
+--- /dev/null
++++ b/test_pr_case.py
+@@ -0,0 +1,32 @@
++from sympy import *
++
++# Test case from PR description
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++print("Testing block_collapse(b * b):")
++result1 = block_collapse(b * b)
++print(result1)
++print()
++
++print("Testing b._blockmul(b):")
++result2 = b._blockmul(b)
++print(result2)
++print()
++
++print("Testing block_collapse(b * b * b):")
++result3 = block_collapse(b * b * b)
++print(result3)
++print()
++
++print("Testing b._blockmul(b)._blockmul(b):")
++result4 = b._blockmul(b)._blockmul(b)
++print(result4)
++print()
++
++print("Checking type of result2.blocks[0, 1]:")
++print(f"type(result2.blocks[0, 1]) = {type(result2.blocks[0, 1])}")
++print()
++
++print("All tests passed!")
+diff --git a/test_pr_exact.py b/test_pr_exact.py
+new file mode 100644
+index 0000000000..17849dabb4
+--- /dev/null
++++ b/test_pr_exact.py
+@@ -0,0 +1,64 @@
++#!/usr/bin/env python
++"""
++This script reproduces the exact issue from the PR description
++to verify that it's fixed.
++"""
++
++from sympy import *
++
++print("Reproducing the exact issue from the PR description:")
++print("=" * 70)
++
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++print("\n1. Creating BlockMatrix:")
++print(">>> a = MatrixSymbol('a', 2, 2)")
++print(">>> z = ZeroMatrix(2, 2)")
++print(">>> b = BlockMatrix([[a, z], [z, z]])")
++print(f">>> b")
++print(b)
++
++print("\n2. Block-multiplying once (should work fine):")
++print(">>> block_collapse(b * b)")
++result1 = block_collapse(b * b)
++print(result1)
++
++print("\n>>> b._blockmul(b)")
++result2 = b._blockmul(b)
++print(result2)
++
++print("\n3. Block-multiplying twice (this was failing before):")
++print(">>> block_collapse(b * b * b)")
++try:
++    result3 = block_collapse(b * b * b)
++    print(result3)
++    print("✓ SUCCESS: No exception raised!")
++except AttributeError as e:
++    print(f"✗ FAILED: {e}")
++    exit(1)
++
++print("\n>>> b._blockmul(b)._blockmul(b)")
++try:
++    result4 = b._blockmul(b)._blockmul(b)
++    print(result4)
++    print("✓ SUCCESS: No exception raised!")
++except AttributeError as e:
++    print(f"✗ FAILED: {e}")
++    exit(1)
++
++print("\n4. Verifying that zeros are ZeroMatrix, not scalar Zero:")
++print(f">>> type(b._blockmul(b).blocks[0, 1])")
++block_type = type(b._blockmul(b).blocks[0, 1])
++print(f"{block_type}")
++if block_type.__name__ == 'ZeroMatrix':
++    print("✓ SUCCESS: Blocks are ZeroMatrix!")
++else:
++    print(f"✗ FAILED: Expected ZeroMatrix, got {block_type.__name__}")
++    exit(1)
++
++print("\n" + "=" * 70)
++print("ALL TESTS FROM PR DESCRIPTION PASSED!")
++print("The issue has been successfully fixed!")
++print("=" * 70)

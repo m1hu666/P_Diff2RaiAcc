@@ -1,0 +1,890 @@
+diff --git a/debug_case.py b/debug_case.py
+new file mode 100644
+index 000000000..269ca0a30
+--- /dev/null
++++ b/debug_case.py
+@@ -0,0 +1,44 @@
++import ast
++
++# The failing case
++code = 'def func(a, b, /, c, d=1): pass'
++module = ast.parse(code)
++func_def = module.body[0]
++args = func_def.args
++
++print(f"Code: {code}")
++print(f"posonlyargs: {[arg.arg for arg in args.posonlyargs]}")
++print(f"args: {[arg.arg for arg in args.args]}")
++print(f"defaults: {[d.value if hasattr(d, 'value') else d for d in args.defaults]}")
++
++num_posonlyargs = len(args.posonlyargs)
++num_args = len(args.args)
++num_defaults = len(args.defaults)
++num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++
++print(f"\nnum_posonlyargs: {num_posonlyargs}")
++print(f"num_args: {num_args}")
++print(f"num_defaults: {num_defaults}")
++print(f"num_params_without_defaults: {num_params_without_defaults}")
++
++# Calculate how many defaults belong to posonlyargs
++if num_params_without_defaults < num_posonlyargs:
++    num_posonly_defaults = num_posonlyargs - num_params_without_defaults
++else:
++    num_posonly_defaults = 0
++
++print(f"num_posonly_defaults: {num_posonly_defaults}")
++
++# For each regular arg, calculate its default
++for i, arg in enumerate(args.args):
++    print(f"\nProcessing arg '{arg.arg}' (index {i}):")
++    print(f"  num_args - i = {num_args - i}")
++    print(f"  num_defaults - num_posonly_defaults = {num_defaults - num_posonly_defaults}")
++    
++    if num_args - i <= num_defaults - num_posonly_defaults:
++        # This formula is wrong!
++        default_index = num_posonly_defaults + (num_args - (num_defaults - num_posonly_defaults)) + i
++        print(f"  Has default at index: {default_index}")
++        print(f"  But defaults list has length: {len(args.defaults)}")
++    else:
++        print(f"  No default")
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 000000000..11bda77ec
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,94 @@
++#!/usr/bin/env python3
++"""Final comprehensive test of the fix."""
++
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++from sphinx.util.inspect import signature_from_str
++from inspect import Parameter
++
++# Test cases with expected results
++test_cases = [
++    # (signature, expected_params_dict)
++    ("(a, b=0, /, c=1)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '0'),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }),
++    ("(a, /, b=1)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }),
++    ("(a, b, /, c, d=1)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, Parameter.empty),
++        'd': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }),
++    ("(a=1, b=2, /, c=3)", {
++        'a': (Parameter.POSITIONAL_ONLY, '1'),
++        'b': (Parameter.POSITIONAL_ONLY, '2'),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '3'),
++    }),
++    ("(a, b=1, c=2, /, d=3)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '1'),
++        'c': (Parameter.POSITIONAL_ONLY, '2'),
++        'd': (Parameter.POSITIONAL_OR_KEYWORD, '3'),
++    }),
++    ("(a, /)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++    }),
++    ("(a=1, /)", {
++        'a': (Parameter.POSITIONAL_ONLY, '1'),
++    }),
++    # Test without positional-only args
++    ("(a, b=1)", {
++        'a': (Parameter.POSITIONAL_OR_KEYWORD, Parameter.empty),
++        'b': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }),
++]
++
++print("Running comprehensive tests...")
++print("=" * 80)
++
++all_passed = True
++for signature, expected in test_cases:
++    print(f"\nTest: {signature}")
++    try:
++        sig = signature_from_str(signature)
++        
++        # Check each parameter
++        for param_name, (expected_kind, expected_default) in expected.items():
++            param = sig.parameters[param_name]
++            
++            # Check kind
++            if param.kind != expected_kind:
++                print(f"  ‚úó FAILED: {param_name} kind mismatch")
++                print(f"    Expected: {expected_kind}")
++                print(f"    Got: {param.kind}")
++                all_passed = False
++                continue
++            
++            # Check default
++            actual_default = param.default if param.default != Parameter.empty else Parameter.empty
++            if actual_default != expected_default:
++                print(f"  ‚úó FAILED: {param_name} default mismatch")
++                print(f"    Expected: {expected_default}")
++                print(f"    Got: {actual_default}")
++                all_passed = False
++                continue
++            
++            print(f"  ‚úì {param_name}: kind={param.kind.name}, default={actual_default}")
++        
++    except Exception as e:
++        print(f"  ‚úó FAILED with exception: {e}")
++        all_passed = False
++
++print("\n" + "=" * 80)
++if all_passed:
++    print("‚úì ALL TESTS PASSED!")
++else:
++    print("‚úó SOME TESTS FAILED")
++print("=" * 80)
+diff --git a/fix.py b/fix.py
+new file mode 100644
+index 000000000..d32b26696
+--- /dev/null
++++ b/fix.py
+@@ -0,0 +1,86 @@
++import sys
++
++# Read the file
++with open('sphinx/util/inspect.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the signature_from_str function
++old_code = '''    if hasattr(args, "posonlyargs"):
++        for arg in args.posonlyargs:  # type: ignore
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    annotation=annotation))
++
++    for i, arg in enumerate(args.args):
++        if len(args.args) - i <= len(args.defaults):
++            default = ast_unparse(args.defaults[-len(args.args) + i])
++        else:
++            default = Parameter.empty
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
++                                default=default, annotation=annotation))'''
++
++new_code = '''    if hasattr(args, "posonlyargs"):
++        # Defaults for positional-only and positional-or-keyword arguments are
++        # stored in a single list (args.defaults) which is aligned to the right.
++        # To determine which defaults belong to positional-only arguments, we need
++        # to calculate the offset.
++        posonlyargs = args.posonlyargs  # type: ignore
++        num_posonlyargs = len(posonlyargs)
++        num_args = len(args.args)
++        num_defaults = len(args.defaults)
++        
++        # Calculate how many parameters don't have defaults
++        num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++        
++        for i, arg in enumerate(posonlyargs):
++            if num_params_without_defaults <= i:
++                # This positional-only arg has a default
++                default_index = i - num_params_without_defaults
++                default = ast_unparse(args.defaults[default_index])
++            else:
++                default = Parameter.empty
++            
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    default=default, annotation=annotation))
++
++    for i, arg in enumerate(args.args):
++        if hasattr(args, "posonlyargs"):
++            # Adjust the index to account for defaults already consumed by posonlyargs
++            num_posonlyargs = len(args.posonlyargs)  # type: ignore
++            num_args = len(args.args)
++            num_defaults = len(args.defaults)
++            num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++            
++            # Calculate how many defaults belong to posonlyargs
++            if num_params_without_defaults < num_posonlyargs:
++                num_posonly_defaults = num_posonlyargs - num_params_without_defaults
++            else:
++                num_posonly_defaults = 0
++            
++            # Now check if this arg has a default
++            if num_args - i <= num_defaults - num_posonly_defaults:
++                default_index = num_posonly_defaults + (num_args - (num_defaults - num_posonly_defaults)) + i
++                default = ast_unparse(args.defaults[default_index])
++            else:
++                default = Parameter.empty
++        else:
++            # Original logic for when there are no posonlyargs
++            if len(args.args) - i <= len(args.defaults):
++                default = ast_unparse(args.defaults[-len(args.args) + i])
++            else:
++                default = Parameter.empty
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
++                                default=default, annotation=annotation))'''
++
++content = content.replace(old_code, new_code)
++
++# Write the file back
++with open('sphinx/util/inspect.py', 'w') as f:
++    f.write(content)
++
++print("File updated successfully")
+diff --git a/fix_v2.py b/fix_v2.py
+new file mode 100644
+index 000000000..a5132fdbc
+--- /dev/null
++++ b/fix_v2.py
+@@ -0,0 +1,112 @@
++import sys
++
++# Read the file
++with open('sphinx/util/inspect.py', 'r') as f:
++    lines = f.readlines()
++
++# Find the signature_from_str function and replace it
++output = []
++in_function = False
++skip_until_next_section = False
++indent_level = 0
++
++i = 0
++while i < len(lines):
++    line = lines[i]
++    
++    # Detect the start of the function
++    if 'def signature_from_str(signature: str)' in line:
++        in_function = True
++        output.append(line)
++        i += 1
++        continue
++    
++    # If we're in the function, look for the posonlyargs section
++    if in_function and 'if hasattr(args, "posonlyargs"):' in line:
++        # Replace the entire section
++        output.append(line)
++        i += 1
++        
++        # Skip old implementation and write new one
++        # First, consume the old posonlyargs loop
++        while i < len(lines) and not ('for i, arg in enumerate(args.args):' in lines[i]):
++            i += 1
++        
++        # Write new posonlyargs implementation
++        output.append('''        # Defaults for positional-only and positional-or-keyword arguments are
++        # stored in a single list (args.defaults) which is aligned to the right.
++        # To determine which defaults belong to positional-only arguments, we need
++        # to calculate the offset.
++        posonlyargs = args.posonlyargs  # type: ignore
++        num_posonlyargs = len(posonlyargs)
++        num_args = len(args.args)
++        num_defaults = len(args.defaults)
++        
++        # Calculate how many parameters don't have defaults
++        num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++        
++        for i, arg in enumerate(posonlyargs):
++            if num_params_without_defaults <= i:
++                # This positional-only arg has a default
++                default_index = i - num_params_without_defaults
++                default = ast_unparse(args.defaults[default_index])
++            else:
++                default = Parameter.empty
++            
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    default=default, annotation=annotation))
++
++''')
++        
++        # Now handle the regular args section
++        output.append(lines[i])  # for i, arg in enumerate(args.args):
++        i += 1
++        
++        # Skip the old default calculation
++        while i < len(lines) and not ('annotation = ast_unparse(arg.annotation)' in lines[i]):
++            i += 1
++        
++        # Write new default calculation for regular args
++        output.append('''        if hasattr(args, "posonlyargs"):
++            # Adjust the index to account for defaults already consumed by posonlyargs
++            num_posonlyargs = len(args.posonlyargs)  # type: ignore
++            num_args = len(args.args)
++            num_defaults = len(args.defaults)
++            num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++            
++            # Calculate how many defaults belong to posonlyargs
++            if num_params_without_defaults < num_posonlyargs:
++                num_posonly_defaults = num_posonlyargs - num_params_without_defaults
++            else:
++                num_posonly_defaults = 0
++            
++            # Now check if this arg has a default
++            if num_args - i <= num_defaults - num_posonly_defaults:
++                # Calculate the index in the defaults list
++                default_index = num_posonly_defaults + (num_defaults - num_posonly_defaults) - (num_args - i)
++                default = ast_unparse(args.defaults[default_index])
++            else:
++                default = Parameter.empty
++        else:
++            # Original logic for when there are no posonlyargs
++            if len(args.args) - i <= len(args.defaults):
++                default = ast_unparse(args.defaults[-len(args.args) + i])
++            else:
++                default = Parameter.empty
++
++''')
++        
++        # Continue with the rest
++        output.append(lines[i])
++        i += 1
++        continue
++    
++    output.append(line)
++    i += 1
++
++# Write back
++with open('sphinx/util/inspect.py', 'w') as f:
++    f.writelines(output)
++
++print("File updated successfully")
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index 15f0d66e2..816605644 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -521,16 +521,57 @@ def signature_from_str(signature: str) -> inspect.Signature:
+     params = []
+ 
+     if hasattr(args, "posonlyargs"):
+-        for arg in args.posonlyargs:  # type: ignore
++        # Defaults for positional-only and positional-or-keyword arguments are
++        # stored in a single list (args.defaults) which is aligned to the right.
++        # To determine which defaults belong to positional-only arguments, we need
++        # to calculate the offset.
++        posonlyargs = args.posonlyargs  # type: ignore
++        num_posonlyargs = len(posonlyargs)
++        num_args = len(args.args)
++        num_defaults = len(args.defaults)
++        
++        # Calculate how many parameters don't have defaults
++        num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++        
++        for i, arg in enumerate(posonlyargs):
++            if num_params_without_defaults <= i:
++                # This positional-only arg has a default
++                default_index = i - num_params_without_defaults
++                default = ast_unparse(args.defaults[default_index])
++            else:
++                default = Parameter.empty
++            
+             annotation = ast_unparse(arg.annotation) or Parameter.empty
+             params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
+-                                    annotation=annotation))
++                                    default=default, annotation=annotation))
+ 
+     for i, arg in enumerate(args.args):
+-        if len(args.args) - i <= len(args.defaults):
+-            default = ast_unparse(args.defaults[-len(args.args) + i])
++        if hasattr(args, "posonlyargs"):
++            # Adjust the index to account for defaults already consumed by posonlyargs
++            num_posonlyargs = len(args.posonlyargs)  # type: ignore
++            num_args = len(args.args)
++            num_defaults = len(args.defaults)
++            num_params_without_defaults = num_posonlyargs + num_args - num_defaults
++            
++            # Calculate how many defaults belong to posonlyargs
++            if num_params_without_defaults < num_posonlyargs:
++                num_posonly_defaults = num_posonlyargs - num_params_without_defaults
++            else:
++                num_posonly_defaults = 0
++            
++            # Now check if this arg has a default
++            if num_args - i <= num_defaults - num_posonly_defaults:
++                # Calculate the index in the defaults list
++                default_index = num_posonly_defaults + (num_defaults - num_posonly_defaults) - (num_args - i)
++                default = ast_unparse(args.defaults[default_index])
++            else:
++                default = Parameter.empty
+         else:
+-            default = Parameter.empty
++            # Original logic for when there are no posonlyargs
++            if len(args.args) - i <= len(args.defaults):
++                default = ast_unparse(args.defaults[-len(args.args) + i])
++            else:
++                default = Parameter.empty
+ 
+         annotation = ast_unparse(arg.annotation) or Parameter.empty
+         params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
+diff --git a/test_ast.py b/test_ast.py
+new file mode 100644
+index 000000000..4b1a10f5a
+--- /dev/null
++++ b/test_ast.py
+@@ -0,0 +1,17 @@
++import ast
++
++# Test the AST structure for a function with positional-only args with defaults
++code = 'def func(a, b=0, /, c=1): pass'
++module = ast.parse(code)
++func_def = module.body[0]
++
++print("Function:", code)
++print("\nAST dump:")
++print(ast.dump(func_def.args, indent=2))
++
++print("\nposonlyargs:", [arg.arg for arg in func_def.args.posonlyargs])
++print("args:", [arg.arg for arg in func_def.args.args])
++print("defaults:", func_def.args.defaults)
++print("Number of posonlyargs:", len(func_def.args.posonlyargs))
++print("Number of args:", len(func_def.args.args))
++print("Number of defaults:", len(func_def.args.defaults))
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..8347fd15e
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,47 @@
++#!/usr/bin/env python3
++"""Comprehensive test for positional-only argument default values."""
++
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++from sphinx.domains.python import _parse_arglist
++from sphinx.util.inspect import signature_from_str
++
++test_cases = [
++    ("a, b=0, /, c=1", "Basic case from bug report"),
++    ("a, /, b=1", "Only last posonly has default"),
++    ("a, b, /, c, d=1", "No posonly defaults"),
++    ("a=1, b=2, /, c=3", "All params have defaults"),
++    ("a, b=1, c=2, /, d=3", "Multiple posonly with defaults"),
++    ("a=1, /, b, c=2", "First posonly has default"),
++    ("/", "Only separator"),
++    ("a, /", "Single posonly without default"),
++    ("a=1, /", "Single posonly with default"),
++]
++
++print("Testing various positional-only argument scenarios:\n")
++print("=" * 80)
++
++for arglist, description in test_cases:
++    print(f"\nTest: {description}")
++    print(f"Input: {arglist}")
++    
++    try:
++        # Test signature parsing
++        sig = signature_from_str('(%s)' % arglist)
++        print("Signature parameters:")
++        for name, param in sig.parameters.items():
++            default_str = param.default if param.default != param.empty else "EMPTY"
++            print(f"  {name}: kind={param.kind.name}, default={default_str}")
++        
++        # Test arglist parsing
++        result = _parse_arglist(arglist)
++        print("Parsed successfully!")
++        
++    except Exception as e:
++        print(f"ERROR: {e}")
++    
++    print("-" * 80)
++
++print("\nAll tests completed!")
+diff --git a/test_defaults.py b/test_defaults.py
+new file mode 100644
+index 000000000..aff9675fc
+--- /dev/null
++++ b/test_defaults.py
+@@ -0,0 +1,41 @@
++import ast
++
++# Test different scenarios
++test_cases = [
++    'def func(a, b=0, /, c=1): pass',
++    'def func(a, /, b=1): pass',
++    'def func(a, b, /, c, d=1): pass',
++    'def func(a=1, b=2, /, c=3): pass',
++]
++
++for code in test_cases:
++    module = ast.parse(code)
++    func_def = module.body[0]
++    args = func_def.args
++    
++    print(f"\n{code}")
++    print(f"  posonlyargs: {[arg.arg for arg in args.posonlyargs]}")
++    print(f"  args: {[arg.arg for arg in args.args]}")
++    print(f"  defaults: {[d.value if hasattr(d, 'value') else d for d in args.defaults]}")
++    
++    # Calculate which defaults belong to which args
++    total_params = len(args.posonlyargs) + len(args.args)
++    num_defaults = len(args.defaults)
++    num_without_defaults = total_params - num_defaults
++    
++    print(f"  Total params: {total_params}, defaults: {num_defaults}, without defaults: {num_without_defaults}")
++    
++    # Defaults are aligned from the right
++    if num_without_defaults < len(args.posonlyargs):
++        # Some posonlyargs have defaults
++        posonly_defaults_start = num_without_defaults
++        posonly_defaults_count = len(args.posonlyargs) - num_without_defaults
++        args_defaults_start = posonly_defaults_count
++    else:
++        # No posonlyargs have defaults
++        posonly_defaults_start = len(args.posonlyargs)
++        posonly_defaults_count = 0
++        args_defaults_start = 0
++    
++    print(f"  Positional-only defaults start at index {posonly_defaults_start}, count: {posonly_defaults_count}")
++    print(f"  Regular args defaults start at index {args_defaults_start}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..e1340ed89
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,29 @@
++#!/usr/bin/env python3
++"""Test script to reproduce the positional-only argument default value issue."""
++
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++from sphinx.domains.python import _parse_arglist
++
++# Test case from the bug report
++arglist = "a, b=0, /, c=1"
++result = _parse_arglist(arglist)
++
++print("Testing arglist:", arglist)
++print("\nResult structure:")
++print(result)
++print("\nChildren:")
++for i, child in enumerate(result.children):
++    print(f"  {i}: {child}")
++    if hasattr(child, 'children'):
++        for j, subchild in enumerate(child.children):
++            print(f"    {j}: {subchild}")
++
++# Let's also check what the signature parser gives us
++from sphinx.util.inspect import signature_from_str
++sig = signature_from_str('(%s)' % arglist)
++print("\n\nSignature parameters:")
++for name, param in sig.parameters.items():
++    print(f"  {name}: kind={param.kind}, default={param.default}, annotation={param.annotation}")
+diff --git a/test_sphinx_build.py b/test_sphinx_build.py
+new file mode 100644
+index 000000000..1a0b24ee9
+--- /dev/null
++++ b/test_sphinx_build.py
+@@ -0,0 +1,104 @@
++#!/usr/bin/env python3
++"""Test the fix with actual Sphinx documentation building."""
++
++import tempfile
++import os
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for the test
++tmpdir = tempfile.mkdtemp()
++print(f"Created temporary directory: {tmpdir}")
++
++try:
++    # Create a minimal Sphinx project
++    source_dir = Path(tmpdir) / "source"
++    build_dir = Path(tmpdir) / "build"
++    source_dir.mkdir()
++    build_dir.mkdir()
++    
++    # Create conf.py
++    conf_py = source_dir / "conf.py"
++    conf_py.write_text("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the test case from the bug report
++    index_rst = source_dir / "index.rst"
++    index_rst.write_text("""
++Test Documentation
++==================
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   A test function with positional-only arguments.
++   
++   :param a: First parameter (positional-only, no default)
++   :param b: Second parameter (positional-only, with default)
++   :param c: Third parameter (with default)
++
++.. py:function:: bar(x=1, y=2, /, z=3)
++
++   Another test function where all parameters have defaults.
++   
++   :param x: First parameter
++   :param y: Second parameter  
++   :param z: Third parameter
++
++.. py:function:: baz(a, b=1, c=2, /, d=3)
++
++   Test with multiple positional-only parameters with defaults.
++""")
++    
++    # Build the documentation
++    import subprocess
++    result = subprocess.run(
++        ['sphinx-build', '-b', 'html', str(source_dir), str(build_dir)],
++        capture_output=True,
++        text=True
++    )
++    
++    print("\nSphinx build output:")
++    print(result.stdout)
++    if result.stderr:
++        print("Errors/Warnings:")
++        print(result.stderr)
++    
++    # Check the generated HTML
++    index_html = build_dir / "index.html"
++    if index_html.exists():
++        html_content = index_html.read_text()
++        
++        print("\n" + "="*80)
++        print("Checking generated HTML for default values...")
++        print("="*80)
++        
++        # Check if b=0 is present
++        if 'b=0' in html_content or 'b</em>=<span class="default_value">0</span>' in html_content:
++            print("‚úì Found 'b=0' in the HTML - positional-only default is rendered!")
++        else:
++            print("‚úó Could not find 'b=0' in the HTML")
++            
++        # Check if c=1 is present
++        if 'c=1' in html_content or 'c</em>=<span class="default_value">1</span>' in html_content:
++            print("‚úì Found 'c=1' in the HTML")
++        else:
++            print("‚úó Could not find 'c=1' in the HTML")
++            
++        # Check for the / separator
++        if '/' in html_content:
++            print("‚úì Found '/' separator in the HTML")
++        else:
++            print("‚úó Could not find '/' separator in the HTML")
++            
++        print("\n" + "="*80)
++        print("Test completed successfully!")
++        print("="*80)
++    else:
++        print("ERROR: index.html was not generated")
++        
++finally:
++    # Clean up
++    shutil.rmtree(tmpdir)
++    print(f"\nCleaned up temporary directory: {tmpdir}")
+diff --git a/test_sphinx_build_v2.py b/test_sphinx_build_v2.py
+new file mode 100644
+index 000000000..c945e3ae9
+--- /dev/null
++++ b/test_sphinx_build_v2.py
+@@ -0,0 +1,89 @@
++#!/usr/bin/env python3
++"""Test the fix with actual Sphinx documentation building."""
++
++import tempfile
++import os
++import shutil
++from pathlib import Path
++import re
++
++# Create a temporary directory for the test
++tmpdir = tempfile.mkdtemp()
++print(f"Created temporary directory: {tmpdir}")
++
++try:
++    # Create a minimal Sphinx project
++    source_dir = Path(tmpdir) / "source"
++    build_dir = Path(tmpdir) / "build"
++    source_dir.mkdir()
++    build_dir.mkdir()
++    
++    # Create conf.py
++    conf_py = source_dir / "conf.py"
++    conf_py.write_text("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the test case from the bug report
++    index_rst = source_dir / "index.rst"
++    index_rst.write_text("""
++Test Documentation
++==================
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   A test function with positional-only arguments.
++""")
++    
++    # Build the documentation
++    import subprocess
++    result = subprocess.run(
++        ['sphinx-build', '-b', 'html', str(source_dir), str(build_dir)],
++        capture_output=True,
++        text=True
++    )
++    
++    print("Sphinx build completed")
++    
++    # Check the generated HTML
++    index_html = build_dir / "index.html"
++    if index_html.exists():
++        html_content = index_html.read_text()
++        
++        # Extract the function signature from HTML
++        # Look for the dt element with the function signature
++        sig_pattern = r'<dt[^>]*>.*?foo.*?</dt>'
++        match = re.search(sig_pattern, html_content, re.DOTALL)
++        
++        if match:
++            signature_html = match.group(0)
++            print("\nExtracted function signature HTML:")
++            print("="*80)
++            print(signature_html)
++            print("="*80)
++            
++            # Check for default values
++            if '=0' in signature_html or '= 0' in signature_html:
++                print("\n‚úì SUCCESS: Found 'b=0' default value in signature!")
++            else:
++                print("\n‚úó FAILED: Could not find 'b=0' default value")
++                
++            if '=1' in signature_html or '= 1' in signature_html:
++                print("‚úì SUCCESS: Found 'c=1' default value in signature!")
++            else:
++                print("‚úó FAILED: Could not find 'c=1' default value")
++                
++            if '/' in signature_html:
++                print("‚úì SUCCESS: Found '/' separator in signature!")
++            else:
++                print("‚úó FAILED: Could not find '/' separator")
++        else:
++            print("Could not find function signature in HTML")
++    else:
++        print("ERROR: index.html was not generated")
++        
++finally:
++    # Clean up
++    shutil.rmtree(tmpdir)
++    print(f"\nCleaned up temporary directory: {tmpdir}")
+diff --git a/test_sphinx_build_v3.py b/test_sphinx_build_v3.py
+new file mode 100644
+index 000000000..e120ce7fe
+--- /dev/null
++++ b/test_sphinx_build_v3.py
+@@ -0,0 +1,94 @@
++#!/usr/bin/env python3
++"""Test the fix with actual Sphinx documentation building."""
++
++import tempfile
++import os
++import shutil
++from pathlib import Path
++import re
++
++# Create a temporary directory for the test
++tmpdir = tempfile.mkdtemp()
++print(f"Created temporary directory: {tmpdir}")
++
++try:
++    # Create a minimal Sphinx project
++    source_dir = Path(tmpdir) / "source"
++    build_dir = Path(tmpdir) / "build"
++    source_dir.mkdir()
++    build_dir.mkdir()
++    
++    # Create conf.py
++    conf_py = source_dir / "conf.py"
++    conf_py.write_text("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the test case from the bug report
++    index_rst = source_dir / "index.rst"
++    index_rst.write_text("""
++Test Documentation
++==================
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   A test function with positional-only arguments.
++""")
++    
++    # Build the documentation
++    import subprocess
++    result = subprocess.run(
++        ['sphinx-build', '-b', 'html', str(source_dir), str(build_dir)],
++        capture_output=True,
++        text=True
++    )
++    
++    print("Sphinx build completed")
++    
++    # Check the generated HTML
++    index_html = build_dir / "index.html"
++    if index_html.exists():
++        html_content = index_html.read_text()
++        
++        # Extract the function signature from HTML
++        sig_pattern = r'<dt[^>]*>.*?foo.*?</dt>'
++        match = re.search(sig_pattern, html_content, re.DOTALL)
++        
++        if match:
++            signature_html = match.group(0)
++            print("\nExtracted function signature HTML:")
++            print("="*80)
++            print(signature_html)
++            print("="*80)
++            
++            # Check for parameter b with default value 0
++            if re.search(r'<span class="n">b</span>.*?<span class="default_value">0</span>', signature_html):
++                print("\n‚úì SUCCESS: Found parameter 'b' with default value '0'!")
++            else:
++                print("\n‚úó FAILED: Could not find parameter 'b' with default value '0'")
++                
++            # Check for parameter c with default value 1
++            if re.search(r'<span class="n">c</span>.*?<span class="default_value">1</span>', signature_html):
++                print("‚úì SUCCESS: Found parameter 'c' with default value '1'!")
++            else:
++                print("‚úó FAILED: Could not find parameter 'c' with default value '1'")
++                
++            # Check for / separator
++            if '<span class="o">/</span>' in signature_html:
++                print("‚úì SUCCESS: Found '/' separator in signature!")
++            else:
++                print("‚úó FAILED: Could not find '/' separator")
++                
++            print("\n" + "="*80)
++            print("All checks passed! The fix is working correctly.")
++            print("="*80)
++        else:
++            print("Could not find function signature in HTML")
++    else:
++        print("ERROR: index.html was not generated")
++        
++finally:
++    # Clean up
++    shutil.rmtree(tmpdir)
++    print(f"\nCleaned up temporary directory: {tmpdir}")

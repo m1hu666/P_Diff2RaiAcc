@@ -1,0 +1,278 @@
+diff --git a/django/utils/html.py b/django/utils/html.py
+index da1b5675ec..ef722e7783 100644
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -61,18 +61,29 @@ _json_script_escapes = {
+ }
+ 
+ 
+-def json_script(value, element_id):
++def json_script(value, element_id=None):
+     """
+     Escape all the HTML/XML special characters with their unicode escapes, so
+     value is safe to be output anywhere except for inside a tag attribute. Wrap
+     the escaped JSON in a script tag.
++    
++    If element_id is provided, the script tag will include an id attribute with
++    that value. If element_id is None or not provided, no id attribute will be
++    included.
+     """
+     from django.core.serializers.json import DjangoJSONEncoder
+     json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)
+-    return format_html(
+-        '<script id="{}" type="application/json">{}</script>',
+-        element_id, mark_safe(json_str)
+-    )
++    if element_id:
++        return format_html(
++            '<script id="{}" type="application/json">{}</script>',
++            element_id,
++            mark_safe(json_str),
++        )
++    else:
++        return format_html(
++            '<script type="application/json">{}</script>',
++            mark_safe(json_str),
++        )
+ 
+ 
+ def conditional_escape(text):
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..cdfe3dbcf0
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python
++"""
++Final test demonstrating the PR requirement:
++Making element_id argument of json_script optional
++"""
++import os
++import sys
++import django
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++django.setup()
++
++from django.utils.html import json_script
++
++print("=" * 70)
++print("Testing PR: Make element_id argument of json_script optional")
++print("=" * 70)
++
++# Use case from PR: Using json_script inside a <template> without needing an id
++print("\n1. PR Use Case: json_script inside <template> (no id needed)")
++print("-" * 70)
++data = {"config": {"theme": "dark", "language": "en"}}
++script_without_id = json_script(data)
++print(f"Result: {script_without_id}")
++assert 'id=' not in script_without_id, "Should not have id attribute"
++assert 'type="application/json"' in script_without_id, "Should have type attribute"
++print("‚ú? PASSED: Can use json_script without element_id")
++
++# Backward compatibility: Original behavior still works
++print("\n2. Backward Compatibility: With element_id (original behavior)")
++print("-" * 70)
++script_with_id = json_script(data, "my-config")
++print(f"Result: {script_with_id}")
++assert 'id="my-config"' in script_with_id, "Should have id attribute"
++assert 'type="application/json"' in script_with_id, "Should have type attribute"
++print("‚ú? PASSED: Original behavior with element_id still works")
++
++# Edge case: Explicitly passing None
++print("\n3. Edge Case: Explicitly passing None as element_id")
++print("-" * 70)
++script_with_none = json_script(data, None)
++print(f"Result: {script_with_none}")
++assert 'id=' not in script_with_none, "Should not have id attribute when None"
++print("‚ú? PASSED: Passing None works correctly")
++
++# Security: Ensure escaping still works without id
++print("\n4. Security: HTML/XML escaping works without element_id")
++print("-" * 70)
++dangerous_data = {"html": "<script>alert('xss')</script>"}
++script_escaped = json_script(dangerous_data)
++print(f"Result: {script_escaped}")
++assert '\\u003C' in script_escaped or '&lt;' in script_escaped, "Should escape < character"
++print("‚ú? PASSED: Security escaping works without element_id")
++
++print("\n" + "=" * 70)
++print("All tests passed! PR requirement successfully implemented.")
++print("=" * 70)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..a3bc89499e
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++django.setup()
++
++from django.utils.html import json_script
++
++print("=" * 60)
++print("Comprehensive json_script tests")
++print("=" * 60)
++
++# Test 1: With element_id (original behavior)
++print("\nTest 1: With element_id (original behavior)")
++result = json_script({"key": "value"}, "my-id")
++print(result)
++assert 'id="my-id"' in result
++assert 'type="application/json"' in result
++assert '"key": "value"' in result
++print("‚ú? PASSED")
++
++# Test 2: Without element_id (new behavior)
++print("\nTest 2: Without element_id (new behavior)")
++result = json_script({"key": "value"})
++print(result)
++assert 'id=' not in result
++assert 'type="application/json"' in result
++assert '"key": "value"' in result
++print("‚ú? PASSED")
++
++# Test 3: With None as element_id
++print("\nTest 3: With None as element_id")
++result = json_script({"key": "value"}, None)
++print(result)
++assert 'id=' not in result
++assert 'type="application/json"' in result
++print("‚ú? PASSED")
++
++# Test 4: Complex data without element_id
++print("\nTest 4: Complex data without element_id")
++complex_data = {"nested": {"key": "value"}, "array": [1, 2, 3]}
++result = json_script(complex_data)
++print(result)
++assert 'id=' not in result
++assert 'type="application/json"' in result
++print("‚ú? PASSED")
++
++print("\n" + "=" * 60)
++print("All tests passed!")
++print("=" * 60)
+diff --git a/test_json_script.py b/test_json_script.py
+new file mode 100644
+index 0000000000..276ed9aad1
+--- /dev/null
++++ b/test_json_script.py
+@@ -0,0 +1,37 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++
++django.setup()
++
++from django.utils.html import json_script
++
++# Test 1: Current behavior with element_id
++print("Test 1: With element_id")
++result = json_script({"key": "value"}, "my-id")
++print(result)
++print()
++
++# Test 2: Try without element_id (should work now)
++print("Test 2: Without element_id (should work now)")
++try:
++    result = json_script({"key": "value"})
++    print(result)
++    print("SUCCESS!")
++except TypeError as e:
++    print(f"Error: {e}")
++print()
++
++# Test 3: With None as element_id
++print("Test 3: With None as element_id")
++try:
++    result = json_script({"key": "value"}, None)
++    print(result)
++    print("SUCCESS!")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/update_docstring.py b/update_docstring.py
+new file mode 100644
+index 0000000000..eebc192312
+--- /dev/null
++++ b/update_docstring.py
+@@ -0,0 +1,28 @@
++with open('/testbed/django/utils/html.py', 'r') as f:
++    content = f.read()
++
++# Update the docstring to mention that element_id is optional
++old_docstring = '''def json_script(value, element_id=None):
++    """
++    Escape all the HTML/XML special characters with their unicode escapes, so
++    value is safe to be output anywhere except for inside a tag attribute. Wrap
++    the escaped JSON in a script tag.
++    """'''
++
++new_docstring = '''def json_script(value, element_id=None):
++    """
++    Escape all the HTML/XML special characters with their unicode escapes, so
++    value is safe to be output anywhere except for inside a tag attribute. Wrap
++    the escaped JSON in a script tag.
++    
++    If element_id is provided, the script tag will include an id attribute with
++    that value. If element_id is None or not provided, no id attribute will be
++    included.
++    """'''
++
++content = content.replace(old_docstring, new_docstring)
++
++with open('/testbed/django/utils/html.py', 'w') as f:
++    f.write(content)
++
++print("Docstring updated!")
+diff --git a/update_json_script.py b/update_json_script.py
+new file mode 100644
+index 0000000000..f4193f42f4
+--- /dev/null
++++ b/update_json_script.py
+@@ -0,0 +1,33 @@
++with open('/testbed/django/utils/html.py', 'r') as f:
++    lines = f.readlines()
++
++# Find the return format_html line (around line 72-74)
++new_lines = []
++i = 0
++while i < len(lines):
++    if i >= 71 and i <= 74 and 'return format_html(' in lines[i]:
++        # Replace the return statement with conditional logic
++        indent = '    '
++        new_lines.append(f'{indent}if element_id:\n')
++        new_lines.append(f'{indent}    return format_html(\n')
++        new_lines.append(f'{indent}        \'<script id="{{}}" type="application/json">{{}}</script>\',\n')
++        new_lines.append(f'{indent}        element_id,\n')
++        new_lines.append(f'{indent}        mark_safe(json_str),\n')
++        new_lines.append(f'{indent}    )\n')
++        new_lines.append(f'{indent}else:\n')
++        new_lines.append(f'{indent}    return format_html(\n')
++        new_lines.append(f'{indent}        \'<script type="application/json">{{}}</script>\',\n')
++        new_lines.append(f'{indent}        mark_safe(json_str),\n')
++        new_lines.append(f'{indent}    )\n')
++        # Skip the original return statement lines
++        while i < len(lines) and not lines[i].strip().endswith(')'):
++            i += 1
++        i += 1  # Skip the closing parenthesis line
++    else:
++        new_lines.append(lines[i])
++        i += 1
++
++with open('/testbed/django/utils/html.py', 'w') as f:
++    f.writelines(new_lines)
++
++print("Updated successfully!")

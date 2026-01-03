@@ -1,0 +1,248 @@
+diff --git a/SOLUTION_SUMMARY.md b/SOLUTION_SUMMARY.md
+new file mode 100644
+index 000000000..e81fe0b4a
+--- /dev/null
++++ b/SOLUTION_SUMMARY.md
+@@ -0,0 +1,21 @@
++# Solution Summary: Fix for Single-Element Tuple Rendering
++
++## Problem
++The `visit_Tuple` method in `sphinx/pycode/ast.py` was not correctly handling single-element tuples. 
++It was rendering `(1,)` as `(1)` instead of preserving the trailing comma.
++
++## Root Cause
++The original implementation used a simple check `if node.elts:` and joined all elements with ", " 
++without considering the special case of single-element tuples, which require a trailing comma 
++to distinguish them from parenthesized expressions.
++
++## Solution
++Modified the `visit_Tuple` method in `sphinx/pycode/ast.py` (lines 215-221) to handle three cases:
++1. Empty tuple: `()` - returns "()"
++2. Single-element tuple: `(1,)` - returns "(" + element + ",)"
++3. Multi-element tuple: `(1, 2, 3)` - returns "(" + joined elements + ")"
++
++## Changes Made
++File: `sphinx/pycode/ast.py`
++
++Before:
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 000000000..751c01bc8
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,44 @@
++#!/usr/bin/env python3
++"""Final verification of the fix."""
++
++from sphinx.pycode import ast
++
++print("=" * 70)
++print("FINAL VERIFICATION OF THE FIX")
++print("=" * 70)
++
++# Test cases from the PR description and comprehensive tests
++test_cases = [
++    # The exact case from the PR description
++    ("(1,)", "(1,)", "PR case: single-element tuple"),
++    
++    # Other tuple cases to ensure nothing broke
++    ("(1, 2, 3)", "(1, 2, 3)", "Multi-element tuple"),
++    ("()", "()", "Empty tuple"),
++    
++    # Additional single-element cases
++    ("('string',)", "('string',)", "Single-element string tuple"),
++    ("(None,)", "(None,)", "Single-element None tuple"),
++    
++    # Nested cases
++    ("((1,),)", "((1,),)", "Nested single-element tuple"),
++    ("(1, (2,))", "(1, (2,))", "Tuple with nested single-element"),
++]
++
++all_passed = True
++for source, expected, description in test_cases:
++    module = ast.parse(source)
++    result = ast.unparse(module.body[0].value, source)
++    status = "‚úì" if result == expected else "‚úó"
++    if result != expected:
++        all_passed = False
++    print(f"{status} {description:40} {source:15} -> {result}")
++    if result != expected:
++        print(f"  ERROR: Expected '{expected}'")
++
++print("=" * 70)
++if all_passed:
++    print("SUCCESS: All tests passed! The fix is working correctly.")
++else:
++    print("FAILURE: Some tests failed!")
++print("=" * 70)
+diff --git a/fix_tuple.py b/fix_tuple.py
+new file mode 100644
+index 000000000..0908d6472
+--- /dev/null
++++ b/fix_tuple.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++"""Script to fix the visit_Tuple method in sphinx/pycode/ast.py"""
++
++with open('sphinx/pycode/ast.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the visit_Tuple method
++old_method = '''    def visit_Tuple(self, node: ast.Tuple) -> str:
++        if node.elts:
++            return "(" + ", ".join(self.visit(e) for e in node.elts) + ")"
++        else:
++            return "()"'''
++
++new_method = '''    def visit_Tuple(self, node: ast.Tuple) -> str:
++        if len(node.elts) == 0:
++            return "()"
++        elif len(node.elts) == 1:
++            return "(" + self.visit(node.elts[0]) + ",)"
++        else:
++            return "(" + ", ".join(self.visit(e) for e in node.elts) + ")"'''
++
++if old_method in content:
++    content = content.replace(old_method, new_method)
++    with open('sphinx/pycode/ast.py', 'w') as f:
++        f.write(content)
++    print("Successfully updated visit_Tuple method")
++else:
++    print("ERROR: Could not find the expected method signature")
++    print("Looking for:")
++    print(old_method)
++
+diff --git a/sphinx/pycode/ast.py b/sphinx/pycode/ast.py
+index f541ec0a9..2f6ef83fc 100644
+--- a/sphinx/pycode/ast.py
++++ b/sphinx/pycode/ast.py
+@@ -213,10 +213,12 @@ class _UnparseVisitor(ast.NodeVisitor):
+         return "%s %s" % (self.visit(node.op), self.visit(node.operand))
+ 
+     def visit_Tuple(self, node: ast.Tuple) -> str:
+-        if node.elts:
+-            return "(" + ", ".join(self.visit(e) for e in node.elts) + ")"
+-        else:
++        if len(node.elts) == 0:
+             return "()"
++        elif len(node.elts) == 1:
++            return "(" + self.visit(node.elts[0]) + ",)"
++        else:
++            return "(" + ", ".join(self.visit(e) for e in node.elts) + ")"
+ 
+     if sys.version_info < (3, 8):
+         # these ast nodes were deprecated in python 3.8
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..f628b6909
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python3
++"""Comprehensive test for tuple unparsing."""
++
++from sphinx.pycode import ast
++
++# Comprehensive test cases
++test_cases = [
++    # Basic tuples
++    ("(1,)", "(1,)"),
++    ("(1, 2)", "(1, 2)"),
++    ("(1, 2, 3)", "(1, 2, 3)"),
++    ("()", "()"),
++    
++    # Single element tuples with different types
++    ("('string',)", "('string',)"),
++    ("(True,)", "(True,)"),
++    ("(None,)", "(None,)"),
++    ("(1.5,)", "(1.5,)"),
++    
++    # Nested tuples
++    ("((1,),)", "((1,),)"),
++    ("((1, 2),)", "((1, 2),)"),
++    ("(1, (2,))", "(1, (2,))"),
++    ("(1, (2, 3))", "(1, (2, 3))"),
++    
++    # Tuples with expressions
++    ("(1 + 2,)", "(1 + 2,)"),
++    ("(a,)", "(a,)"),
++]
++
++print("Comprehensive tuple unparsing tests:")
++print("=" * 70)
++
++all_passed = True
++for source, expected in test_cases:
++    try:
++        module = ast.parse(source)
++        result = ast.unparse(module.body[0].value, source)
++        status = "‚úì PASS" if result == expected else "‚úó FAIL"
++        if result != expected:
++            all_passed = False
++        print(f"{status}: {source:20} -> {result:20} (expected: {expected})")
++        if result != expected:
++            print(f"       ERROR: Got '{result}' but expected '{expected}'")
++    except Exception as e:
++        all_passed = False
++        print(f"‚úó ERROR: {source:20} -> Exception: {e}")
++
++print("=" * 70)
++if all_passed:
++    print("All tests passed! ‚úì")
++else:
++    print("Some tests failed! ‚úó")
+diff --git a/test_pr_case.py b/test_pr_case.py
+new file mode 100644
+index 000000000..e15b61a6c
+--- /dev/null
++++ b/test_pr_case.py
+@@ -0,0 +1,19 @@
++#!/usr/bin/env python3
++"""Test the specific case mentioned in the PR description."""
++
++from sphinx.pycode import ast
++
++# The exact test case from the PR description
++source = "(1,)"
++expected = "(1,)"
++
++module = ast.parse(source)
++result = ast.unparse(module.body[0].value, source)
++
++print(f"Testing PR case: {source}")
++print(f"Expected: {expected}")
++print(f"Got:      {result}")
++print(f"Status:   {'‚úì PASS' if result == expected else '‚úó FAIL'}")
++
++assert result == expected, f"Expected '{expected}' but got '{result}'"
++print("\nTest passed successfully!")
+diff --git a/test_tuple_bug.py b/test_tuple_bug.py
+new file mode 100644
+index 000000000..72c25aaf1
+--- /dev/null
++++ b/test_tuple_bug.py
+@@ -0,0 +1,24 @@
++#!/usr/bin/env python3
++"""Test script to reproduce the single-element tuple bug."""
++
++from sphinx.pycode import ast
++
++# Test cases
++test_cases = [
++    ("(1,)", "(1,)"),           # Single element tuple - this should fail with current code
++    ("(1, 2, 3)", "(1, 2, 3)"), # Multi-element tuple - this should pass
++    ("()", "()"),               # Empty tuple - this should pass
++]
++
++print("Testing tuple unparsing:")
++print("-" * 60)
++
++for source, expected in test_cases:
++    module = ast.parse(source)
++    result = ast.unparse(module.body[0].value, source)
++    status = "‚úì PASS" if result == expected else "‚úó FAIL"
++    print(f"{status}: {source:15} -> {result:15} (expected: {expected})")
++    if result != expected:
++        print(f"       ERROR: Got '{result}' but expected '{expected}'")
++
++print("-" * 60)

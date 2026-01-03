@@ -1,0 +1,111 @@
+diff --git a/django/db/backends/base/operations.py b/django/db/backends/base/operations.py
+index 2e283a3193..94ff36458b 100644
+--- a/django/db/backends/base/operations.py
++++ b/django/db/backends/base/operations.py
+@@ -3,6 +3,7 @@ import decimal
+ from importlib import import_module
+ 
+ import sqlparse
++from django.utils.dateparse import parse_duration
+ 
+ from django.conf import settings
+ from django.db import NotSupportedError, transaction
+@@ -579,8 +580,32 @@ class BaseDatabaseOperations:
+         return []
+ 
+     def convert_durationfield_value(self, value, expression, connection):
+-        if value is not None:
+-            return datetime.timedelta(0, 0, value)
++        if value is None:
++            return None
++        # If already a timedelta, return as is.
++        if isinstance(value, datetime.timedelta):
++            return value
++        # Try to parse string durations first (e.g., from SQLite custom function).
++        if isinstance(value, str):
++            parsed = parse_duration(value)
++            if parsed is not None:
++                return parsed
++        # Coerce various numeric representations of microseconds.
++        microseconds = None
++        try:
++            microseconds = int(value)
++        except Exception:
++            try:
++                if isinstance(value, (bytes, bytearray)):
++                    microseconds = int(value.decode())
++            except Exception:
++                microseconds = None
++        if microseconds is None:
++            try:
++                microseconds = int(decimal.Decimal(value))
++            except Exception:
++                microseconds = int(float(value))
++        return datetime.timedelta(microseconds=microseconds)
+ 
+     def check_expression_support(self, expression):
+         """
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index a156c5e881..ecae4593a9 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -9,6 +9,7 @@ from django.db.models import fields
+ from django.db.models.constants import LOOKUP_SEP
+ from django.db.models.query_utils import Q
+ from django.utils.deconstruct import deconstructible
++from django.utils.duration import duration_microseconds
+ from django.utils.functional import cached_property
+ from django.utils.hashable import make_hashable
+ 
+@@ -493,6 +494,43 @@ class DurationExpression(CombinedExpression):
+ 
+     def as_sql(self, compiler, connection):
+         connection.ops.check_expression_support(self)
++        # Detect duration-only arithmetic on backends without native duration
++        # fields. In that case, perform raw microseconds arithmetic rather than
++        # using INTERVAL syntax which is only valid with date/time operands.
++        try:
++            lhs_output = self.lhs.output_field
++        except FieldError:
++            lhs_output = None
++        try:
++            rhs_output = self.rhs.output_field
++        except FieldError:
++            rhs_output = None
++        is_non_native = not connection.features.has_native_duration_field
++        lhs_is_duration = bool(lhs_output and lhs_output.get_internal_type() == 'DurationField')
++        rhs_is_duration = bool(rhs_output and rhs_output.get_internal_type() == 'DurationField')
++        if is_non_native and lhs_is_duration and rhs_is_duration:
++            expressions = []
++            expression_params = []
++            # Left-hand side
++            if isinstance(self.lhs, DurationValue):
++                lsql, lparams = '%s', [duration_microseconds(self.lhs.value)]
++            else:
++                lsql, lparams = compiler.compile(self.lhs)
++            expressions.append(lsql)
++            expression_params.extend(lparams)
++            # Right-hand side
++            if isinstance(self.rhs, DurationValue):
++                rsql, rparams = '%s', [duration_microseconds(self.rhs.value)]
++            else:
++                rsql, rparams = compiler.compile(self.rhs)
++            expressions.append(rsql)
++            expression_params.extend(rparams)
++            # order of precedence
++            expression_wrapper = '(%s)'
++            sql = connection.ops.combine_duration_expression(self.connector, expressions)
++            return expression_wrapper % sql, expression_params
++        # Fallback to default behavior which formats duration operands (e.g.,
++        # DATE/TIME +/- INTERVAL on backends like MySQL).
+         expressions = []
+         expression_params = []
+         sql, params = self.compile(self.lhs, compiler, connection)
+@@ -506,7 +544,6 @@ class DurationExpression(CombinedExpression):
+         sql = connection.ops.combine_duration_expression(self.connector, expressions)
+         return expression_wrapper % sql, expression_params
+ 
+-
+ class TemporalSubtraction(CombinedExpression):
+     output_field = fields.DurationField()
+ 

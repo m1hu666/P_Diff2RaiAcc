@@ -1,0 +1,381 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 000000000..495d1071e
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,6 @@
++# Fix for SequentialFeatureSelector Iterator Issue
++
++## Problem
++SequentialFeatureSelector was unable to accept iterators as the `cv` parameter, even though the documentation stated it should accept "An iterable yielding (train, test) splits as arrays of indices."
++
++When passing an iterator (e.g., from `cv.split(X, y, groups=groups)`), the code would fail with:
+diff --git a/fix_sequential.py b/fix_sequential.py
+new file mode 100644
+index 000000000..47828c60f
+--- /dev/null
++++ b/fix_sequential.py
+@@ -0,0 +1,70 @@
++import sys
++
++# Read the file
++with open('sklearn/feature_selection/_sequential.py', 'r') as f:
++    content = f.read()
++
++# Add the import for check_cv
++old_import = "from ..model_selection import cross_val_score"
++new_import = "from ..model_selection import cross_val_score\nfrom ..model_selection._split import check_cv"
++content = content.replace(old_import, new_import)
++
++# Find the fit method and add check_cv call after cloned_estimator = clone(self.estimator)
++# We need to add it before the loop that calls _get_best_new_feature_score
++old_code = """        cloned_estimator = clone(self.estimator)
++
++        # the current mask corresponds to the set of features:"""
++
++new_code = """        cloned_estimator = clone(self.estimator)
++
++        # Ensure cv is a cross-validator object, not an iterator
++        # This is necessary because cv will be used multiple times
++        cv = check_cv(self.cv, y, classifier=is_classifier(cloned_estimator))
++
++        # the current mask corresponds to the set of features:"""
++
++content = content.replace(old_code, new_code)
++
++# Now we need to update _get_best_new_feature_score to accept cv as a parameter
++# and use it instead of self.cv
++old_method_call = """            new_feature_idx, new_score = self._get_best_new_feature_score(
++                cloned_estimator, X, y, current_mask
++            )"""
++
++new_method_call = """            new_feature_idx, new_score = self._get_best_new_feature_score(
++                cloned_estimator, X, y, cv, current_mask
++            )"""
++
++content = content.replace(old_method_call, new_method_call)
++
++# Update the method signature
++old_signature = "    def _get_best_new_feature_score(self, estimator, X, y, current_mask):"
++new_signature = "    def _get_best_new_feature_score(self, estimator, X, y, cv, current_mask):"
++content = content.replace(old_signature, new_signature)
++
++# Update the cross_val_score call to use cv parameter instead of self.cv
++old_cross_val = """            scores[feature_idx] = cross_val_score(
++                estimator,
++                X_new,
++                y,
++                cv=self.cv,
++                scoring=self.scoring,
++                n_jobs=self.n_jobs,
++            ).mean()"""
++
++new_cross_val = """            scores[feature_idx] = cross_val_score(
++                estimator,
++                X_new,
++                y,
++                cv=cv,
++                scoring=self.scoring,
++                n_jobs=self.n_jobs,
++            ).mean()"""
++
++content = content.replace(old_cross_val, new_cross_val)
++
++# Write the file back
++with open('sklearn/feature_selection/_sequential.py', 'w') as f:
++    f.write(content)
++
++print("File updated successfully!")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..9e230235f
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,21 @@
++from sklearn.datasets import make_classification
++from sklearn.feature_selection import SequentialFeatureSelector
++from sklearn.neighbors import KNeighborsClassifier
++from sklearn.model_selection import LeaveOneGroupOut
++
++import numpy as np
++
++X, y = make_classification()
++
++groups = np.zeros_like(y, dtype=int)
++groups[y.size//2:] = 1
++
++cv = LeaveOneGroupOut()
++splits = cv.split(X, y, groups=groups)
++
++clf = KNeighborsClassifier(n_neighbors=5)
++
++seq = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq.fit(X, y)
++
++print("SUCCESS: The issue has been fixed!")
+diff --git a/sklearn/feature_selection/_sequential.py b/sklearn/feature_selection/_sequential.py
+index e983c55de..d5ce3ba0a 100644
+--- a/sklearn/feature_selection/_sequential.py
++++ b/sklearn/feature_selection/_sequential.py
+@@ -8,12 +8,13 @@ import numpy as np
+ import warnings
+ 
+ from ._base import SelectorMixin
+-from ..base import BaseEstimator, MetaEstimatorMixin, clone
++from ..base import BaseEstimator, MetaEstimatorMixin, clone, is_classifier
+ from ..utils._param_validation import HasMethods, Hidden, Interval, StrOptions
+ from ..utils._param_validation import RealNotInt
+ from ..utils._tags import _safe_tags
+ from ..utils.validation import check_is_fitted
+ from ..model_selection import cross_val_score
++from ..model_selection._split import check_cv
+ from ..metrics import get_scorer_names
+ 
+ 
+@@ -261,6 +262,10 @@ class SequentialFeatureSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator
+ 
+         cloned_estimator = clone(self.estimator)
+ 
++        # Ensure cv is a cross-validator object, not an iterator
++        # This is necessary because cv will be used multiple times
++        cv = check_cv(self.cv, y, classifier=is_classifier(cloned_estimator))
++
+         # the current mask corresponds to the set of features:
+         # - that we have already *selected* if we do forward selection
+         # - that we have already *excluded* if we do backward selection
+@@ -275,7 +280,7 @@ class SequentialFeatureSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator
+         is_auto_select = self.tol is not None and self.n_features_to_select == "auto"
+         for _ in range(n_iterations):
+             new_feature_idx, new_score = self._get_best_new_feature_score(
+-                cloned_estimator, X, y, current_mask
++                cloned_estimator, X, y, cv, current_mask
+             )
+             if is_auto_select and ((new_score - old_score) < self.tol):
+                 break
+@@ -291,7 +296,7 @@ class SequentialFeatureSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator
+ 
+         return self
+ 
+-    def _get_best_new_feature_score(self, estimator, X, y, current_mask):
++    def _get_best_new_feature_score(self, estimator, X, y, cv, current_mask):
+         # Return the best new feature and its score to add to the current_mask,
+         # i.e. return the best new feature and its score to add (resp. remove)
+         # when doing forward selection (resp. backward selection).
+@@ -309,7 +314,7 @@ class SequentialFeatureSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator
+                 estimator,
+                 X_new,
+                 y,
+-                cv=self.cv,
++                cv=cv,
+                 scoring=self.scoring,
+                 n_jobs=self.n_jobs,
+             ).mean()
+diff --git a/test_exact_pr_issue.py b/test_exact_pr_issue.py
+new file mode 100644
+index 000000000..bd8538ae6
+--- /dev/null
++++ b/test_exact_pr_issue.py
+@@ -0,0 +1,26 @@
++"""
++This is the exact code from the PR description to verify the fix works.
++"""
++from sklearn.datasets import make_classification
++from sklearn.feature_selection import SequentialFeatureSelector
++from sklearn.neighbors import KNeighborsClassifier
++from sklearn.model_selection import LeaveOneGroupOut
++
++import numpy as np
++
++X, y = make_classification()
++
++groups = np.zeros_like(y, dtype=int)
++groups[y.size//2:] = 1
++
++cv = LeaveOneGroupOut()
++splits = cv.split(X, y, groups=groups)
++
++clf = KNeighborsClassifier(n_neighbors=5)
++
++seq = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq.fit(X, y)
++
++print("SUCCESS! The exact code from the PR description now works without errors.")
++print(f"Selected features: {seq.support_}")
++print(f"Number of features selected: {seq.n_features_to_select_}")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..3bef198a9
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,51 @@
++from sklearn.datasets import make_classification
++from sklearn.feature_selection import SequentialFeatureSelector
++from sklearn.neighbors import KNeighborsClassifier
++from sklearn.model_selection import LeaveOneGroupOut, KFold, StratifiedKFold
++import numpy as np
++
++print("Test 1: Original issue - LeaveOneGroupOut with iterator")
++X, y = make_classification(random_state=42)
++groups = np.zeros_like(y, dtype=int)
++groups[y.size//2:] = 1
++
++cv = LeaveOneGroupOut()
++splits = cv.split(X, y, groups=groups)
++
++clf = KNeighborsClassifier(n_neighbors=5)
++seq = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq.fit(X, y)
++print("‚ú? Test 1 passed: LeaveOneGroupOut with iterator works")
++
++print("\nTest 2: Using cv as integer (should still work)")
++seq2 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=3)
++seq2.fit(X, y)
++print("‚ú? Test 2 passed: Integer cv works")
++
++print("\nTest 3: Using cv as cross-validator object")
++cv_obj = KFold(n_splits=3)
++seq3 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=cv_obj)
++seq3.fit(X, y)
++print("‚ú? Test 3 passed: Cross-validator object works")
++
++print("\nTest 4: Using cv as list of splits")
++cv_list = list(KFold(n_splits=3).split(X, y))
++seq4 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=cv_list)
++seq4.fit(X, y)
++print("‚ú? Test 4 passed: List of splits works")
++
++print("\nTest 5: Using cv=None (default)")
++seq5 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=None)
++seq5.fit(X, y)
++print("‚ú? Test 5 passed: cv=None works")
++
++print("\nTest 6: Using StratifiedKFold iterator")
++skf = StratifiedKFold(n_splits=3)
++splits_skf = skf.split(X, y)
++seq6 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits_skf)
++seq6.fit(X, y)
++print("‚ú? Test 6 passed: StratifiedKFold iterator works")
++
++print("\n" + "="*50)
++print("All tests passed successfully!")
++print("="*50)
+diff --git a/test_groups.py b/test_groups.py
+new file mode 100644
+index 000000000..244a50dfb
+--- /dev/null
++++ b/test_groups.py
+@@ -0,0 +1,45 @@
++from sklearn.datasets import make_classification
++from sklearn.feature_selection import SequentialFeatureSelector
++from sklearn.neighbors import KNeighborsClassifier
++from sklearn.model_selection import LeaveOneGroupOut, GroupKFold
++import numpy as np
++
++print("Test with LeaveOneGroupOut and groups parameter")
++X, y = make_classification(n_samples=100, n_features=20, random_state=42)
++
++# Create groups
++groups = np.array([0] * 25 + [1] * 25 + [2] * 25 + [3] * 25)
++
++# Test 1: Using iterator from LeaveOneGroupOut
++print("\n1. Testing with LeaveOneGroupOut iterator...")
++cv = LeaveOneGroupOut()
++splits = cv.split(X, y, groups=groups)
++
++clf = KNeighborsClassifier(n_neighbors=5)
++seq = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq.fit(X, y)
++print(f"   Selected {seq.n_features_to_select_} features")
++print("   ‚ú? LeaveOneGroupOut iterator works!")
++
++# Test 2: Using GroupKFold iterator
++print("\n2. Testing with GroupKFold iterator...")
++cv2 = GroupKFold(n_splits=4)
++splits2 = cv2.split(X, y, groups=groups)
++
++seq2 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits2)
++seq2.fit(X, y)
++print(f"   Selected {seq2.n_features_to_select_} features")
++print("   ‚ú? GroupKFold iterator works!")
++
++# Test 3: Using GroupKFold object directly
++print("\n3. Testing with GroupKFold object...")
++cv3 = GroupKFold(n_splits=4)
++
++seq3 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=cv3)
++seq3.fit(X, y)
++print(f"   Selected {seq3.n_features_to_select_} features")
++print("   ‚ú? GroupKFold object works!")
++
++print("\n" + "="*50)
++print("All group-based CV tests passed!")
++print("="*50)
+diff --git a/test_iterator_fix.py b/test_iterator_fix.py
+new file mode 100644
+index 000000000..91ad98fb0
+--- /dev/null
++++ b/test_iterator_fix.py
+@@ -0,0 +1,63 @@
++from sklearn.datasets import make_classification
++from sklearn.feature_selection import SequentialFeatureSelector
++from sklearn.neighbors import KNeighborsClassifier
++from sklearn.model_selection import LeaveOneGroupOut, KFold, StratifiedKFold
++import numpy as np
++
++print("Testing the fix for passing iterators to cv parameter")
++print("="*60)
++
++# Test 1: Original issue - LeaveOneGroupOut with iterator
++print("\nTest 1: LeaveOneGroupOut with iterator (original issue)")
++X, y = make_classification(n_samples=100, n_features=20, random_state=42)
++groups = np.array([0] * 25 + [1] * 25 + [2] * 25 + [3] * 25)
++
++cv = LeaveOneGroupOut()
++splits = cv.split(X, y, groups=groups)
++
++clf = KNeighborsClassifier(n_neighbors=5)
++seq = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq.fit(X, y)
++print(f"‚ú? Selected {seq.n_features_to_select_} features - PASS")
++
++# Test 2: KFold iterator
++print("\nTest 2: KFold iterator")
++X, y = make_classification(random_state=42)
++cv = KFold(n_splits=3)
++splits = cv.split(X, y)
++
++seq2 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq2.fit(X, y)
++print(f"‚ú? Selected {seq2.n_features_to_select_} features - PASS")
++
++# Test 3: StratifiedKFold iterator
++print("\nTest 3: StratifiedKFold iterator")
++cv = StratifiedKFold(n_splits=3)
++splits = cv.split(X, y)
++
++seq3 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits)
++seq3.fit(X, y)
++print(f"‚ú? Selected {seq3.n_features_to_select_} features - PASS")
++
++# Test 4: List of splits (already materialized)
++print("\nTest 4: List of splits")
++cv = KFold(n_splits=3)
++splits_list = list(cv.split(X, y))
++
++seq4 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits_list)
++seq4.fit(X, y)
++print(f"‚ú? Selected {seq4.n_features_to_select_} features - PASS")
++
++# Test 5: Generator expression
++print("\nTest 5: Generator expression")
++cv = KFold(n_splits=3)
++splits_gen = (split for split in cv.split(X, y))
++
++seq5 = SequentialFeatureSelector(clf, n_features_to_select=5, scoring='accuracy', cv=splits_gen)
++seq5.fit(X, y)
++print(f"‚ú? Selected {seq5.n_features_to_select_} features - PASS")
++
++print("\n" + "="*60)
++print("All iterator tests passed successfully!")
++print("The fix correctly handles iterators passed to cv parameter.")
++print("="*60)

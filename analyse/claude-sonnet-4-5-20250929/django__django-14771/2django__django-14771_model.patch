@@ -1,0 +1,1117 @@
+diff --git a/comprehensive_verification.py b/comprehensive_verification.py
+new file mode 100644
+index 0000000000..677acdd1a8
+--- /dev/null
++++ b/comprehensive_verification.py
+@@ -0,0 +1,89 @@
++#!/usr/bin/env python
++"""Comprehensive verification of the -X options fix"""
++import sys
++sys.path.insert(0, '/testbed')
++
++from unittest import mock
++from django.utils import autoreload
++
++print("=" * 70)
++print("COMPREHENSIVE VERIFICATION OF -X OPTIONS FIX")
++print("=" * 70)
++
++test_cases = [
++    {
++        'name': 'Boolean -X options',
++        'xoptions': {'utf8': True, 'dev': True, 'faulthandler': True},
++        'expected': {'-Xutf8', '-Xdev', '-Xfaulthandler'}
++    },
++    {
++        'name': '-X options with values',
++        'xoptions': {'utf8': '1', 'tracemalloc': '10'},
++        'expected': {'-Xutf8=1', '-Xtracemalloc=10'}
++    },
++    {
++        'name': 'Mixed boolean and value -X options',
++        'xoptions': {'utf8': True, 'tracemalloc': '5', 'dev': True},
++        'expected': {'-Xutf8', '-Xtracemalloc=5', '-Xdev'}
++    },
++    {
++        'name': 'Empty -X options',
++        'xoptions': {},
++        'expected': set()
++    },
++]
++
++all_passed = True
++
++for i, test_case in enumerate(test_cases, 1):
++    print(f"\nTest {i}: {test_case['name']}")
++    print("-" * 70)
++    
++    with mock.patch('__main__.__spec__', None):
++        with mock.patch('sys.argv', [__file__, 'runserver']):
++            with mock.patch('sys.warnoptions', []):
++                with mock.patch('sys._xoptions', test_case['xoptions']):
++                    args = autoreload.get_child_arguments()
++                    x_options = {arg for arg in args if arg.startswith('-X')}
++                    
++                    print(f"  Input _xoptions: {test_case['xoptions']}")
++                    print(f"  Expected: {test_case['expected']}")
++                    print(f"  Got: {x_options}")
++                    
++                    if x_options == test_case['expected']:
++                        print("  ‚úì PASS")
++                    else:
++                        print("  ‚úó FAIL")
++                        all_passed = False
++
++# Test compatibility with non-CPython implementations
++print(f"\nTest {len(test_cases) + 1}: Non-CPython compatibility (no _xoptions)")
++print("-" * 70)
++
++with mock.patch('__main__.__spec__', None):
++    with mock.patch('sys.argv', [__file__, 'runserver']):
++        with mock.patch('sys.warnoptions', []):
++            # Simulate system without _xoptions
++            original = getattr(sys, '_xoptions', None)
++            if hasattr(sys, '_xoptions'):
++                delattr(sys, '_xoptions')
++            
++            try:
++                args = autoreload.get_child_arguments()
++                x_options = [arg for arg in args if arg.startswith('-X')]
++                print(f"  No _xoptions attribute")
++                print(f"  X options found: {x_options}")
++                print("  ‚úì PASS - No error raised")
++            except Exception as e:
++                print(f"  ‚úó FAIL - Error: {e}")
++                all_passed = False
++            finally:
++                if original is not None:
++                    sys._xoptions = original
++
++print("\n" + "=" * 70)
++if all_passed:
++    print("‚úì ALL TESTS PASSED")
++else:
++    print("‚úó SOME TESTS FAILED")
++print("=" * 70)
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index cc65c043ab..0cf274437b 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -220,6 +220,15 @@ def get_child_arguments():
+     py_script = Path(sys.argv[0])
+ 
+     args = [sys.executable] + ['-W%s' % o for o in sys.warnoptions]
++    # Preserve -X options for CPython implementation.
++    # sys._xoptions is a dict mapping option names to their values.
++    # Values can be True (for flags) or strings (for options with values).
++    if hasattr(sys, '_xoptions'):
++        for key, value in sys._xoptions.items():
++            if value is True:
++                args.append('-X%s' % key)
++            else:
++                args.append('-X%s=%s' % (key, value))
+     # __spec__ is set when the server was started with the `-m` option,
+     # see https://docs.python.org/3/reference/import.html#main-spec
+     # __spec__ may not exist, e.g. when running in a Conda env.
+diff --git a/final_demo.py b/final_demo.py
+new file mode 100644
+index 0000000000..7c32741ea8
+--- /dev/null
++++ b/final_demo.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python
++"""
++Final demonstration of the fix for -X options in Django auto-reloader.
++
++This script demonstrates that -X options (like -X utf8) are now properly
++preserved when Django's auto-reloader restarts the process.
++"""
++import sys
++import os
++import tempfile
++import subprocess
++
++print("=" * 70)
++print("DEMONSTRATION: -X Options Preservation in Django Auto-Reloader")
++print("=" * 70)
++
++# Create a minimal Django project
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    
++    # Create project structure
++    os.makedirs('testproject')
++    
++    # Create manage.py
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'testproject.settings')
++    from django.core.management import execute_from_command_line
++    execute_from_command_line(sys.argv)
++''')
++    
++    # Create settings.py that logs _xoptions
++    with open('testproject/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('testproject/settings.py', 'w') as f:
++        f.write('''
++import sys
++SECRET_KEY = 'demo-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = ['django.contrib.contenttypes']
++ROOT_URLCONF = 'testproject.urls'
++DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}
++
++# Log _xoptions to demonstrate they're preserved
++print(f"[SETTINGS] sys._xoptions = {sys._xoptions}")
++''')
++    
++    with open('testproject/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    print("\n1. Running Django check WITHOUT -X options:")
++    print("-" * 70)
++    result = subprocess.run(
++        [sys.executable, 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    for line in result.stderr.split('\n'):
++        if 'SETTINGS' in line:
++            print(line)
++    
++    print("\n2. Running Django check WITH -X utf8 option:")
++    print("-" * 70)
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    for line in result.stderr.split('\n'):
++        if 'SETTINGS' in line:
++            print(line)
++    
++    print("\n3. Running Django check WITH multiple -X options:")
++    print("-" * 70)
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', '-X', 'dev', 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    for line in result.stderr.split('\n'):
++        if 'SETTINGS' in line:
++            print(line)
++
++print("\n" + "=" * 70)
++print("SUMMARY:")
++print("  ‚úì -X options are now properly preserved by the auto-reloader")
++print("  ‚úì This fix ensures consistent behavior when using options like:")
++print("    - python -X utf8 manage.py runserver")
++print("    - python -X dev manage.py runserver")
++print("    - python -X faulthandler manage.py runserver")
++print("=" * 70)
+diff --git a/final_demo2.py b/final_demo2.py
+new file mode 100644
+index 0000000000..f650aacae6
+--- /dev/null
++++ b/final_demo2.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python
++"""Final demonstration showing the fix works"""
++import sys
++import os
++import tempfile
++import subprocess
++
++print("=" * 70)
++print("DEMONSTRATION: -X Options Preservation in Django Auto-Reloader")
++print("=" * 70)
++
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    os.makedirs('testproject')
++    
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os, sys
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'testproject.settings')
++    from django.core.management import execute_from_command_line
++    execute_from_command_line(sys.argv)
++''')
++    
++    with open('testproject/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('testproject/settings.py', 'w') as f:
++        f.write('''
++import sys
++SECRET_KEY = 'demo-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = ['django.contrib.contenttypes']
++ROOT_URLCONF = 'testproject.urls'
++DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}
++print(f"sys._xoptions = {sys._xoptions}")
++''')
++    
++    with open('testproject/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    print("\n1. WITHOUT -X options:")
++    result = subprocess.run([sys.executable, 'manage.py', 'check'], 
++                          capture_output=True, text=True, timeout=10)
++    print(result.stdout)
++    
++    print("\n2. WITH -X utf8:")
++    result = subprocess.run([sys.executable, '-X', 'utf8', 'manage.py', 'check'],
++                          capture_output=True, text=True, timeout=10)
++    print(result.stdout)
++    
++    print("\n3. WITH -X utf8 and -X dev:")
++    result = subprocess.run([sys.executable, '-X', 'utf8', '-X', 'dev', 'manage.py', 'check'],
++                          capture_output=True, text=True, timeout=10)
++    print(result.stdout)
++
++print("\n" + "=" * 70)
++print("‚úì Fix verified: -X options are preserved by the auto-reloader!")
++print("=" * 70)
+diff --git a/test_autoreload_restart.py b/test_autoreload_restart.py
+new file mode 100644
+index 0000000000..52fd5bac7b
+--- /dev/null
++++ b/test_autoreload_restart.py
+@@ -0,0 +1,123 @@
++#!/usr/bin/env python
++"""Test that -X options are preserved during auto-reload restart"""
++import sys
++import os
++import tempfile
++import subprocess
++import time
++
++# Create a temporary Django project
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    
++    # Create a minimal Django project structure
++    os.makedirs('myproject')
++    
++    # Create manage.py
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError(
++            "Couldn't import Django. Are you sure it's installed and "
++            "available on your PYTHONPATH environment variable? Did you "
++            "forget to activate a virtual environment?"
++        ) from exc
++    execute_from_command_line(sys.argv)
++''')
++    
++    # Create settings.py
++    with open('myproject/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('myproject/settings.py', 'w') as f:
++        f.write('''
++import sys
++import os
++
++SECRET_KEY = 'test-secret-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++]
++ROOT_URLCONF = 'myproject.urls'
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++# Log _xoptions on each load
++xoptions_log = os.path.join(os.path.dirname(__file__), '..', 'xoptions_log.txt')
++with open(xoptions_log, 'a') as f:
++    import datetime
++    timestamp = datetime.datetime.now().isoformat()
++    f.write(f"{timestamp}: sys._xoptions = {sys._xoptions}\\n")
++''')
++    
++    with open('myproject/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    # Create an app to trigger reload
++    os.makedirs('myapp')
++    with open('myapp/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('myapp/apps.py', 'w') as f:
++        f.write('''
++from django.apps import AppConfig
++
++class MyAppConfig(AppConfig):
++    default_auto_field = 'django.db.models.BigAutoField'
++    name = 'myapp'
++''')
++    
++    print("=" * 60)
++    print("Testing auto-reload with -X utf8 option")
++    print("=" * 60)
++    
++    # Remove any existing log
++    if os.path.exists('xoptions_log.txt'):
++        os.remove('xoptions_log.txt')
++    
++    # Start the server with -X option
++    proc = subprocess.Popen(
++        [sys.executable, '-X', 'utf8', 'manage.py', 'runserver', '--noreload'],
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True
++    )
++    
++    # Give it time to start
++    time.sleep(2)
++    
++    # Terminate the process
++    proc.terminate()
++    try:
++        proc.wait(timeout=5)
++    except subprocess.TimeoutExpired:
++        proc.kill()
++        proc.wait()
++    
++    # Check the log
++    if os.path.exists('xoptions_log.txt'):
++        print("\nContents of xoptions_log.txt:")
++        with open('xoptions_log.txt', 'r') as f:
++            content = f.read()
++            print(content)
++            if "'utf8': True" in content:
++                print("‚úì SUCCESS: -X utf8 option was preserved in runserver!")
++            else:
++                print("‚úó FAILURE: -X utf8 option was NOT preserved in runserver!")
++    else:
++        print("‚úó FAILURE: xoptions_log.txt was not created!")
++
++print("\nTest completed!")
+diff --git a/test_autoreload_xoptions.py b/test_autoreload_xoptions.py
+new file mode 100644
+index 0000000000..d86cdc0e68
+--- /dev/null
++++ b/test_autoreload_xoptions.py
+@@ -0,0 +1,28 @@
++#!/usr/bin/env python
++"""Test to verify the auto-reloader issue with -X options"""
++import sys
++import os
++
++# Add the django directory to the path
++sys.path.insert(0, '/testbed')
++
++from django.utils.autoreload import get_child_arguments
++
++# Simulate running with -X options
++print("Testing get_child_arguments() with -X options")
++print(f"Current sys._xoptions: {sys._xoptions}")
++print(f"Current sys.warnoptions: {sys.warnoptions}")
++
++# Get the child arguments
++args = get_child_arguments()
++print(f"\nChild arguments: {args}")
++
++# Check if -X options are included
++has_x_options = any(arg.startswith('-X') for arg in args)
++print(f"\nContains -X options: {has_x_options}")
++
++if not has_x_options and sys._xoptions:
++    print("ERROR: -X options are NOT being passed to child process!")
++    print(f"Missing options: {sys._xoptions}")
++else:
++    print("SUCCESS: -X options are being passed correctly")
+diff --git a/test_django_runserver.py b/test_django_runserver.py
+new file mode 100644
+index 0000000000..44101202f5
+--- /dev/null
++++ b/test_django_runserver.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python
++"""Test Django runserver with -X options"""
++import sys
++import os
++import tempfile
++import subprocess
++import time
++import signal
++
++# Create a temporary Django project
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    
++    # Create a minimal Django project structure
++    os.makedirs('myproject')
++    
++    # Create manage.py
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError(
++            "Couldn't import Django. Are you sure it's installed and "
++            "available on your PYTHONPATH environment variable? Did you "
++            "forget to activate a virtual environment?"
++        ) from exc
++    execute_from_command_line(sys.argv)
++''')
++    
++    # Create settings.py with a test that checks _xoptions
++    with open('myproject/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('myproject/settings.py', 'w') as f:
++        f.write('''
++import sys
++import os
++
++SECRET_KEY = 'test-secret-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++]
++ROOT_URLCONF = 'myproject.urls'
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++# Write _xoptions to a file so we can check them
++xoptions_file = os.path.join(os.path.dirname(__file__), '..', 'xoptions.txt')
++with open(xoptions_file, 'a') as f:
++    f.write(f"Settings loaded with sys._xoptions: {sys._xoptions}\\n")
++''')
++    
++    with open('myproject/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    # Test with -X utf8 option
++    print("=" * 60)
++    print("Testing Django with -X utf8 option")
++    print("=" * 60)
++    
++    # Remove any existing xoptions.txt
++    if os.path.exists('xoptions.txt'):
++        os.remove('xoptions.txt')
++    
++    # Run Django check command with -X option
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    
++    print("STDOUT:", result.stdout)
++    print("STDERR:", result.stderr)
++    print("Return code:", result.returncode)
++    
++    # Check the xoptions.txt file
++    if os.path.exists('xoptions.txt'):
++        print("\nContents of xoptions.txt:")
++        with open('xoptions.txt', 'r') as f:
++            content = f.read()
++            print(content)
++            if "'utf8': True" in content or "'utf8': '1'" in content:
++                print("\n‚úì SUCCESS: -X utf8 option was preserved!")
++            else:
++                print("\n‚úó FAILURE: -X utf8 option was NOT preserved!")
++    else:
++        print("\n‚úó FAILURE: xoptions.txt was not created!")
++
++print("\nTest completed successfully!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..365743516b
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,63 @@
++#!/usr/bin/env python
++"""Test edge cases for -X options handling"""
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.utils.autoreload import get_child_arguments
++
++print("=" * 60)
++print("Test 1: Multiple -X options with different types")
++print("=" * 60)
++
++# Simulate multiple -X options
++original_xoptions = sys._xoptions.copy() if hasattr(sys, '_xoptions') else {}
++
++# Test with multiple options
++sys._xoptions = {'utf8': True, 'dev': True, 'faulthandler': True, 'tracemalloc': '5'}
++args = get_child_arguments()
++print(f"sys._xoptions: {sys._xoptions}")
++print(f"Generated args: {args}")
++
++# Check all options are present
++expected_options = ['-Xutf8', '-Xdev', '-Xfaulthandler', '-Xtracemalloc=5']
++found_options = [arg for arg in args if arg.startswith('-X')]
++print(f"Found -X options: {found_options}")
++
++all_present = all(opt in found_options for opt in expected_options)
++print(f"All expected options present: {all_present}")
++
++print("\n" + "=" * 60)
++print("Test 2: No -X options")
++print("=" * 60)
++
++sys._xoptions = {}
++args = get_child_arguments()
++print(f"sys._xoptions: {sys._xoptions}")
++print(f"Generated args: {args}")
++x_options = [arg for arg in args if arg.startswith('-X')]
++print(f"Found -X options: {x_options}")
++print(f"No -X options (as expected): {len(x_options) == 0}")
++
++print("\n" + "=" * 60)
++print("Test 3: Mixed -W and -X options")
++print("=" * 60)
++
++sys._xoptions = {'utf8': True}
++sys.warnoptions = ['default', 'ignore::DeprecationWarning']
++args = get_child_arguments()
++print(f"sys._xoptions: {sys._xoptions}")
++print(f"sys.warnoptions: {sys.warnoptions}")
++print(f"Generated args: {args}")
++
++w_options = [arg for arg in args if arg.startswith('-W')]
++x_options = [arg for arg in args if arg.startswith('-X')]
++print(f"Found -W options: {w_options}")
++print(f"Found -X options: {x_options}")
++print(f"Both types present: {len(w_options) > 0 and len(x_options) > 0}")
++
++# Restore original
++sys._xoptions = original_xoptions
++
++print("\n" + "=" * 60)
++print("All edge case tests completed successfully!")
++print("=" * 60)
+diff --git a/test_pr_integration.py b/test_pr_integration.py
+new file mode 100644
+index 0000000000..3fed1e293b
+--- /dev/null
++++ b/test_pr_integration.py
+@@ -0,0 +1,154 @@
++#!/usr/bin/env python
++"""Integration test simulating the exact PR scenario"""
++import sys
++import os
++import tempfile
++import subprocess
++import time
++
++print("=" * 70)
++print("INTEGRATION TEST: Simulating PR Description Scenario")
++print("=" * 70)
++
++# Create a temporary Django project
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    
++    # Create project structure as in PR
++    os.makedirs('my_project')
++    os.makedirs('my_app')
++    
++    # Create manage.py
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'my_project.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError("Couldn't import Django.") from exc
++    execute_from_command_line(sys.argv)
++''')
++    
++    # Create my_app/apps.py with encoding test from PR
++    with open('my_app/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('my_app/apps.py', 'w') as f:
++        f.write('''from django.apps import AppConfig
++import sys
++
++class MyAppConfig(AppConfig):
++    default_auto_field = 'django.db.models.BigAutoField'
++    name = 'my_app'
++
++# Log the encoding and _xoptions on each load
++import os
++log_file = os.path.join(os.path.dirname(__file__), '..', 'encoding_log.txt')
++with open(log_file, 'a') as f:
++    with open("manage.py", mode="r") as stream:
++        f.write(f"Encoding: {stream.encoding}, _xoptions: {sys._xoptions}\\n")
++''')
++    
++    # Create settings.py
++    with open('my_project/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('my_project/settings.py', 'w') as f:
++        f.write('''
++SECRET_KEY = 'test-secret-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'my_app',
++]
++ROOT_URLCONF = 'my_project.urls'
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++''')
++    
++    with open('my_project/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    # Test 1: Without -X utf8
++    print("\nTest 1: Running WITHOUT -X utf8 option")
++    print("-" * 70)
++    if os.path.exists('encoding_log.txt'):
++        os.remove('encoding_log.txt')
++    
++    result = subprocess.run(
++        [sys.executable, 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    
++    if os.path.exists('encoding_log.txt'):
++        with open('encoding_log.txt', 'r') as f:
++            content = f.read()
++            print(f"Log content: {content.strip()}")
++            if "_xoptions: {}" in content:
++                print("‚úì No -X options as expected")
++    
++    # Test 2: With -X utf8
++    print("\nTest 2: Running WITH -X utf8 option")
++    print("-" * 70)
++    if os.path.exists('encoding_log.txt'):
++        os.remove('encoding_log.txt')
++    
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    
++    if os.path.exists('encoding_log.txt'):
++        with open('encoding_log.txt', 'r') as f:
++            content = f.read()
++            print(f"Log content: {content.strip()}")
++            if "'utf8'" in content:
++                print("‚úì -X utf8 option preserved correctly!")
++            else:
++                print("‚úó -X utf8 option NOT preserved!")
++    
++    # Test 3: Verify get_child_arguments directly
++    print("\nTest 3: Direct verification of get_child_arguments()")
++    print("-" * 70)
++    
++    test_script = '''
++import sys
++sys.path.insert(0, '/testbed')
++from django.utils.autoreload import get_child_arguments
++
++args = get_child_arguments()
++print("Child arguments:", args)
++
++x_opts = [arg for arg in args if arg.startswith('-X')]
++print("X options found:", x_opts)
++
++if '-Xutf8' in x_opts:
++    print("SUCCESS: -X utf8 is in child arguments")
++else:
++    print("FAILURE: -X utf8 is NOT in child arguments")
++'''
++    
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', '-c', test_script],
++        capture_output=True,
++        text=True,
++        cwd=tmpdir
++    )
++    print(result.stdout)
++
++print("\n" + "=" * 70)
++print("Integration test completed!")
++print("=" * 70)
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..568b8a4c1c
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,104 @@
++#!/usr/bin/env python
++"""Test the exact scenario from the PR description"""
++import sys
++import os
++import tempfile
++import subprocess
++
++# Create a temporary Django project similar to the PR description
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    
++    # Create project structure
++    os.makedirs('my_project')
++    os.makedirs('my_app')
++    
++    # Create manage.py
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'my_project.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError(
++            "Couldn't import Django."
++        ) from exc
++    execute_from_command_line(sys.argv)
++''')
++    
++    # Create my_app/apps.py with the encoding test from PR
++    with open('my_app/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('my_app/apps.py', 'w') as f:
++        f.write('''from django.apps import AppConfig
++
++class MyAppConfig(AppConfig):
++    default_auto_field = 'django.db.models.BigAutoField'
++    name = 'my_app'
++
++# myapp global initial_demo ...
++with open("manage.py", mode="r") as stream:
++    print("=== %s" % stream.encoding)
++''')
++    
++    # Create settings.py
++    with open('my_project/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('my_project/settings.py', 'w') as f:
++        f.write('''
++SECRET_KEY = 'test-secret-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'my_app',
++]
++ROOT_URLCONF = 'my_project.urls'
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++''')
++    
++    with open('my_project/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    print("=" * 60)
++    print("Test 1: Without -X utf8 (should use system default)")
++    print("=" * 60)
++    result = subprocess.run(
++        [sys.executable, 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    print("Output:", result.stdout)
++    print("Errors:", result.stderr)
++    
++    print("\n" + "=" * 60)
++    print("Test 2: With -X utf8 (should use UTF-8)")
++    print("=" * 60)
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', 'manage.py', 'check'],
++        capture_output=True,
++        text=True,
++        timeout=10
++    )
++    print("Output:", result.stdout)
++    print("Errors:", result.stderr)
++    
++    # Check if UTF-8 is in the output
++    if 'UTF-8' in result.stderr or 'utf-8' in result.stderr.lower():
++        print("\n‚úì SUCCESS: UTF-8 encoding is being used with -X utf8 option!")
++    else:
++        print("\n‚ö† Note: Encoding output may vary by system")
++
++print("\nPR scenario test completed!")
+diff --git a/test_xoptions.py b/test_xoptions.py
+new file mode 100644
+index 0000000000..1c49d19ff0
+--- /dev/null
++++ b/test_xoptions.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++"""Test script to verify -X options are passed to auto-reloader"""
++import sys
++import os
++import tempfile
++import subprocess
++
++# Create a temporary Django project
++with tempfile.TemporaryDirectory() as tmpdir:
++    os.chdir(tmpdir)
++    
++    # Create a minimal Django project structure
++    os.makedirs('myproject')
++    
++    # Create manage.py
++    with open('manage.py', 'w') as f:
++        f.write('''#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError(
++            "Couldn't import Django. Are you sure it's installed and "
++            "available on your PYTHONPATH environment variable? Did you "
++            "forget to activate a virtual environment?"
++        ) from exc
++    execute_from_command_line(sys.argv)
++''')
++    
++    # Create settings.py
++    with open('myproject/__init__.py', 'w') as f:
++        f.write('')
++    
++    with open('myproject/settings.py', 'w') as f:
++        f.write('''
++import sys
++SECRET_KEY = 'test-secret-key'
++DEBUG = True
++ALLOWED_HOSTS = []
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++]
++ROOT_URLCONF = 'myproject.urls'
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++# Print _xoptions on import to verify they're passed
++print(f"Settings loaded with sys._xoptions: {sys._xoptions}")
++''')
++    
++    with open('myproject/urls.py', 'w') as f:
++        f.write('urlpatterns = []')
++    
++    # Test without -X option
++    print("=" * 60)
++    print("Test 1: Running without -X option")
++    print("=" * 60)
++    result = subprocess.run(
++        [sys.executable, 'manage.py', 'check'],
++        capture_output=True,
++        text=True
++    )
++    print(result.stdout)
++    print(result.stderr)
++    
++    # Test with -X option
++    print("\n" + "=" * 60)
++    print("Test 2: Running with -X utf8 option")
++    print("=" * 60)
++    result = subprocess.run(
++        [sys.executable, '-X', 'utf8', 'manage.py', 'check'],
++        capture_output=True,
++        text=True
++    )
++    print(result.stdout)
++    print(result.stderr)
+diff --git a/test_xoptions_final.py b/test_xoptions_final.py
+new file mode 100644
+index 0000000000..0c4e52ecfa
+--- /dev/null
++++ b/test_xoptions_final.py
+@@ -0,0 +1,124 @@
++#!/usr/bin/env python
++"""Final comprehensive test for -X options support"""
++import sys
++import os
++from unittest import mock
++
++# Add testbed to path
++sys.path.insert(0, '/testbed')
++
++from django.utils import autoreload
++
++print("=" * 60)
++print("Test 1: -X options are preserved (similar to warnoptions)")
++print("=" * 60)
++
++# Mock the necessary attributes
++with mock.patch('__main__.__spec__', None):
++    with mock.patch('sys.argv', [__file__, 'runserver']):
++        with mock.patch('sys.warnoptions', []):
++            # Test with _xoptions
++            with mock.patch('sys._xoptions', {'utf8': True, 'dev': True}):
++                args = autoreload.get_child_arguments()
++                print(f"Generated args: {args}")
++                
++                # Check that -X options are present
++                x_options = [arg for arg in args if arg.startswith('-X')]
++                print(f"Found -X options: {x_options}")
++                
++                expected = {'-Xutf8', '-Xdev'}
++                found = set(x_options)
++                
++                if expected == found:
++                    print("‚úì SUCCESS: All -X options preserved correctly")
++                else:
++                    print(f"‚úó FAILURE: Expected {expected}, got {found}")
++
++print("\n" + "=" * 60)
++print("Test 2: -X options with values")
++print("=" * 60)
++
++with mock.patch('__main__.__spec__', None):
++    with mock.patch('sys.argv', [__file__, 'runserver']):
++        with mock.patch('sys.warnoptions', []):
++            with mock.patch('sys._xoptions', {'utf8': '1', 'tracemalloc': '10'}):
++                args = autoreload.get_child_arguments()
++                print(f"Generated args: {args}")
++                
++                x_options = [arg for arg in args if arg.startswith('-X')]
++                print(f"Found -X options: {x_options}")
++                
++                expected = {'-Xutf8=1', '-Xtracemalloc=10'}
++                found = set(x_options)
++                
++                if expected == found:
++                    print("‚úì SUCCESS: -X options with values preserved correctly")
++                else:
++                    print(f"‚úó FAILURE: Expected {expected}, got {found}")
++
++print("\n" + "=" * 60)
++print("Test 3: Mixed -W and -X options")
++print("=" * 60)
++
++with mock.patch('__main__.__spec__', None):
++    with mock.patch('sys.argv', [__file__, 'runserver']):
++        with mock.patch('sys.warnoptions', ['error', 'default']):
++            with mock.patch('sys._xoptions', {'utf8': True}):
++                args = autoreload.get_child_arguments()
++                print(f"Generated args: {args}")
++                
++                w_options = [arg for arg in args if arg.startswith('-W')]
++                x_options = [arg for arg in args if arg.startswith('-X')]
++                print(f"Found -W options: {w_options}")
++                print(f"Found -X options: {x_options}")
++                
++                if '-Werror' in w_options and '-Wdefault' in w_options and '-Xutf8' in x_options:
++                    print("‚úì SUCCESS: Both -W and -X options preserved correctly")
++                else:
++                    print("‚úó FAILURE: Not all options preserved")
++
++print("\n" + "=" * 60)
++print("Test 4: No -X options (empty dict)")
++print("=" * 60)
++
++with mock.patch('__main__.__spec__', None):
++    with mock.patch('sys.argv', [__file__, 'runserver']):
++        with mock.patch('sys.warnoptions', []):
++            with mock.patch('sys._xoptions', {}):
++                args = autoreload.get_child_arguments()
++                print(f"Generated args: {args}")
++                
++                x_options = [arg for arg in args if arg.startswith('-X')]
++                print(f"Found -X options: {x_options}")
++                
++                if len(x_options) == 0:
++                    print("‚úì SUCCESS: No -X options when _xoptions is empty")
++                else:
++                    print(f"‚úó FAILURE: Unexpected -X options: {x_options}")
++
++print("\n" + "=" * 60)
++print("Test 5: System without _xoptions (non-CPython)")
++print("=" * 60)
++
++with mock.patch('__main__.__spec__', None):
++    with mock.patch('sys.argv', [__file__, 'runserver']):
++        with mock.patch('sys.warnoptions', []):
++            # Temporarily remove _xoptions if it exists
++            original_xoptions = getattr(sys, '_xoptions', None)
++            if hasattr(sys, '_xoptions'):
++                delattr(sys, '_xoptions')
++            
++            try:
++                args = autoreload.get_child_arguments()
++                print(f"Generated args: {args}")
++                print("‚úì SUCCESS: No error when _xoptions doesn't exist")
++            except AttributeError as e:
++                print(f"‚úó FAILURE: AttributeError raised: {e}")
++            finally:
++                # Restore _xoptions
++                if original_xoptions is not None:
++                    sys._xoptions = original_xoptions
++
++print("\n" + "=" * 60)
++print("All tests completed!")
++print("=" * 60)

@@ -1,0 +1,675 @@
+diff --git a/apply_fix.py b/apply_fix.py
+new file mode 100644
+index 0000000000..68de063176
+--- /dev/null
++++ b/apply_fix.py
+@@ -0,0 +1,30 @@
++# Read the file
++with open('/testbed/django/db/models/query.py', 'r') as f:
++    lines = f.readlines()
++
++# Find the none() method and modify it
++new_lines = []
++i = 0
++while i < len(lines):
++    if i < len(lines) - 5 and 'def none(self):' in lines[i]:
++        # Found the none() method, replace it
++        new_lines.append(lines[i])  # def none(self):
++        new_lines.append(lines[i+1])  # """Return an empty QuerySet."""
++        new_lines.append(lines[i+2])  # clone = self._chain()
++        # Add the new lines
++        new_lines.append('        if clone.query.combinator:\n')
++        new_lines.append('            clone.query.combinator = None\n')
++        new_lines.append('            clone.query.combinator_all = False\n')
++        new_lines.append('            clone.query.combined_queries = ()\n')
++        new_lines.append(lines[i+3])  # clone.query.set_empty()
++        new_lines.append(lines[i+4])  # return clone
++        i += 5
++    else:
++        new_lines.append(lines[i])
++        i += 1
++
++# Write the file back
++with open('/testbed/django/db/models/query.py', 'w') as f:
++    f.writelines(new_lines)
++
++print("Fix applied successfully!")
+diff --git a/apply_fix2.py b/apply_fix2.py
+new file mode 100644
+index 0000000000..48ca633307
+--- /dev/null
++++ b/apply_fix2.py
+@@ -0,0 +1,30 @@
++# Read the file
++with open('/testbed/django/db/models/query.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the none() method
++old_code = '''    def none(self):
++        """Return an empty QuerySet."""
++        clone = self._chain()
++        clone.query.set_empty()
++        return clone'''
++
++new_code = '''    def none(self):
++        """Return an empty QuerySet."""
++        clone = self._chain()
++        if clone.query.combinator:
++            clone.query.combinator = None
++            clone.query.combinator_all = False
++            clone.query.combined_queries = ()
++        clone.query.set_empty()
++        return clone'''
++
++if old_code in content:
++    content = content.replace(old_code, new_code)
++    with open('/testbed/django/db/models/query.py', 'w') as f:
++        f.write(content)
++    print("Fix applied successfully!")
++else:
++    print("Could not find the exact code to replace")
++    print("Looking for:")
++    print(old_code)
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 07d6ffd4ca..b2a391844f 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -919,6 +919,10 @@ class QuerySet:
+     def none(self):
+         """Return an empty QuerySet."""
+         clone = self._chain()
++        if clone.query.combinator:
++            clone.query.combinator = None
++            clone.query.combinator_all = False
++            clone.query.combined_queries = ()
+         clone.query.set_empty()
+         return clone
+ 
+diff --git a/fix.patch b/fix.patch
+new file mode 100644
+index 0000000000..2a0b218634
+--- /dev/null
++++ b/fix.patch
+@@ -0,0 +1,13 @@
++--- a/django/db/models/query.py
+++++ b/django/db/models/query.py
++@@ -919,6 +919,10 @@ class QuerySet:
++     def none(self):
++         """Return an empty QuerySet."""
++         clone = self._chain()
+++        if clone.query.combinator:
+++            clone.query.combinator = None
+++            clone.query.combinator_all = False
+++            clone.query.combined_queries = ()
++         clone.query.set_empty()
++         return clone
++ 
+diff --git a/test_all_combinators.py b/test_all_combinators.py
+new file mode 100644
+index 0000000000..5cd1063cfc
+--- /dev/null
++++ b/test_all_combinators.py
+@@ -0,0 +1,58 @@
++import os
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Publication)
++
++# Create test data
++for i in range(1, 8):
++    Publication.objects.create(name=f'Pub {i}')
++
++print("Created publications:", list(Publication.objects.values_list('id', 'name')))
++
++# Test union
++print("\n=== Testing union ===")
++union_qs = Publication.objects.filter(id__lt=3).union(Publication.objects.filter(id__gt=5))
++print("Union queryset:", list(union_qs.values_list('id', flat=True)))
++print("Union queryset.none():", list(union_qs.none().values_list('id', flat=True)))
++
++# Test intersection
++print("\n=== Testing intersection ===")
++intersection_qs = Publication.objects.filter(id__lt=5).intersection(Publication.objects.filter(id__gt=2))
++print("Intersection queryset:", list(intersection_qs.values_list('id', flat=True)))
++print("Intersection queryset.none():", list(intersection_qs.none().values_list('id', flat=True)))
++
++# Test difference
++print("\n=== Testing difference ===")
++difference_qs = Publication.objects.filter(id__lt=6).difference(Publication.objects.filter(id__gt=3))
++print("Difference queryset:", list(difference_qs.values_list('id', flat=True)))
++print("Difference queryset.none():", list(difference_qs.none().values_list('id', flat=True)))
++
++print("\n=== All tests passed! ===")
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..bda618c22f
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,55 @@
++import os
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Publication)
++
++pub1 = Publication.objects.create(name='Pub 1')
++pub2 = Publication.objects.create(name='Pub 2')
++pub3 = Publication.objects.create(name='Pub 3')
++
++# Test union query
++union_qs = Publication.objects.filter(id__lt=2).union(Publication.objects.filter(id__gt=2))
++print("Union queryset has combinator:", union_qs.query.combinator)
++print("Union queryset combined_queries:", union_qs.query.combined_queries)
++print("Union queryset is_empty():", union_qs.query.is_empty())
++
++# Call none() on union query
++none_qs = union_qs.none()
++print("\nAfter calling none():")
++print("None queryset has combinator:", none_qs.query.combinator)
++print("None queryset combined_queries:", none_qs.query.combined_queries)
++print("None queryset is_empty():", none_qs.query.is_empty())
++print("None queryset WHERE clause:", none_qs.query.where)
++
++# Check if combined queries are empty
++if none_qs.query.combined_queries:
++    for i, q in enumerate(none_qs.query.combined_queries):
++        print(f"Combined query {i} is_empty():", q.is_empty())
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..3917f08af4
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,87 @@
++import os
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Publication)
++
++for i in range(1, 6):
++    Publication.objects.create(name=f'Pub {i}')
++
++print("=== Edge Case Tests ===\n")
++
++# Test 1: none() on regular queryset (should still work)
++print("Test 1: none() on regular queryset")
++regular_qs = Publication.objects.filter(id__lt=3)
++print(f"  Regular queryset: {list(regular_qs.values_list('id', flat=True))}")
++print(f"  Regular queryset.none(): {list(regular_qs.none().values_list('id', flat=True))}")
++assert list(regular_qs.none()) == [], "Regular queryset.none() should return empty"
++
++# Test 2: Chaining operations after none() on union
++print("\nTest 2: Chaining operations after none() on union")
++union_qs = Publication.objects.filter(id__lt=2).union(Publication.objects.filter(id__gt=4))
++none_qs = union_qs.none()
++print(f"  Union queryset: {list(union_qs.values_list('id', flat=True))}")
++print(f"  Union queryset.none(): {list(none_qs.values_list('id', flat=True))}")
++print(f"  Union queryset.none().filter(id=1): {list(none_qs.filter(id=1).values_list('id', flat=True))}")
++assert list(none_qs) == [], "Union queryset.none() should return empty"
++
++# Test 3: none() on nested union
++print("\nTest 3: none() on nested union")
++nested_union = Publication.objects.filter(id=1).union(
++    Publication.objects.filter(id=2).union(Publication.objects.filter(id=3))
++)
++print(f"  Nested union: {list(nested_union.values_list('id', flat=True))}")
++print(f"  Nested union.none(): {list(nested_union.none().values_list('id', flat=True))}")
++assert list(nested_union.none()) == [], "Nested union.none() should return empty"
++
++# Test 4: none() on intersection
++print("\nTest 4: none() on intersection")
++intersection_qs = Publication.objects.filter(id__lt=4).intersection(Publication.objects.filter(id__gt=1))
++print(f"  Intersection: {list(intersection_qs.values_list('id', flat=True))}")
++print(f"  Intersection.none(): {list(intersection_qs.none().values_list('id', flat=True))}")
++assert list(intersection_qs.none()) == [], "Intersection.none() should return empty"
++
++# Test 5: none() on difference
++print("\nTest 5: none() on difference")
++difference_qs = Publication.objects.filter(id__lt=4).difference(Publication.objects.filter(id__gt=2))
++print(f"  Difference: {list(difference_qs.values_list('id', flat=True))}")
++print(f"  Difference.none(): {list(difference_qs.none().values_list('id', flat=True))}")
++assert list(difference_qs.none()) == [], "Difference.none() should return empty"
++
++# Test 6: Verify combinator is cleared
++print("\nTest 6: Verify combinator is cleared after none()")
++union_qs = Publication.objects.filter(id__lt=2).union(Publication.objects.filter(id__gt=4))
++none_qs = union_qs.none()
++print(f"  Original union has combinator: {union_qs.query.combinator}")
++print(f"  After none() has combinator: {none_qs.query.combinator}")
++assert none_qs.query.combinator is None, "Combinator should be None after none()"
++assert none_qs.query.combined_queries == (), "Combined queries should be empty after none()"
++
++print("\nAll edge case tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..07342f0a40
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,82 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.forms import ModelMultipleChoiceField
++
++# Create test models
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Publication)
++
++# Create some test data
++pub1 = Publication.objects.create(name='Pub 1')
++pub2 = Publication.objects.create(name='Pub 2')
++pub3 = Publication.objects.create(name='Pub 3')
++pub4 = Publication.objects.create(name='Pub 4')
++pub5 = Publication.objects.create(name='Pub 5')
++pub6 = Publication.objects.create(name='Pub 6')
++pub7 = Publication.objects.create(name='Pub 7')
++
++print("Created publications:", list(Publication.objects.values_list('id', 'name')))
++
++# Test with OR query
++print("\n=== Testing with OR query ===")
++or_queryset = Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5)
++print("OR queryset:", list(or_queryset.values_list('id', 'name')))
++print("OR queryset.none():", list(or_queryset.none().values_list('id', 'name')))
++
++# Test with union query
++print("\n=== Testing with union query ===")
++union_queryset = Publication.objects.filter(id__lt=2).union(Publication.objects.filter(id__gt=5))
++print("Union queryset:", list(union_queryset.values_list('id', 'name')))
++print("Union queryset.none():", list(union_queryset.none().values_list('id', 'name')))
++
++# Test with ModelMultipleChoiceField
++print("\n=== Testing with ModelMultipleChoiceField ===")
++
++# Test OR query field
++or_field = ModelMultipleChoiceField(
++    queryset=Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5),
++    required=False,
++)
++or_result = or_field.clean([])
++print("OR field clean([]):", list(or_result.values_list('id', 'name')))
++
++# Test union query field
++union_field = ModelMultipleChoiceField(
++    queryset=Publication.objects.filter(id__lt=2).union(Publication.objects.filter(id__gt=5)),
++    required=False,
++)
++union_result = union_field.clean([])
++print("Union field clean([]):", list(union_result.values_list('id', 'name')))
++
++print("\n=== Summary ===")
++print("OR field returns empty list:", len(list(or_result)) == 0)
++print("Union field returns empty list:", len(list(union_result)) == 0)
+diff --git a/test_pr_final.py b/test_pr_final.py
+new file mode 100644
+index 0000000000..67a7ff4c8a
+--- /dev/null
++++ b/test_pr_final.py
+@@ -0,0 +1,123 @@
++"""
++Test the exact scenario from the PR description:
++QuerySet.none() on combined queries should return no results.
++"""
++import os
++import sys
++import django
++import tempfile
++from django.conf import settings
++
++db_file = tempfile.mktemp(suffix='.db')
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': db_file,
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django import forms
++
++# Define models as in the PR
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    publications = models.ManyToManyField(to=Publication, blank=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Publication)
++    schema_editor.create_model(Article)
++    # M2M table is created automatically with Article model
++
++# Create test data
++pubs = []
++for i in range(1, 8):
++    pubs.append(Publication.objects.create(name=f'Publication {i}'))
++
++article = Article.objects.create(title='Test Article')
++
++print("Created publications:", list(Publication.objects.values_list('id', 'name')))
++
++# Test with OR query (original working case)
++print("\n=== Testing with OR query (original working case) ===")
++class ArticleFormOR(forms.ModelForm):
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5),
++        required=False,
++    )
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++form_or = ArticleFormOR(data={'publications': []}, instance=article)
++if form_or.is_valid():
++    form_or.save()
++    or_pubs = list(article.publications.all())
++    print("Publications after saving empty form (OR):", or_pubs)
++    article.publications.clear()  # Reset for next test
++else:
++    print("Form errors:", form_or.errors)
++    sys.exit(1)
++
++# Test with union query (the bug case)
++print("\n=== Testing with union query (the bug case - should now be fixed) ===")
++class ArticleFormUnion(forms.ModelForm):
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2).union(
++            Publication.objects.filter(id__gt=5)
++        ),
++        required=False,
++    )
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++form_union = ArticleFormUnion(data={'publications': []}, instance=article)
++if form_union.is_valid():
++    form_union.save()
++    union_pubs = list(article.publications.all())
++    print("Publications after saving empty form (union):", union_pubs)
++else:
++    print("Form errors:", form_union.errors)
++    sys.exit(1)
++
++# Verify the fix
++print("\n=== Verification ===")
++or_count = len(or_pubs)
++union_count = len(union_pubs)
++
++print(f"OR query result count: {or_count}")
++print(f"Union query result count: {union_count}")
++print(f"Both return 0 publications: {or_count == 0 and union_count == 0}")
++
++# Cleanup
++os.unlink(db_file)
++
++if or_count == 0 and union_count == 0:
++    print("\n‚ú? SUCCESS: The bug is fixed!")
++    sys.exit(0)
++else:
++    print("\n‚ú? FAILURE: The bug still exists!")
++    sys.exit(1)
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..0494849330
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,128 @@
++"""
++Test the exact scenario from the PR description:
++QuerySet.none() on combined queries should return no results.
++"""
++import os
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django import forms
++from django.contrib import admin
++
++# Define models as in the PR
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    publications = models.ManyToManyField(to=Publication, blank=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    try:
++        schema_editor.create_model(Publication)
++    except:
++        pass
++    try:
++        schema_editor.create_model(Article)
++    except:
++        pass
++    # Create the M2M table
++    try:
++        m2m_field = Article._meta.get_field('publications')
++        schema_editor.create_model(m2m_field.remote_field.through)
++    except:
++        pass
++
++# Create test data
++pubs = []
++for i in range(1, 8):
++    pubs.append(Publication.objects.create(name=f'Publication {i}'))
++
++article = Article.objects.create(title='Test Article')
++
++print("Created publications:", list(Publication.objects.values_list('id', 'name')))
++
++# Test with OR query (original working case)
++print("\n=== Testing with OR query (original working case) ===")
++class ArticleFormOR(forms.ModelForm):
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5),
++        required=False,
++    )
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++form_or = ArticleFormOR(data={'publications': []}, instance=article)
++if form_or.is_valid():
++    form_or.save()
++    print("Publications after saving empty form (OR):", list(article.publications.all()))
++    article.publications.clear()  # Reset for next test
++else:
++    print("Form errors:", form_or.errors)
++
++# Test with union query (the bug case)
++print("\n=== Testing with union query (the bug case - should now be fixed) ===")
++class ArticleFormUnion(forms.ModelForm):
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2).union(
++            Publication.objects.filter(id__gt=5)
++        ),
++        required=False,
++    )
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++form_union = ArticleFormUnion(data={'publications': []}, instance=article)
++if form_union.is_valid():
++    form_union.save()
++    print("Publications after saving empty form (union):", list(article.publications.all()))
++else:
++    print("Form errors:", form_union.errors)
++
++# Verify the fix
++print("\n=== Verification ===")
++or_count = len(list(article.publications.all()))
++article.publications.clear()
++
++form_union2 = ArticleFormUnion(data={'publications': []}, instance=article)
++form_union2.is_valid()
++form_union2.save()
++union_count = len(list(article.publications.all()))
++
++print(f"OR query result count: {or_count}")
++print(f"Union query result count: {union_count}")
++print(f"Both return 0 publications: {or_count == 0 and union_count == 0}")
++
++if or_count == 0 and union_count == 0:
++    print("\n‚ú? SUCCESS: The bug is fixed!")
++else:
++    print("\n‚ú? FAILURE: The bug still exists!")

@@ -1,0 +1,282 @@
+diff --git a/CHANGES_SUMMARY.md b/CHANGES_SUMMARY.md
+new file mode 100644
+index 000000000..b0e1c27dd
+--- /dev/null
++++ b/CHANGES_SUMMARY.md
+@@ -0,0 +1,29 @@
++# Summary of Changes to Fix RidgeClassifierCV store_cv_values Issue
++
++## Problem
++RidgeClassifierCV did not accept the `store_cv_values` parameter, even though:
++1. The documentation mentioned it in the cv_values_ attribute description
++2. The parameter was available in the similar RidgeCV class
++
++## Solution
++Modified `/testbed/sklearn/linear_model/ridge.py` to add support for the `store_cv_values` parameter:
++
++### Changes Made:
++
++1. **Added parameter to __init__ signature** (line 1336):
++   - Added `store_cv_values=False` parameter to RidgeClassifierCV.__init__()
++
++2. **Passed parameter to parent class** (line 1339):
++   - Modified super().__init__() call to include `store_cv_values=store_cv_values`
++
++3. **Added parameter documentation** (after line 1302):
++   - Added documentation for the store_cv_values parameter in the Parameters section
++   - Documentation matches the style and content of RidgeCV
++
++## Behavior
++- When `store_cv_values=True` and `cv=None`, the cv_values_ attribute is populated
++- When `store_cv_values=False` (default), the cv_values_ attribute is not created
++- When `cv!=None` and `store_cv_values=True`, a ValueError is raised (consistent with RidgeCV)
++
++## Testing
++All existing tests pass, and the exact scenario from the PR description now works correctly.
+diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
+index 911c74ae3..dcf5dd248 100644
+--- a/sklearn/linear_model/ridge.py
++++ b/sklearn/linear_model/ridge.py
+@@ -717,6 +717,12 @@ class RidgeClassifier(LinearClassifierMixin, _BaseRidge):
+         weights inversely proportional to class frequencies in the input data
+         as ``n_samples / (n_classes * np.bincount(y))``
+ 
++    store_cv_values : boolean, default=False
++        Flag indicating if the cross-validation values corresponding to
++        each alpha should be stored in the ``cv_values_`` attribute (see
++        below). This flag is only compatible with ``cv=None`` (i.e. using
++        Generalized Cross-Validation).
++
+     solver : {'auto', 'svd', 'cholesky', 'lsqr', 'sparse_cg', 'sag', 'saga'}
+         Solver to use in the computational routines:
+ 
+@@ -1301,6 +1307,12 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
+         weights inversely proportional to class frequencies in the input data
+         as ``n_samples / (n_classes * np.bincount(y))``
+ 
++    store_cv_values : boolean, default=False
++        Flag indicating if the cross-validation values corresponding to
++        each alpha should be stored in the ``cv_values_`` attribute (see
++        below). This flag is only compatible with ``cv=None`` (i.e. using
++        Generalized Cross-Validation).
++
+     Attributes
+     ----------
+     cv_values_ : array, shape = [n_samples, n_alphas] or \
+@@ -1333,10 +1345,10 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
+     advantage of the multi-variate response support in Ridge.
+     """
+     def __init__(self, alphas=(0.1, 1.0, 10.0), fit_intercept=True,
+-                 normalize=False, scoring=None, cv=None, class_weight=None):
++                 normalize=False, scoring=None, cv=None, class_weight=None, store_cv_values=False):
+         super(RidgeClassifierCV, self).__init__(
+             alphas=alphas, fit_intercept=fit_intercept, normalize=normalize,
+-            scoring=scoring, cv=cv)
++            scoring=scoring, cv=cv, store_cv_values=store_cv_values)
+         self.class_weight = class_weight
+ 
+     def fit(self, X, y, sample_weight=None):
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..fc37610d4
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,98 @@
++import numpy as np
++from sklearn import linear_model as lm
++
++print("=" * 70)
++print("COMPREHENSIVE TEST FOR RidgeClassifierCV store_cv_values")
++print("=" * 70)
++
++# Test 1: Basic functionality with store_cv_values=True and cv=None
++print("\n1. Testing store_cv_values=True with cv=None (should store cv_values_)...")
++n = 100
++x = np.random.randn(n, 30)
++y = np.random.randint(0, 2, size=n)
++
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1), 
++                              store_cv_values=True, cv=None).fit(x, y)
++    assert hasattr(rr, 'cv_values_'), "cv_values_ attribute should exist"
++    print(f"   SUCCESS: cv_values_ shape = {rr.cv_values_.shape}")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++# Test 2: store_cv_values=False (should not store cv_values_)
++print("\n2. Testing store_cv_values=False (should not store cv_values_)...")
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1), 
++                              store_cv_values=False).fit(x, y)
++    assert not hasattr(rr, 'cv_values_'), "cv_values_ attribute should not exist"
++    print(f"   SUCCESS: cv_values_ not stored as expected")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++# Test 3: Default behavior (store_cv_values not specified, should default to False)
++print("\n3. Testing default behavior (should not store cv_values_)...")
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1)).fit(x, y)
++    assert not hasattr(rr, 'cv_values_'), "cv_values_ attribute should not exist by default"
++    print(f"   SUCCESS: Default behavior correct (no cv_values_)")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++# Test 4: store_cv_values=True with cv != None (should not store cv_values_)
++print("\n4. Testing store_cv_values=True with cv=5 (should not store cv_values_)...")
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1), 
++                              store_cv_values=True, cv=5).fit(x, y)
++    # According to documentation, cv_values_ is only stored when cv=None
++    if hasattr(rr, 'cv_values_'):
++        print(f"   WARNING: cv_values_ stored even with cv=5")
++    else:
++        print(f"   SUCCESS: cv_values_ not stored with cv=5 (as expected)")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++# Test 5: Multi-class classification
++print("\n5. Testing with multi-class classification...")
++y_multi = np.random.randint(0, 3, size=n)
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1), 
++                              store_cv_values=True, cv=None).fit(x, y_multi)
++    assert hasattr(rr, 'cv_values_'), "cv_values_ attribute should exist"
++    print(f"   SUCCESS: Multi-class works, cv_values_ shape = {rr.cv_values_.shape}")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++# Test 6: Verify it works with all other parameters
++print("\n6. Testing with all parameters combined...")
++try:
++    rr = lm.RidgeClassifierCV(
++        alphas=np.arange(0.1, 10, 0.1),
++        fit_intercept=True,
++        normalize=True,
++        scoring=None,
++        cv=None,
++        class_weight='balanced',
++        store_cv_values=True
++    ).fit(x, y)
++    assert hasattr(rr, 'cv_values_'), "cv_values_ attribute should exist"
++    print(f"   SUCCESS: All parameters work together")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++# Test 7: Original issue from PR
++print("\n7. Testing original issue from PR description...")
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 1000, 0.1), normalize=True, 
++                              store_cv_values=True).fit(x, y)
++    print(f"   SUCCESS: Original issue is fixed!")
++except TypeError as e:
++    if "unexpected keyword argument 'store_cv_values'" in str(e):
++        print(f"   FAILED: Original issue still exists: {e}")
++    else:
++        print(f"   FAILED: Different error: {e}")
++except Exception as e:
++    print(f"   FAILED: {type(e).__name__}: {e}")
++
++print("\n" + "=" * 70)
++print("ALL TESTS COMPLETED")
++print("=" * 70)
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 000000000..99631faf7
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,39 @@
++"""
++Test the exact scenario from the PR description to ensure it's fixed.
++"""
++import numpy as np
++from sklearn import linear_model as lm
++
++print("Testing the exact scenario from the PR description...")
++print("-" * 60)
++
++# Test database (using classification labels instead of continuous)
++n = 100
++x = np.random.randn(n, 30)
++y = np.random.randint(0, 2, size=n)  # Binary classification
++
++print("\nAttempting to create RidgeClassifierCV with store_cv_values=True...")
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 1000, 0.1), normalize=True, 
++                              store_cv_values=True).fit(x, y)
++    print("SUCCESS! RidgeClassifierCV now accepts store_cv_values parameter")
++    print(f"\nModel fitted successfully:")
++    print(f"  - alpha_: {rr.alpha_}")
++    print(f"  - Has cv_values_ attribute: {hasattr(rr, 'cv_values_')}")
++    if hasattr(rr, 'cv_values_'):
++        print(f"  - cv_values_ shape: {rr.cv_values_.shape}")
++    print(f"  - coef_ shape: {rr.coef_.shape}")
++    print(f"  - intercept_ shape: {rr.intercept_.shape if hasattr(rr.intercept_, 'shape') else 'scalar'}")
++    
++    print("\n" + "=" * 60)
++    print("ISSUE FIXED: The PR requirement has been successfully met!")
++    print("=" * 60)
++    
++except TypeError as e:
++    if "unexpected keyword argument 'store_cv_values'" in str(e):
++        print(f"FAILED: The original issue still exists!")
++        print(f"Error: {e}")
++    else:
++        print(f"FAILED: Different TypeError: {e}")
++except Exception as e:
++    print(f"FAILED: Unexpected error: {type(e).__name__}: {e}")
+diff --git a/test_ridge_issue.py b/test_ridge_issue.py
+new file mode 100644
+index 000000000..81b4b0878
+--- /dev/null
++++ b/test_ridge_issue.py
+@@ -0,0 +1,49 @@
++import numpy as np
++from sklearn import linear_model as lm
++
++# Test database
++n = 100
++x = np.random.randn(n, 30)
++# Use binary classification labels instead of continuous values
++y = np.random.randint(0, 2, size=n)
++
++print("Testing RidgeClassifierCV with store_cv_values parameter and cv=None...")
++try:
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1), normalize=True, 
++                              store_cv_values=True, cv=None).fit(x, y)
++    print("SUCCESS: RidgeClassifierCV accepts store_cv_values parameter")
++    print(f"Has cv_values_ attribute: {hasattr(rr, 'cv_values_')}")
++    if hasattr(rr, 'cv_values_'):
++        print(f"cv_values_ shape: {rr.cv_values_.shape}")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++
++print("\nTesting RidgeClassifierCV with store_cv_values=False...")
++try:
++    rr2 = lm.RidgeClassifierCV(alphas=np.arange(0.1, 10, 0.1), normalize=True, 
++                               store_cv_values=False).fit(x, y)
++    print("SUCCESS: RidgeClassifierCV with store_cv_values=False works")
++    print(f"Has cv_values_ attribute: {hasattr(rr2, 'cv_values_')}")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++
++print("\nTesting RidgeCV with store_cv_values parameter for comparison...")
++try:
++    y_continuous = np.random.normal(size=n)
++    rr_cv = lm.RidgeCV(alphas=np.arange(0.1, 10, 0.1), normalize=True, 
++                       store_cv_values=True, cv=None).fit(x, y_continuous)
++    print("SUCCESS: RidgeCV accepts store_cv_values parameter")
++    print(f"Has cv_values_ attribute: {hasattr(rr_cv, 'cv_values_')}")
++    if hasattr(rr_cv, 'cv_values_'):
++        print(f"cv_values_ shape: {rr_cv.cv_values_.shape}")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++
++print("\nTesting original issue from PR description...")
++try:
++    # This is the exact code from the PR description (with classification labels)
++    rr = lm.RidgeClassifierCV(alphas=np.arange(0.1, 1000, 0.1), normalize=True, 
++                              store_cv_values=True).fit(x, y)
++    print("SUCCESS: Original issue is fixed!")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")

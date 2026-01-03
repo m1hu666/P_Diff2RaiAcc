@@ -1,0 +1,355 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 387deca527..40db688046 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -527,6 +527,8 @@ class QuerySet:
+     def bulk_update(self, objs, fields, batch_size=None):
+         """
+         Update the given fields in each of the given objects in the database.
++        
++        Return the number of objects updated.
+         """
+         if batch_size is not None and batch_size < 0:
+             raise ValueError('Batch size must be a positive integer.')
+@@ -541,7 +543,7 @@ class QuerySet:
+         if any(f.primary_key for f in fields):
+             raise ValueError('bulk_update() cannot be used with primary key fields.')
+         if not objs:
+-            return
++            return 0
+         # PK is used twice in the resulting update query, once in the filter
+         # and once in the WHEN. Each field will also have one CAST.
+         max_batch_size = connections[self.db].ops.bulk_batch_size(['pk', 'pk'] + fields, objs)
+@@ -563,9 +565,11 @@ class QuerySet:
+                     case_statement = Cast(case_statement, output_field=field)
+                 update_kwargs[field.attname] = case_statement
+             updates.append(([obj.pk for obj in batch_objs], update_kwargs))
++        rows_updated = 0
+         with transaction.atomic(using=self.db, savepoint=False):
+             for pks, update_kwargs in updates:
+-                self.filter(pk__in=pks).update(**update_kwargs)
++                rows_updated += self.filter(pk__in=pks).update(**update_kwargs)
++        return rows_updated
+     bulk_update.alters_data = True
+ 
+     def get_or_create(self, defaults=None, **kwargs):
+diff --git a/test_bulk_update.py b/test_bulk_update.py
+new file mode 100644
+index 0000000000..22077f4fde
+--- /dev/null
++++ b/test_bulk_update.py
+@@ -0,0 +1,74 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++    )
++    django.setup()
++
++from django.db import models
++
++# Define a simple test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Test bulk_update
++print("Testing bulk_update return value...")
++
++# Create some test objects
++objs = [
++    TestModel(name=f"obj{i}", value=i)
++    for i in range(5)
++]
++TestModel.objects.bulk_create(objs)
++
++# Fetch them back to get their PKs
++objs = list(TestModel.objects.all())
++print(f"Created {len(objs)} objects")
++
++# Modify the objects
++for obj in objs:
++    obj.value = obj.value * 2
++
++# Test bulk_update
++result = TestModel.objects.bulk_update(objs, ['value'])
++print(f"bulk_update() returned: {result}")
++print(f"Type: {type(result)}")
++
++# Verify the update worked
++updated_objs = list(TestModel.objects.all())
++print(f"Updated values: {[obj.value for obj in updated_objs]}")
++
++# Test with empty list
++result_empty = TestModel.objects.bulk_update([], ['value'])
++print(f"bulk_update([]) returned: {result_empty}")
++
++# Test update() for comparison
++result_update = TestModel.objects.filter(value__gte=0).update(value=100)
++print(f"update() returned: {result_update}")
++print(f"Type: {type(result_update)}")
++
++print("\nTest completed!")
+diff --git a/test_bulk_update_comprehensive.py b/test_bulk_update_comprehensive.py
+new file mode 100644
+index 0000000000..7f9061da64
+--- /dev/null
++++ b/test_bulk_update_comprehensive.py
+@@ -0,0 +1,119 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++    )
++    django.setup()
++
++from django.db import models
++
++# Define a simple test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++print("=" * 60)
++print("Test 1: Basic bulk_update with 5 objects")
++print("=" * 60)
++objs = [TestModel(name=f"obj{i}", value=i) for i in range(5)]
++TestModel.objects.bulk_create(objs)
++objs = list(TestModel.objects.all())
++for obj in objs:
++    obj.value = obj.value * 2
++result = TestModel.objects.bulk_update(objs, ['value'])
++print(f"Result: {result}")
++assert result == 5, f"Expected 5, got {result}"
++print("‚ú? PASSED\n")
++
++print("=" * 60)
++print("Test 2: Empty list")
++print("=" * 60)
++result = TestModel.objects.bulk_update([], ['value'])
++print(f"Result: {result}")
++assert result == 0, f"Expected 0, got {result}"
++print("‚ú? PASSED\n")
++
++print("=" * 60)
++print("Test 3: Multiple batches (20 objects with batch_size=3)")
++print("=" * 60)
++TestModel.objects.all().delete()
++objs = [TestModel(name=f"obj{i}", value=i) for i in range(20)]
++TestModel.objects.bulk_create(objs)
++objs = list(TestModel.objects.all())
++for obj in objs:
++    obj.value = obj.value * 3
++result = TestModel.objects.bulk_update(objs, ['value'], batch_size=3)
++print(f"Result: {result}")
++assert result == 20, f"Expected 20, got {result}"
++print("‚ú? PASSED\n")
++
++print("=" * 60)
++print("Test 4: Update multiple fields")
++print("=" * 60)
++TestModel.objects.all().delete()
++objs = [TestModel(name=f"obj{i}", value=i) for i in range(10)]
++TestModel.objects.bulk_create(objs)
++objs = list(TestModel.objects.all())
++for i, obj in enumerate(objs):
++    obj.name = f"updated{i}"
++    obj.value = i * 10
++result = TestModel.objects.bulk_update(objs, ['name', 'value'])
++print(f"Result: {result}")
++assert result == 10, f"Expected 10, got {result}"
++# Verify the updates
++updated = list(TestModel.objects.all().order_by('id'))
++assert all(obj.name.startswith('updated') for obj in updated), "Names not updated"
++assert updated[5].value == 50, "Values not updated correctly"
++print("‚ú? PASSED\n")
++
++print("=" * 60)
++print("Test 5: Single object")
++print("=" * 60)
++TestModel.objects.all().delete()
++obj = TestModel.objects.create(name="single", value=42)
++obj.value = 100
++result = TestModel.objects.bulk_update([obj], ['value'])
++print(f"Result: {result}")
++assert result == 1, f"Expected 1, got {result}"
++print("‚ú? PASSED\n")
++
++print("=" * 60)
++print("Test 6: Large batch (100 objects)")
++print("=" * 60)
++TestModel.objects.all().delete()
++objs = [TestModel(name=f"obj{i}", value=i) for i in range(100)]
++TestModel.objects.bulk_create(objs)
++objs = list(TestModel.objects.all())
++for obj in objs:
++    obj.value = obj.value + 1000
++result = TestModel.objects.bulk_update(objs, ['value'])
++print(f"Result: {result}")
++assert result == 100, f"Expected 100, got {result}"
++print("‚ú? PASSED\n")
++
++print("=" * 60)
++print("All tests passed! ‚úì")
++print("=" * 60)
+diff --git a/test_pr_requirement.py b/test_pr_requirement.py
+new file mode 100644
+index 0000000000..009a1a4b5d
+--- /dev/null
++++ b/test_pr_requirement.py
+@@ -0,0 +1,109 @@
++"""
++Test to verify the PR requirement:
++"Currently, bulk_update() returns None, unlike update(), which returns the number of rows matched.
++It looks like it would be easy to add the same functionality to bulk_update() since bulk_update() 
++simply calls update() repeatedly: the return values could simply be added and returned."
++"""
++import os
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++    )
++    django.setup()
++
++from django.db import models
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++print("=" * 70)
++print("PR Requirement Verification Test")
++print("=" * 70)
++print()
++print("Requirement: bulk_update() should return the number of rows matched,")
++print("             just like update() does.")
++print()
++
++# Create test data
++objs = [TestModel(name=f"obj{i}", value=i) for i in range(10)]
++TestModel.objects.bulk_create(objs)
++
++print("Test 1: Verify update() returns number of rows matched")
++print("-" * 70)
++update_result = TestModel.objects.filter(value__gte=0).update(value=100)
++print(f"update() returned: {update_result}")
++print(f"Type: {type(update_result)}")
++assert isinstance(update_result, int), "update() should return an int"
++assert update_result == 10, f"Expected 10, got {update_result}"
++print("‚ú? PASSED: update() returns int representing rows matched")
++print()
++
++print("Test 2: Verify bulk_update() returns number of rows matched")
++print("-" * 70)
++objs = list(TestModel.objects.all())
++for obj in objs:
++    obj.value = obj.value + 1
++bulk_update_result = TestModel.objects.bulk_update(objs, ['value'])
++print(f"bulk_update() returned: {bulk_update_result}")
++print(f"Type: {type(bulk_update_result)}")
++assert isinstance(bulk_update_result, int), "bulk_update() should return an int"
++assert bulk_update_result == 10, f"Expected 10, got {bulk_update_result}"
++print("‚ú? PASSED: bulk_update() returns int representing rows matched")
++print()
++
++print("Test 3: Verify consistency between update() and bulk_update()")
++print("-" * 70)
++print(f"update() return type: {type(update_result)}")
++print(f"bulk_update() return type: {type(bulk_update_result)}")
++assert type(update_result) == type(bulk_update_result), \
++    "update() and bulk_update() should return the same type"
++print("‚ú? PASSED: Both methods return the same type (int)")
++print()
++
++print("Test 4: Verify bulk_update() with multiple batches accumulates correctly")
++print("-" * 70)
++TestModel.objects.all().delete()
++objs = [TestModel(name=f"obj{i}", value=i) for i in range(25)]
++TestModel.objects.bulk_create(objs)
++objs = list(TestModel.objects.all())
++for obj in objs:
++    obj.value = obj.value * 2
++# Use small batch size to force multiple batches
++result = TestModel.objects.bulk_update(objs, ['value'], batch_size=5)
++print(f"bulk_update() with batch_size=5 on 25 objects returned: {result}")
++assert result == 25, f"Expected 25, got {result}"
++print("‚ú? PASSED: bulk_update() correctly accumulates across multiple batches")
++print()
++
++print("=" * 70)
++print("All PR requirements verified successfully! ‚úì")
++print("=" * 70)
++print()
++print("Summary:")
++print("  - bulk_update() now returns the number of rows matched (int)")
++print("  - This is consistent with update() behavior")
++print("  - Return values are correctly accumulated across multiple batches")
++print("  - Empty list returns 0 instead of None")

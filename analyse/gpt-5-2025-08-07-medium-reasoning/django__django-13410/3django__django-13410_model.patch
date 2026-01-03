@@ -1,0 +1,102 @@
+diff --git a/child1_result.txt b/child1_result.txt
+new file mode 100644
+index 0000000000..c1f22fbc23
+--- /dev/null
++++ b/child1_result.txt
+@@ -0,0 +1 @@
++False
+\ No newline at end of file
+diff --git a/child2_result.txt b/child2_result.txt
+new file mode 100644
+index 0000000000..4791ed5559
+--- /dev/null
++++ b/child2_result.txt
+@@ -0,0 +1 @@
++True
+\ No newline at end of file
+diff --git a/django/core/files/locks.py b/django/core/files/locks.py
+index c46b00b905..4938347ea7 100644
+--- a/django/core/files/locks.py
++++ b/django/core/files/locks.py
+@@ -107,9 +107,15 @@ else:
+             return True
+     else:
+         def lock(f, flags):
+-            ret = fcntl.flock(_fd(f), flags)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), flags)
++                return True
++            except OSError:
++                return False
+ 
+         def unlock(f):
+-            ret = fcntl.flock(_fd(f), fcntl.LOCK_UN)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), fcntl.LOCK_UN)
++                return True
++            except OSError:
++                return False
+diff --git a/lockfile.tmp b/lockfile.tmp
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/pr_repro.py b/pr_repro.py
+new file mode 100644
+index 0000000000..2e02e495de
+--- /dev/null
++++ b/pr_repro.py
+@@ -0,0 +1,53 @@
++import os
++import sys
++import subprocess
++
++from django.core.files import locks
++
++FILE_PATH = 'lockfile.tmp'
++
++def child_try_lock(path):
++    with open(path, 'a+b') as f:
++        ok = locks.lock(f, locks.LOCK_EX | locks.LOCK_NB)
++        print(f"CHILD_RESULT: {ok}")
++        # Keep lock briefly if acquired to allow observation; then unlock.
++        if ok:
++            locks.unlock(f)
++
++if __name__ == "__main__":
++    if len(sys.argv) > 1 and sys.argv[1] == "child":
++        child_try_lock(FILE_PATH)
++        sys.exit(0)
++
++    # Parent flow
++    # Ensure file exists
++    open(FILE_PATH, 'a').close()
++
++    with open(FILE_PATH, 'a+b') as f:
++        got = locks.lock(f, locks.LOCK_EX | locks.LOCK_NB)
++        print(f"PARENT_ACQUIRED: {got}")
++        if not got:
++            print("ERROR: Parent failed to acquire lock non-blocking; test inconclusive.")
++            sys.exit(1)
++
++        # Spawn child to attempt lock while parent holds it
++        out1 = subprocess.check_output([sys.executable, __file__, "child"], text=True)
++        print(out1.strip())
++
++        # Release lock
++        rel = locks.unlock(f)
++        print(f"PARENT_UNLOCKED: {rel}")
++
++    # Spawn child again after unlock
++    out2 = subprocess.check_output([sys.executable, __file__, "child"], text=True)
++    print(out2.strip())
++
++    # Simple evaluation
++    c1 = "CHILD_RESULT: False" in out1
++    c2 = "CHILD_RESULT: True" in out2
++    if c1 and c2:
++        print("PASS")
++        sys.exit(0)
++    else:
++        print("FAIL")
++        sys.exit(2)

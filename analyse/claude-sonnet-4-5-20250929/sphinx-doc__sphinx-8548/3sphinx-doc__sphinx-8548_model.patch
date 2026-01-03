@@ -1,0 +1,101 @@
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index ddfd2b365..9d92cc799 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -679,6 +679,28 @@ class Documenter:
+ 
+             return False
+ 
++
++        def is_attr_documented(namespace: str, membername: str) -> bool:
++            """Check if an attribute is documented in current class or base classes."""
++            # First check the current namespace
++            if (namespace, membername) in attr_docs:
++                return True
++            
++            # If this is a class, check base classes
++            if inspect.isclass(self.object):
++                for cls in self.object.__mro__[1:]:  # Skip the first one (self.object)
++                    # Get the qualified name for the base class
++                    if hasattr(cls, '__module__') and hasattr(cls, '__qualname__'):
++                        base_namespace = cls.__qualname__
++                    elif hasattr(cls, '__name__'):
++                        base_namespace = cls.__name__
++                    else:
++                        continue
++                    
++                    if (base_namespace, membername) in attr_docs:
++                        return True
++            
++            return False
+         ret = []
+ 
+         # search for members in source code too
+@@ -746,7 +768,7 @@ class Documenter:
+                         keep = has_doc or self.options.undoc_members
+                 else:
+                     keep = False
+-            elif (namespace, membername) in attr_docs:
++            elif is_attr_documented(namespace, membername):
+                 if want_all and isprivate:
+                     if self.options.private_members is None:
+                         keep = False
+diff --git a/tests/roots/test-ext-autodoc/target/inherited_attrs.py b/tests/roots/test-ext-autodoc/target/inherited_attrs.py
+new file mode 100644
+index 000000000..e3a4357ce
+--- /dev/null
++++ b/tests/roots/test-ext-autodoc/target/inherited_attrs.py
+@@ -0,0 +1,23 @@
++"""Test module for inherited attributes."""
++
++
++class Base:
++    """Base class with documented attributes."""
++    
++    #: This is a base class attribute
++    base_attr = "base_value"
++    
++    def base_method(self):
++        """A base method."""
++        pass
++
++
++class Derived(Base):
++    """Derived class that inherits from Base."""
++    
++    #: This is a derived class attribute
++    derived_attr = "derived_value"
++    
++    def derived_method(self):
++        """A derived method."""
++        pass
+diff --git a/tests/test_ext_autodoc_autoclass.py b/tests/test_ext_autodoc_autoclass.py
+index c36305de3..43bc503f2 100644
+--- a/tests/test_ext_autodoc_autoclass.py
++++ b/tests/test_ext_autodoc_autoclass.py
+@@ -118,3 +118,25 @@ def test_show_inheritance_for_subclass_of_generic_type(app):
+         '   A subclass of List[Union[int, float]]',
+         '',
+     ]
++
++
++@pytest.mark.sphinx('html', testroot='ext-autodoc')
++def test_inherited_attributes(app):
++    """Test that inherited attributes are documented when using inherited-members."""
++    options = {"members": None, "inherited-members": True}
++    actual = do_autodoc(app, 'class', 'target.inherited_attrs.Derived', options)
++    
++    # Convert to list for easier inspection
++    result = list(actual)
++    
++    # Check that base_attr is included
++    has_base_attr = any('base_attr' in line for line in result)
++    has_derived_attr = any('derived_attr' in line for line in result)
++    
++    assert has_base_attr, "base_attr should be documented in Derived class with inherited-members"
++    assert has_derived_attr, "derived_attr should be documented in Derived class"
++    
++    # Also check that the attribute documentation is present
++    result_str = '\n'.join(result)
++    assert 'This is a base class attribute' in result_str or 'base_attr' in result_str
++    assert 'This is a derived class attribute' in result_str or 'derived_attr' in result_str

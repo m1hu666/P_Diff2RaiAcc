@@ -1,0 +1,42 @@
+diff --git a/django/db/backends/mysql/schema.py b/django/db/backends/mysql/schema.py
+index 562b209eef..1007157c70 100644
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -167,6 +167,37 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+ 
+     def _alter_column_type_sql(self, model, old_field, new_field, new_type):
+         new_type = self._set_field_new_type_null_status(old_field, new_type)
++        # Propagate collation to related ForeignKey columns when altering types.
++        try:
++            is_fk = (
++                getattr(old_field, "get_internal_type", lambda: None)() == "ForeignKey"
++                or getattr(new_field, "get_internal_type", lambda: None)() == "ForeignKey"
++            )
++        except Exception:
++            is_fk = False
++        if is_fk and getattr(new_field, "remote_field", None):
++            # Respect an explicitly set collation on the FK field; only
++            # propagate target collation when FK field doesn't specify one.
++            fk_collation = new_field.db_parameters(connection=self.connection).get("collation")
++            if not fk_collation:
++                to_field_name = new_field.remote_field.field_name
++                to_model = new_field.remote_field.model
++                if to_field_name and to_model is not None:
++                    to_field = to_model._meta.get_field(to_field_name)
++                    to_collation = to_field.db_parameters(connection=self.connection).get("collation")
++                    if to_collation:
++                        return (
++                            (
++                                self.sql_alter_column_collate
++                                % {
++                                    "column": self.quote_name(new_field.column),
++                                    "type": new_type,
++                                    "collation": " " + self._collate_sql(to_collation),
++                                },
++                                [],
++                            ),
++                            [],
++                        )
+         return super()._alter_column_type_sql(model, old_field, new_field, new_type)
+ 
+     def _rename_field_sql(self, table, old_field, new_field, new_type):

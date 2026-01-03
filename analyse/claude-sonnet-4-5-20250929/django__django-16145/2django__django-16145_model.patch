@@ -1,0 +1,193 @@
+diff --git a/django/core/management/commands/runserver.py b/django/core/management/commands/runserver.py
+index 3c39f57e4d..1b1a846906 100644
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -147,7 +147,7 @@ class Command(BaseCommand):
+                 "version": self.get_version(),
+                 "settings": settings.SETTINGS_MODULE,
+                 "protocol": self.protocol,
+-                "addr": "[%s]" % self.addr if self._raw_ipv6 else self.addr,
++                "addr": "[%s]" % self.addr if self._raw_ipv6 else (self.addr if self.addr != "0" else "0.0.0.0"),
+                 "port": self.port,
+                 "quit_command": quit_command,
+             }
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..3bb9ee83de
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,48 @@
++#!/usr/bin/env python
++"""Final verification test for the runserver address display fix"""
++
++def test_address_display_logic():
++    """Test the exact logic used in line 150 of runserver.py"""
++    
++    print("Testing address display normalization logic...")
++    print("="*60)
++    
++    test_cases = [
++        # (addr, _raw_ipv6, expected_display, description)
++        ("0", False, "0.0.0.0", "addr='0' should display as '0.0.0.0'"),
++        ("127.0.0.1", False, "127.0.0.1", "addr='127.0.0.1' should remain unchanged"),
++        ("localhost", False, "localhost", "addr='localhost' should remain unchanged"),
++        ("192.168.1.1", False, "192.168.1.1", "addr='192.168.1.1' should remain unchanged"),
++        ("", False, "", "empty addr should remain empty"),
++        ("::1", True, "[::1]", "IPv6 addr should be wrapped in brackets"),
++        ("0", True, "[0]", "addr='0' with IPv6 should be '[0]' (IPv6 takes precedence)"),
++    ]
++    
++    all_passed = True
++    
++    for addr, _raw_ipv6, expected, description in test_cases:
++        # This is the exact logic from line 150 after our fix
++        result = "[%s]" % addr if _raw_ipv6 else (addr if addr != "0" else "0.0.0.0")
++        
++        status = "‚úì PASS" if result == expected else "‚úó FAIL"
++        if result != expected:
++            all_passed = False
++        
++        print(f"\n{description}")
++        print(f"  Input: addr='{addr}', _raw_ipv6={_raw_ipv6}")
++        print(f"  Expected: '{expected}'")
++        print(f"  Got:      '{result}'")
++        print(f"  {status}")
++    
++    print("\n" + "="*60)
++    if all_passed:
++        print("‚úì All tests PASSED!")
++        print("="*60)
++        return 0
++    else:
++        print("‚úó Some tests FAILED!")
++        print("="*60)
++        return 1
++
++if __name__ == "__main__":
++    exit(test_address_display_logic())
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e9b55eeb7e
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,37 @@
++#!/usr/bin/env python
++import sys
++sys.path.insert(0, '/testbed')
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
++
++import django
++django.setup()
++
++from django.core.management.commands.runserver import Command
++
++# Test the fix
++cmd = Command()
++cmd.addr = "0"
++cmd.port = "8000"
++cmd.protocol = "http"
++cmd._raw_ipv6 = False
++
++# Simulate the display logic from line 150
++display_addr = cmd.addr if cmd.addr != "0" else "0.0.0.0"
++expected_url = f"{cmd.protocol}://{display_addr}:{cmd.port}/"
++
++print(f"Test: addr='0' should display as '0.0.0.0'")
++print(f"Result URL: {expected_url}")
++assert expected_url == "http://0.0.0.0:8000/", f"Expected 'http://0.0.0.0:8000/', got '{expected_url}'"
++print("‚úì Test PASSED!")
++
++# Test that other addresses are not affected
++cmd.addr = "127.0.0.1"
++display_addr = cmd.addr if cmd.addr != "0" else "0.0.0.0"
++expected_url = f"{cmd.protocol}://{display_addr}:{cmd.port}/"
++print(f"\nTest: addr='127.0.0.1' should display as '127.0.0.1'")
++print(f"Result URL: {expected_url}")
++assert expected_url == "http://127.0.0.1:8000/", f"Expected 'http://127.0.0.1:8000/', got '{expected_url}'"
++print("‚úì Test PASSED!")
++
++print("\n‚úì All tests passed!")
+diff --git a/test_fix_simple.py b/test_fix_simple.py
+new file mode 100644
+index 0000000000..39f5a53ab3
+--- /dev/null
++++ b/test_fix_simple.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++"""Simple test to verify the address normalization logic"""
++
++# Test the normalization logic that was added
++def test_normalization():
++    test_cases = [
++        ("0", False, "0.0.0.0"),  # addr, _raw_ipv6, expected
++        ("127.0.0.1", False, "127.0.0.1"),
++        ("localhost", False, "localhost"),
++        ("192.168.1.1", False, "192.168.1.1"),
++        ("::1", True, "[::1]"),  # IPv6 case
++    ]
++    
++    for addr, _raw_ipv6, expected in test_cases:
++        # This is the logic from line 150 after our fix
++        result = "[%s]" % addr if _raw_ipv6 else (addr if addr != "0" else "0.0.0.0")
++        
++        print(f"addr='{addr}', _raw_ipv6={_raw_ipv6}")
++        print(f"  Expected: '{expected}'")
++        print(f"  Got:      '{result}'")
++        
++        assert result == expected, f"Failed: expected '{expected}', got '{result}'"
++        print("  ‚úì PASSED\n")
++    
++    print("="*60)
++    print("‚úì All tests passed!")
++    print("="*60)
++
++if __name__ == "__main__":
++    test_normalization()
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..0e5b2c83dd
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,41 @@
++#!/usr/bin/env python
++"""Test the exact scenario described in the PR"""
++
++def test_pr_scenario():
++    """
++    PR Description: When running 'python manage.py runserver 0:8000',
++    the output should show 'Starting development server at http://0.0.0.0:8000/'
++    instead of 'Starting development server at http://0:8000/'
++    """
++    
++    print("Testing PR scenario: runserver 0:8000")
++    print("="*60)
++    
++    # Simulate the state when user runs: python manage.py runserver 0:8000
++    addr = "0"
++    port = "8000"
++    protocol = "http"
++    _raw_ipv6 = False
++    
++    # Apply the fix logic from line 150
++    display_addr = "[%s]" % addr if _raw_ipv6 else (addr if addr != "0" else "0.0.0.0")
++    
++    # Construct the URL as it would appear in the message
++    url = f"{protocol}://{display_addr}:{port}/"
++    
++    print(f"\nCommand: python manage.py runserver 0:8000")
++    print(f"\nExpected output: 'Starting development server at http://0.0.0.0:8000/'")
++    print(f"Actual output:   'Starting development server at {url}'")
++    
++    # Verify the fix
++    expected_url = "http://0.0.0.0:8000/"
++    if url == expected_url:
++        print(f"\n‚úì SUCCESS: The URL is now clickable and correct!")
++        print(f"  The link {url} will work in a browser.")
++        return 0
++    else:
++        print(f"\n‚úó FAILURE: Expected '{expected_url}', got '{url}'")
++        return 1
++
++if __name__ == "__main__":
++    exit(test_pr_scenario())

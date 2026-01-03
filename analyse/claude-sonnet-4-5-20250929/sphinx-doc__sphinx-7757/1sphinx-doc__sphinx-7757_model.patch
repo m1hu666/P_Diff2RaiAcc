@@ -1,0 +1,550 @@
+diff --git a/apply_fix.py b/apply_fix.py
+new file mode 100644
+index 000000000..0e7dbd028
+--- /dev/null
++++ b/apply_fix.py
+@@ -0,0 +1,55 @@
++import re
++
++# Read the file
++with open('/testbed/sphinx/util/inspect.py', 'r') as f:
++    content = f.read()
++
++# Old code to replace
++old_code = '''    if hasattr(args, "posonlyargs"):
++        for arg in args.posonlyargs:  # type: ignore
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    annotation=annotation))
++
++    for i, arg in enumerate(args.args):
++        if len(args.args) - i <= len(args.defaults):
++            default = ast_unparse(args.defaults[-len(args.args) + i])
++        else:
++            default = Parameter.empty
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
++                                default=default, annotation=annotation))'''
++
++# New code
++new_code = '''    if hasattr(args, "posonlyargs"):
++        posonlyargs = len(args.posonlyargs)  # type: ignore
++        positionals = posonlyargs + len(args.args)
++        for i, arg in enumerate(args.posonlyargs):  # type: ignore
++            if positionals - i <= len(args.defaults):
++                default = ast_unparse(args.defaults[-positionals + i])
++            else:
++                default = Parameter.empty
++
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    default=default, annotation=annotation))
++
++    for i, arg in enumerate(args.args):
++        if len(args.args) - i <= len(args.defaults):
++            default = ast_unparse(args.defaults[-len(args.args) + i])
++        else:
++            default = Parameter.empty
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
++                                default=default, annotation=annotation))'''
++
++# Replace
++if old_code in content:
++    content = content.replace(old_code, new_code)
++    with open('/testbed/sphinx/util/inspect.py', 'w') as f:
++        f.write(content)
++    print("Fix applied successfully!")
++else:
++    print("ERROR: Could not find the old code to replace")
+diff --git a/fix.py b/fix.py
+new file mode 100644
+index 000000000..e0a15c471
+--- /dev/null
++++ b/fix.py
+@@ -0,0 +1,47 @@
++# This script will show the fix needed
++
++old_code = '''    if hasattr(args, "posonlyargs"):
++        for arg in args.posonlyargs:  # type: ignore
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    annotation=annotation))
++
++    for i, arg in enumerate(args.args):
++        if len(args.args) - i <= len(args.defaults):
++            default = ast_unparse(args.defaults[-len(args.args) + i])
++        else:
++            default = Parameter.empty
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
++                                default=default, annotation=annotation))'''
++
++new_code = '''    if hasattr(args, "posonlyargs"):
++        posonlyargs = len(args.posonlyargs)  # type: ignore
++        positionals = posonlyargs + len(args.args)
++        for i, arg in enumerate(args.posonlyargs):  # type: ignore
++            if positionals - i <= len(args.defaults):
++                default = ast_unparse(args.defaults[-positionals + i])
++            else:
++                default = Parameter.empty
++
++            annotation = ast_unparse(arg.annotation) or Parameter.empty
++            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                    default=default, annotation=annotation))
++    else:
++        posonlyargs = 0
++
++    for i, arg in enumerate(args.args):
++        if len(args.args) - i <= len(args.defaults):
++            default = ast_unparse(args.defaults[-len(args.args) + i])
++        else:
++            default = Parameter.empty
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
++                                default=default, annotation=annotation))'''
++
++print("OLD CODE:")
++print(old_code)
++print("\n\nNEW CODE:")
++print(new_code)
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index 15f0d66e2..7e1b7d7b5 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -521,10 +521,17 @@ def signature_from_str(signature: str) -> inspect.Signature:
+     params = []
+ 
+     if hasattr(args, "posonlyargs"):
+-        for arg in args.posonlyargs:  # type: ignore
++        posonlyargs = len(args.posonlyargs)  # type: ignore
++        positionals = posonlyargs + len(args.args)
++        for i, arg in enumerate(args.posonlyargs):  # type: ignore
++            if positionals - i <= len(args.defaults):
++                default = ast_unparse(args.defaults[-positionals + i])
++            else:
++                default = Parameter.empty
++
+             annotation = ast_unparse(arg.annotation) or Parameter.empty
+             params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
+-                                    annotation=annotation))
++                                    default=default, annotation=annotation))
+ 
+     for i, arg in enumerate(args.args):
+         if len(args.args) - i <= len(args.defaults):
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..b870d9887
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,136 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.util.inspect import signature_from_str
++from inspect import Parameter
++
++def test_case(description, signature_str, expected):
++    """Test a signature and verify the results."""
++    print(f"\nTest: {description}")
++    print(f"  Input: {signature_str}")
++    
++    sig = signature_from_str(signature_str)
++    
++    success = True
++    for param_name, (expected_kind, expected_default) in expected.items():
++        param = sig.parameters[param_name]
++        
++        # Check kind
++        if param.kind != expected_kind:
++            print(f"  ‚ú? FAIL: {param_name} kind is {param.kind}, expected {expected_kind}")
++            success = False
++        
++        # Check default
++        if expected_default == Parameter.empty:
++            if param.default != Parameter.empty:
++                print(f"  ‚ú? FAIL: {param_name} default is {param.default}, expected empty")
++                success = False
++        else:
++            if str(param.default) != str(expected_default):
++                print(f"  ‚ú? FAIL: {param_name} default is {param.default}, expected {expected_default}")
++                success = False
++    
++    if success:
++        print(f"  ‚ú? PASS")
++    
++    return success
++
++# Run all test cases
++all_passed = True
++
++# Original bug report case
++all_passed &= test_case(
++    "Original bug: foo(a, b=0, /, c=1)",
++    "(a, b=0, /, c=1)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '0'),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }
++)
++
++# All positional-only with defaults
++all_passed &= test_case(
++    "All positional-only with defaults: foo(a=1, b=2, /)",
++    "(a=1, b=2, /)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, '1'),
++        'b': (Parameter.POSITIONAL_ONLY, '2'),
++    }
++)
++
++# No defaults in positional-only
++all_passed &= test_case(
++    "No defaults in positional-only: foo(a, b, /, c=1)",
++    "(a, b, /, c=1)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }
++)
++
++# Mixed defaults (valid syntax)
++all_passed &= test_case(
++    "Mixed defaults: foo(a, b, c=2, /, d=3, e=4)",
++    "(a, b, c=2, /, d=3, e=4)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'c': (Parameter.POSITIONAL_ONLY, '2'),
++        'd': (Parameter.POSITIONAL_OR_KEYWORD, '3'),
++        'e': (Parameter.POSITIONAL_OR_KEYWORD, '4'),
++    }
++)
++
++# With keyword-only
++all_passed &= test_case(
++    "With keyword-only: foo(a, b=0, /, c=1, *, d=2)",
++    "(a, b=0, /, c=1, *, d=2)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '0'),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++        'd': (Parameter.KEYWORD_ONLY, '2'),
++    }
++)
++
++# Backward compatibility - no positional-only
++all_passed &= test_case(
++    "Backward compatibility: foo(a, b=0)",
++    "(a, b=0)",
++    {
++        'a': (Parameter.POSITIONAL_OR_KEYWORD, Parameter.empty),
++        'b': (Parameter.POSITIONAL_OR_KEYWORD, '0'),
++    }
++)
++
++# Only one default in positional-only
++all_passed &= test_case(
++    "One default in positional-only: foo(a, b, c=3, /)",
++    "(a, b, c=3, /)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'c': (Parameter.POSITIONAL_ONLY, '3'),
++    }
++)
++
++# Multiple defaults spanning both positional-only and regular
++all_passed &= test_case(
++    "Defaults spanning both: foo(a, b=1, c=2, /, d=3)",
++    "(a, b=1, c=2, /, d=3)",
++    {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '1'),
++        'c': (Parameter.POSITIONAL_ONLY, '2'),
++        'd': (Parameter.POSITIONAL_OR_KEYWORD, '3'),
++    }
++)
++
++print("\n" + "="*60)
++if all_passed:
++    print("‚úì‚úì‚ú? ALL TESTS PASSED ‚úì‚úì‚úì")
++else:
++    print("‚úó‚úó‚ú? SOME TESTS FAILED ‚úó‚úó‚úó")
++print("="*60)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..2722b231f
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,70 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.util.inspect import signature_from_str
++
++# Test case 1: Original issue - foo(a, b=0, /, c=1)
++print("Test 1: foo(a, b=0, /, c=1)")
++sig = signature_from_str('(a, b=0, /, c=1)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 2: All positional-only with defaults - foo(a=1, b=2, /)
++print("Test 2: foo(a=1, b=2, /)")
++sig = signature_from_str('(a=1, b=2, /)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 3: No defaults in positional-only - foo(a, b, /, c=1)
++print("Test 3: foo(a, b, /, c=1)")
++sig = signature_from_str('(a, b, /, c=1)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 4: Only positional-only, no defaults - foo(a, b, /)
++print("Test 4: foo(a, b, /)")
++sig = signature_from_str('(a, b, /)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 5: Mixed with keyword-only - foo(a, b=0, /, c=1, *, d=2)
++print("Test 5: foo(a, b=0, /, c=1, *, d=2)")
++sig = signature_from_str('(a, b=0, /, c=1, *, d=2)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 6: No positional-only args (backward compatibility) - foo(a, b=0)
++print("Test 6: foo(a, b=0)")
++sig = signature_from_str('(a, b=0)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 7: Multiple defaults in positional-only - foo(a, b=1, c=2, /)
++print("Test 7: foo(a, b=1, c=2, /)")
++sig = signature_from_str('(a, b=1, c=2, /)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}")
++print()
++
++# Test case 8: With annotations - foo(a: int, b: int = 0, /, c: int = 1)
++print("Test 8: foo(a: int, b: int = 0, /, c: int = 1)")
++sig = signature_from_str('(a: int, b: int = 0, /, c: int = 1)')
++print(f"  Signature: {sig}")
++for name, param in sig.parameters.items():
++    print(f"    {name}: kind={param.kind}, default={param.default}, annotation={param.annotation}")
++print()
++
++print("All tests completed!")
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 000000000..e71853193
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,59 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.application import Sphinx
++from sphinx.util.docutils import docutils_namespace
++from docutils import nodes
++from sphinx.addnodes import desc_signature, desc_parameterlist, desc_parameter, desc_sig_name, desc_sig_operator
++import tempfile
++import os
++
++# Create a temporary directory for the test
++with tempfile.TemporaryDirectory() as tmpdir:
++    srcdir = os.path.join(tmpdir, 'source')
++    outdir = os.path.join(tmpdir, 'build')
++    os.makedirs(srcdir)
++    
++    # Create a simple conf.py
++    with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++        f.write("project = 'Test'\n")
++    
++    # Create an index.rst with the test case from the bug report
++    with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++        f.write("""
++Test
++====
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   Test function with positional-only arguments with defaults.
++""")
++    
++    # Build the documentation
++    with docutils_namespace():
++        app = Sphinx(srcdir, srcdir, outdir, os.path.join(outdir, '.doctrees'), 'html', 
++                     warning=open(os.devnull, 'w'), freshenv=True)
++        app.build()
++    
++    # Read the generated HTML
++    with open(os.path.join(outdir, 'index.html'), 'r') as f:
++        html = f.read()
++    
++    # Check if the default values are present in the HTML
++    if 'b=0' in html:
++        print("‚ú? SUCCESS: Default value 'b=0' found in generated HTML")
++    else:
++        print("‚ú? FAILURE: Default value 'b=0' NOT found in generated HTML")
++        print("\nGenerated HTML snippet:")
++        # Find and print the relevant part
++        start = html.find('<dt')
++        if start != -1:
++            end = html.find('</dt>', start) + 5
++            print(html[start:end])
++    
++    if 'c=1' in html:
++        print("‚ú? SUCCESS: Default value 'c=1' found in generated HTML")
++    else:
++        print("‚ú? FAILURE: Default value 'c=1' NOT found in generated HTML")
++
++print("\nTest completed!")
+diff --git a/test_final_verification2.py b/test_final_verification2.py
+new file mode 100644
+index 000000000..9a760ce70
+--- /dev/null
++++ b/test_final_verification2.py
+@@ -0,0 +1,66 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.application import Sphinx
++from sphinx.util.docutils import docutils_namespace
++import tempfile
++import os
++import re
++
++# Create a temporary directory for the test
++with tempfile.TemporaryDirectory() as tmpdir:
++    srcdir = os.path.join(tmpdir, 'source')
++    outdir = os.path.join(tmpdir, 'build')
++    os.makedirs(srcdir)
++    
++    # Create a simple conf.py
++    with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++        f.write("project = 'Test'\n")
++    
++    # Create an index.rst with the test case from the bug report
++    with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++        f.write("""
++Test
++====
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   Test function with positional-only arguments with defaults.
++""")
++    
++    # Build the documentation
++    with docutils_namespace():
++        app = Sphinx(srcdir, srcdir, outdir, os.path.join(outdir, '.doctrees'), 'html', 
++                     warning=open(os.devnull, 'w'), freshenv=True)
++        app.build()
++    
++    # Read the generated HTML
++    with open(os.path.join(outdir, 'index.html'), 'r') as f:
++        html = f.read()
++    
++    # Extract the signature part
++    sig_match = re.search(r'<code class="sig-name descname">foo</code>(.*?)</dt>', html, re.DOTALL)
++    if sig_match:
++        signature = sig_match.group(1)
++        print("Generated signature HTML:")
++        print(signature)
++        print()
++        
++        # Check for the presence of default values
++        has_b_default = 'default_value">0<' in signature
++        has_c_default = 'default_value">1<' in signature
++        has_posonly_sep = '<span class="o">/</span>' in signature
++        
++        print("Checks:")
++        print(f"  ‚ú? Has positional-only separator (/): {has_posonly_sep}")
++        print(f"  ‚ú? Has default value for 'b' (0): {has_b_default}")
++        print(f"  ‚ú? Has default value for 'c' (1): {has_c_default}")
++        
++        if has_b_default and has_c_default and has_posonly_sep:
++            print("\n‚úì‚úì‚ú? SUCCESS: All default values are correctly displayed! ‚úì‚úì‚úì")
++        else:
++            print("\n‚úó‚úó‚ú? FAILURE: Some default values are missing! ‚úó‚úó‚úó")
++    else:
++        print("Could not find signature in HTML")
++
++print("\nTest completed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..92faf4f05
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,15 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.util.inspect import signature_from_str
++
++# Test the signature parsing
++sig = signature_from_str('(a, b=0, /, c=1)')
++print("Signature:", sig)
++for name, param in sig.parameters.items():
++    print(f"  {name}: kind={param.kind}, default={param.default}")
++
++# Expected:
++# a: kind=POSITIONAL_ONLY, default=<empty>
++# b: kind=POSITIONAL_ONLY, default=0
++# c: kind=POSITIONAL_OR_KEYWORD, default=1
+diff --git a/test_sphinx_render.py b/test_sphinx_render.py
+new file mode 100644
+index 000000000..6b79f43e9
+--- /dev/null
++++ b/test_sphinx_render.py
+@@ -0,0 +1,30 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.domains.python import _parse_arglist
++
++# Test the original issue
++print("Test: foo(a, b=0, /, c=1)")
++result = _parse_arglist('a, b=0, /, c=1')
++print(f"Result: {result.astext()}")
++print()
++
++# Test with all defaults
++print("Test: foo(a=1, b=2, /)")
++result = _parse_arglist('a=1, b=2, /')
++print(f"Result: {result.astext()}")
++print()
++
++# Test with no defaults in positional-only
++print("Test: foo(a, b, /, c=1)")
++result = _parse_arglist('a, b, /, c=1')
++print(f"Result: {result.astext()}")
++print()
++
++# Test with annotations
++print("Test: foo(a: int, b: int = 0, /, c: int = 1)")
++result = _parse_arglist('a: int, b: int = 0, /, c: int = 1')
++print(f"Result: {result.astext()}")
++print()
++
++print("All Sphinx rendering tests completed!")

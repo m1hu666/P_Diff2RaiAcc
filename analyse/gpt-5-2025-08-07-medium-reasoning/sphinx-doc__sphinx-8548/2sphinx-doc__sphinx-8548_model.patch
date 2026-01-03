@@ -1,0 +1,152 @@
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index ddfd2b365..346d64999 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -606,6 +606,41 @@ class Documenter:
+ 
+                     for i, line in enumerate(self.process_doc(docstrings)):
+                         self.add_line(line, sourcename, i)
++                elif self.objtype == 'attribute':
++                    # Fallback: search for attribute comments in base classes' analyzers
++                    # This allows inherited attributes (data members) to pick up
++                    # comments defined in base classes, even across modules.
++                    try:
++                        parent = self.parent
++                    except Exception:
++                        parent = None
++                    if parent is not None:
++                        try:
++                            mro = getattr(parent, '__mro__', ()) or ()
++                        except Exception:
++                            mro = ()
++                        found = None
++                        for cls in mro[1:]:  # skip the class itself
++                            try:
++                                module = safe_getattr(cls, '__module__', None)
++                                qualname = safe_getattr(cls, '__qualname__', None)
++                                if not module or not qualname:
++                                    continue
++                                try:
++                                    baz = ModuleAnalyzer.for_module(module)
++                                    baz.analyze()
++                                    bkey = (qualname, self.objpath[-1])
++                                    if bkey in baz.attr_docs:
++                                        found = list(baz.attr_docs[bkey])
++                                        break
++                                except PycodeError:
++                                    continue
++                            except Exception:
++                                continue
++                        if found is not None:
++                            no_docstring = True
++                            for i, line in enumerate(self.process_doc([found])):
++                                self.add_line(line, sourcename, i)
+ 
+         # add content from docstrings
+         if not no_docstring:
+@@ -686,8 +721,54 @@ class Documenter:
+ 
+         if self.analyzer:
+             attr_docs = self.analyzer.find_attr_docs()
++            # augment attribute docs with base classes' attribute comments under current namespace
++            try:
++                mro = getattr(self.object, '__mro__', ()) or ()
++            except Exception:
++                mro = ()
++            for cls in mro[1:]:  # skip the class itself
++                try:
++                    module = safe_getattr(cls, '__module__', None)
++                    qualname = safe_getattr(cls, '__qualname__', None)
++                    if not module or not qualname:
++                        continue
++                    try:
++                        baz = ModuleAnalyzer.for_module(module)
++                        baz.analyze()
++                        for (scope, name), docstring in baz.attr_docs.items():
++                            if scope == qualname:
++                                key = (namespace, name)
++                                if key not in attr_docs:
++                                    attr_docs[key] = docstring
++                    except PycodeError:
++                        continue
++                except Exception:
++                    continue
+         else:
+             attr_docs = {}
++            # augment attribute docs with base classes' attribute comments under current namespace
++            try:
++                mro = getattr(self.object, '__mro__', ()) or ()
++            except Exception:
++                mro = ()
++            for cls in mro[1:]:  # skip the class itself
++                try:
++                    module = safe_getattr(cls, '__module__', None)
++                    qualname = safe_getattr(cls, '__qualname__', None)
++                    if not module or not qualname:
++                        continue
++                    try:
++                        baz = ModuleAnalyzer.for_module(module)
++                        baz.analyze()
++                        for (scope, name), docstring in baz.attr_docs.items():
++                            if scope == qualname:
++                                key = (namespace, name)
++                                if key not in attr_docs:
++                                    attr_docs[key] = docstring
++                    except PycodeError:
++                        continue
++                except Exception:
++                    continue
+ 
+         # process members and determine which to skip
+         for obj in members:
+diff --git a/tmpdoc/docs/conf.py b/tmpdoc/docs/conf.py
+new file mode 100644
+index 000000000..c7bc719c0
+--- /dev/null
++++ b/tmpdoc/docs/conf.py
+@@ -0,0 +1,11 @@
++
++import os, sys
++sys.path.insert(0, os.path.abspath('..'))
++extensions = ['sphinx.ext.autodoc']
++project = 'TestProj'
++master_doc = 'index'
++autodoc_default_options = {
++    'members': True,
++    'inherited-members': True,
++    'undoc-members': True,
++}
+diff --git a/tmpdoc/docs/index.rst b/tmpdoc/docs/index.rst
+new file mode 100644
+index 000000000..205b10587
+--- /dev/null
++++ b/tmpdoc/docs/index.rst
+@@ -0,0 +1,8 @@
++
++Test Project
++===========
++
++.. autoclass:: pkg.base.Derived
++   :members:
++   :undoc-members:
++   :inherited-members:
+diff --git a/tmpdoc/pkg/__init__.py b/tmpdoc/pkg/__init__.py
+new file mode 100644
+index 000000000..b868da5b1
+--- /dev/null
++++ b/tmpdoc/pkg/__init__.py
+@@ -0,0 +1 @@
++# package init
+diff --git a/tmpdoc/pkg/base.py b/tmpdoc/pkg/base.py
+new file mode 100644
+index 000000000..d89cd2aeb
+--- /dev/null
++++ b/tmpdoc/pkg/base.py
+@@ -0,0 +1,7 @@
++
++class Base:
++    #: Docstring for inherited attribute from Base
++    inherited_attr = 123
++
++class Derived(Base):
++    pass

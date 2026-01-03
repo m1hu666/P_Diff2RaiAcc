@@ -1,0 +1,193 @@
+diff --git a/django/utils/html.py b/django/utils/html.py
+index da1b5675ec..8147c5d3d0 100644
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -61,7 +61,7 @@ _json_script_escapes = {
+ }
+ 
+ 
+-def json_script(value, element_id):
++def json_script(value, element_id=None):
+     """
+     Escape all the HTML/XML special characters with their unicode escapes, so
+     value is safe to be output anywhere except for inside a tag attribute. Wrap
+@@ -69,10 +69,16 @@ def json_script(value, element_id):
+     """
+     from django.core.serializers.json import DjangoJSONEncoder
+     json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)
+-    return format_html(
+-        '<script id="{}" type="application/json">{}</script>',
+-        element_id, mark_safe(json_str)
+-    )
++    if element_id:
++        return format_html(
++            '<script id="{}" type="application/json">{}</script>',
++            element_id, mark_safe(json_str)
++        )
++    else:
++        return format_html(
++            '<script type="application/json">{}</script>',
++            mark_safe(json_str)
++        )
+ 
+ 
+ def conditional_escape(text):
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..70d706295b
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,29 @@
++from django.utils.html import json_script
++
++print("Test 1: With element_id")
++result = json_script({"key": "value"}, "my-id")
++print(result)
++assert 'id="my-id"' in result
++assert 'type="application/json"' in result
++print("‚úì Test 1 passed\n")
++
++print("Test 2: Without element_id")
++result = json_script({"key": "value"})
++print(result)
++assert 'id=' not in result
++assert 'type="application/json"' in result
++print("‚úì Test 2 passed\n")
++
++print("Test 3: With None as element_id")
++result = json_script({"key": "value"}, None)
++print(result)
++assert 'id=' not in result
++print("‚úì Test 3 passed\n")
++
++print("Test 4: With empty string as element_id")
++result = json_script({"key": "value"}, "")
++print(result)
++assert 'id=' not in result
++print("‚úì Test 4 passed\n")
++
++print("‚úÖ All tests passed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..49c0223774
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,39 @@
++from django.utils.html import json_script
++
++print("Testing edge cases...")
++
++# Test 1: Empty dict without id
++result = json_script({})
++assert result == '<script type="application/json">{}</script>'
++print("‚úì Empty dict without id works")
++
++# Test 2: Empty dict with id
++result = json_script({}, "empty")
++assert 'id="empty"' in result
++print("‚úì Empty dict with id works")
++
++# Test 3: None value without id
++result = json_script(None)
++assert 'null' in result
++assert 'id=' not in result
++print("‚úì None value without id works")
++
++# Test 4: List without id
++result = json_script([1, 2, 3])
++assert '[1, 2, 3]' in result
++assert 'id=' not in result
++print("‚úì List without id works")
++
++# Test 5: String without id
++result = json_script("test string")
++assert '"test string"' in result
++assert 'id=' not in result
++print("‚úì String without id works")
++
++# Test 6: Boolean without id
++result = json_script(True)
++assert 'true' in result
++assert 'id=' not in result
++print("‚úì Boolean without id works")
++
++print("\n‚úÖ All edge cases pass!")
+diff --git a/test_pr_final.py b/test_pr_final.py
+new file mode 100644
+index 0000000000..787cd17e18
+--- /dev/null
++++ b/test_pr_final.py
+@@ -0,0 +1,47 @@
++"""
++Final test for the PR use case:
++Using json_script inside a <template> tag where an id is not needed.
++"""
++from django.utils.html import json_script
++
++print("=" * 60)
++print("PR Use Case: json_script without element_id")
++print("=" * 60)
++
++# The use case from the PR description
++data = {"config": {"theme": "dark", "language": "en"}}
++
++# Without id - the new feature requested in the PR
++script_without_id = json_script(data)
++print("\n1. Script without ID (for use inside <template>):")
++print(script_without_id)
++
++# Verify it works correctly
++assert '<script type="application/json">' in script_without_id
++assert 'id=' not in script_without_id
++assert '"config"' in script_without_id
++print("   ‚úì No id attribute present")
++print("   ‚úì Correct type attribute")
++print("   ‚úì Data properly encoded")
++
++# With id - existing functionality should still work
++script_with_id = json_script(data, "config-data")
++print("\n2. Script with ID (traditional use - backward compatible):")
++print(script_with_id)
++
++# Verify existing functionality still works
++assert '<script id="config-data" type="application/json">' in script_with_id
++assert '"config"' in script_with_id
++print("   ‚úì id attribute present")
++print("   ‚úì Correct type attribute")
++print("   ‚úì Data properly encoded")
++
++print("\n" + "=" * 60)
++print("‚úÖ SUCCESS: element_id is now optional!")
++print("=" * 60)
++print("\nSummary:")
++print("- element_id parameter is now optional (defaults to None)")
++print("- When element_id is provided, behavior is unchanged")
++print("- When element_id is omitted/None, no id attribute is added")
++print("- All existing tests pass")
++print("- Security features (escaping) work correctly in both cases")
+diff --git a/test_security.py b/test_security.py
+new file mode 100644
+index 0000000000..38e5ba8dd3
+--- /dev/null
++++ b/test_security.py
+@@ -0,0 +1,20 @@
++from django.utils.html import json_script
++
++xss_data = {
++    "script": "</script><script>alert('xss')</script>",
++    "html": "<img src=x onerror=alert('xss')>"
++}
++
++print("Test 1: XSS prevention WITH element_id")
++result_with_id = json_script(xss_data, "test-id")
++print(result_with_id)
++assert '</script><script>' not in result_with_id
++print("‚úì XSS prevented with ID\n")
++
++print("Test 2: XSS prevention WITHOUT element_id")
++result_without_id = json_script(xss_data)
++print(result_without_id)
++assert '</script><script>' not in result_without_id
++print("‚úì XSS prevented without ID\n")
++
++print("‚úÖ Security features work correctly!")

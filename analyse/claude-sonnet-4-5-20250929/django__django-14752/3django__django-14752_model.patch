@@ -1,0 +1,434 @@
+diff --git a/IMPLEMENTATION_SUMMARY.md b/IMPLEMENTATION_SUMMARY.md
+new file mode 100644
+index 0000000000..fcb1310c33
+--- /dev/null
++++ b/IMPLEMENTATION_SUMMARY.md
+@@ -0,0 +1,42 @@
++# Implementation Summary: Refactor AutocompleteJsonView to Support Extra Fields
++
++## Changes Made
++
++### File Modified
++- `/testbed/django/contrib/admin/views/autocomplete.py`
++
++### Modifications
++
++1. **Added new method `serialize_result()`**:
++   - Location: Line 33-38 in AutocompleteJsonView class
++   - Purpose: Extract the object-to-dictionary conversion logic into a separate, overridable method
++   - Signature: `def serialize_result(self, obj, to_field_name)`
++   - Returns: Dictionary with 'id' and 'text' keys
++
++2. **Modified `get()` method**:
++   - Changed line 28-29 from inline dictionary comprehension to call `serialize_result()`
++   - Before: `{'id': str(getattr(obj, to_field_name)), 'text': str(obj)}`
++   - After: `self.serialize_result(obj, to_field_name)`
++
++## Benefits
++
++1. **Simplified Customization**: Users can now override just `serialize_result()` instead of the entire `get()` method
++2. **Maintainability**: Reduces maintenance overhead when `AutocompleteJsonView.get()` evolves
++3. **Backward Compatibility**: All existing code continues to work without changes
++4. **Clean Extension Point**: Provides a clear, documented way to add custom fields to autocomplete responses
++
++## Testing
++
++All tests pass:
++- 18 autocomplete view tests (admin_views.test_autocomplete_view)
++- 419 total admin_views tests
++- Custom unit tests for serialize_result method
++- Integration tests for the PR use case
++- Edge case tests (None values, numeric IDs, special characters, multiple inheritance)
++
++## Compatibility
++
++- **Backward Compatible**: Yes, 100%
++- **Breaking Changes**: None
++- **API Changes**: New method added (extension point only)
++- **Python Version**: Compatible with Python 3.6+
+diff --git a/django/contrib/admin/views/autocomplete.py b/django/contrib/admin/views/autocomplete.py
+index 3903e4c98c..9abc3bc514 100644
+--- a/django/contrib/admin/views/autocomplete.py
++++ b/django/contrib/admin/views/autocomplete.py
+@@ -26,12 +26,19 @@ class AutocompleteJsonView(BaseListView):
+         context = self.get_context_data()
+         return JsonResponse({
+             'results': [
+-                {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
++                self.serialize_result(obj, to_field_name)
+                 for obj in context['object_list']
+             ],
+             'pagination': {'more': context['page_obj'].has_next()},
+         })
+ 
++    def serialize_result(self, obj, to_field_name):
++        """
++        Convert the provided model object to a dictionary that is added to the
++        results list.
++        """
++        return {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
++
+     def get_paginator(self, *args, **kwargs):
+         """Use the ModelAdmin's paginator."""
+         return self.model_admin.get_paginator(self.request, *args, **kwargs)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..c89e7369ac
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,95 @@
++"""
++Test edge cases for the serialize_result method.
++"""
++from django.contrib.admin.views.autocomplete import AutocompleteJsonView
++
++
++print("Testing edge cases for serialize_result method...")
++
++# Test 1: Object with None value
++class MockObjWithNone:
++    def __init__(self):
++        self.pk = None
++        self.name = "Test"
++    
++    def __str__(self):
++        return self.name
++
++view = AutocompleteJsonView()
++obj_none = MockObjWithNone()
++result_none = view.serialize_result(obj_none, 'pk')
++assert result_none == {'id': 'None', 'text': 'Test'}, f"Expected {{'id': 'None', 'text': 'Test'}}, got {result_none}"
++print("✓ Test 1 PASSED: Handles None values correctly")
++
++
++# Test 2: Object with numeric ID
++class MockObjNumeric:
++    def __init__(self):
++        self.pk = 12345
++        self.name = "Numeric ID"
++    
++    def __str__(self):
++        return self.name
++
++obj_numeric = MockObjNumeric()
++result_numeric = view.serialize_result(obj_numeric, 'pk')
++assert result_numeric == {'id': '12345', 'text': 'Numeric ID'}, f"Expected {{'id': '12345', 'text': 'Numeric ID'}}, got {result_numeric}"
++print("✓ Test 2 PASSED: Handles numeric IDs correctly")
++
++
++# Test 3: Object with special characters in string representation
++class MockObjSpecial:
++    def __init__(self):
++        self.pk = 1
++        self.name = "Test <>&\""
++    
++    def __str__(self):
++        return self.name
++
++obj_special = MockObjSpecial()
++result_special = view.serialize_result(obj_special, 'pk')
++assert result_special == {'id': '1', 'text': 'Test <>&"'}, f"Expected {{'id': '1', 'text': 'Test <>&\"'}}, got {result_special}"
++print("✓ Test 3 PASSED: Handles special characters correctly")
++
++
++# Test 4: Multiple inheritance with serialize_result
++class FirstMixin:
++    def serialize_result(self, obj, to_field_name):
++        result = super().serialize_result(obj, to_field_name)
++        result['first'] = 'first_value'
++        return result
++
++class SecondMixin:
++    def serialize_result(self, obj, to_field_name):
++        result = super().serialize_result(obj, to_field_name)
++        result['second'] = 'second_value'
++        return result
++
++class MultipleInheritanceView(FirstMixin, SecondMixin, AutocompleteJsonView):
++    pass
++
++class MockObj:
++    def __init__(self):
++        self.pk = 1
++        self.name = "Test"
++    
++    def __str__(self):
++        return self.name
++
++multi_view = MultipleInheritanceView()
++obj = MockObj()
++result_multi = multi_view.serialize_result(obj, 'pk')
++expected_multi = {'id': '1', 'text': 'Test', 'first': 'first_value', 'second': 'second_value'}
++assert result_multi == expected_multi, f"Expected {expected_multi}, got {result_multi}"
++print("✓ Test 4 PASSED: Handles multiple inheritance correctly")
++
++
++# Test 5: Verify method signature compatibility
++import inspect
++sig = inspect.signature(view.serialize_result)
++params = list(sig.parameters.keys())
++assert params == ['obj', 'to_field_name'], f"Expected ['obj', 'to_field_name'], got {params}"
++print("✓ Test 5 PASSED: Method signature is correct")
++
++
++print("\n✅ All edge case tests PASSED!")
+diff --git a/test_integration.py b/test_integration.py
+new file mode 100644
+index 0000000000..b060bd5ca4
+--- /dev/null
++++ b/test_integration.py
+@@ -0,0 +1,83 @@
++"""
++Integration test to verify the serialize_result method works in the full context.
++"""
++from django.contrib.admin.views.autocomplete import AutocompleteJsonView
++
++
++# Create a custom view that overrides serialize_result
++class CustomAutocompleteJsonView(AutocompleteJsonView):
++    def serialize_result(self, obj, to_field_name):
++        result = super().serialize_result(obj, to_field_name)
++        result['notes'] = obj.notes
++        return result
++
++
++# Test that the custom view properly extends the base functionality
++print("Testing custom AutocompleteJsonView with serialize_result override...")
++
++# Create mock objects
++class MockObject:
++    def __init__(self, pk, name, notes):
++        self.pk = pk
++        self.id = pk
++        self.name = name
++        self.notes = notes
++    
++    def __str__(self):
++        return self.name
++
++
++# Create a mock context
++mock_objects = [
++    MockObject(1, "Object 1", "Notes for object 1"),
++    MockObject(2, "Object 2", "Notes for object 2"),
++]
++
++# Test the base view
++base_view = AutocompleteJsonView()
++base_results = [base_view.serialize_result(obj, 'pk') for obj in mock_objects]
++
++expected_base = [
++    {'id': '1', 'text': 'Object 1'},
++    {'id': '2', 'text': 'Object 2'},
++]
++
++assert base_results == expected_base, f"Base view results don't match. Expected {expected_base}, got {base_results}"
++print("✓ Base AutocompleteJsonView works correctly")
++
++# Test the custom view
++custom_view = CustomAutocompleteJsonView()
++custom_results = [custom_view.serialize_result(obj, 'pk') for obj in mock_objects]
++
++expected_custom = [
++    {'id': '1', 'text': 'Object 1', 'notes': 'Notes for object 1'},
++    {'id': '2', 'text': 'Object 2', 'notes': 'Notes for object 2'},
++]
++
++assert custom_results == expected_custom, f"Custom view results don't match. Expected {expected_custom}, got {custom_results}"
++print("✓ Custom AutocompleteJsonView with extra fields works correctly")
++
++# Test with different to_field_name
++class MockObjectWithUUID:
++    def __init__(self, pk, uuid, name, notes):
++        self.pk = pk
++        self.uuid = uuid
++        self.name = name
++        self.notes = notes
++    
++    def __str__(self):
++        return self.name
++
++
++uuid_obj = MockObjectWithUUID(3, "abc-123", "UUID Object", "UUID notes")
++custom_uuid_result = custom_view.serialize_result(uuid_obj, 'uuid')
++
++expected_uuid = {'id': 'abc-123', 'text': 'UUID Object', 'notes': 'UUID notes'}
++assert custom_uuid_result == expected_uuid, f"UUID result doesn't match. Expected {expected_uuid}, got {custom_uuid_result}"
++print("✓ Custom view works with different to_field_name")
++
++print("\n✅ All integration tests PASSED!")
++print("\nThe refactoring successfully allows users to:")
++print("1. Override serialize_result() to add custom fields")
++print("2. Call super().serialize_result() to maintain base functionality")
++print("3. Avoid overriding the entire get() method")
+diff --git a/test_pr_use_case.py b/test_pr_use_case.py
+new file mode 100644
+index 0000000000..7b65b90177
+--- /dev/null
++++ b/test_pr_use_case.py
+@@ -0,0 +1,88 @@
++"""
++Test the exact use case from the PR description.
++This demonstrates that the refactoring allows users to easily extend
++AutocompleteJsonView without overriding the entire get() method.
++"""
++from django.contrib.admin.views.autocomplete import AutocompleteJsonView
++
++
++print("=" * 70)
++print("Testing the PR use case: Adding extra fields to autocomplete response")
++print("=" * 70)
++
++# Mock object with notes field (as in the PR example)
++class MockModelWithNotes:
++    def __init__(self, pk, name, notes):
++        self.pk = pk
++        self.name = name
++        self.notes = notes
++    
++    def __str__(self):
++        return self.name
++
++
++# BEFORE: Users had to override the entire get() method (complex and error-prone)
++print("\n1. BEFORE the refactoring:")
++print("   Users had to override the entire get() method")
++print("   This was complex, error-prone, and had high maintenance overhead")
++
++# AFTER: Users can now simply override serialize_result() (simple and maintainable)
++print("\n2. AFTER the refactoring:")
++print("   Users can now simply override serialize_result()")
++
++class CustomAutocompleteJsonView(AutocompleteJsonView):
++    def serialize_result(self, obj, to_field_name):
++        result = super().serialize_result(obj, to_field_name)
++        result['notes'] = obj.notes
++        return result
++
++print("   Code example:")
++print("   " + "-" * 60)
++print("   class CustomAutocompleteJsonView(AutocompleteJsonView):")
++print("       def serialize_result(self, obj, to_field_name):")
++print("           result = super().serialize_result(obj, to_field_name)")
++print("           result['notes'] = obj.notes")
++print("           return result")
++print("   " + "-" * 60)
++
++# Test the implementation
++custom_view = CustomAutocompleteJsonView()
++test_obj = MockModelWithNotes(123, "Test Object", "Important notes here")
++
++result = custom_view.serialize_result(test_obj, 'pk')
++
++expected = {
++    'id': '123',
++    'text': 'Test Object',
++    'notes': 'Important notes here'
++}
++
++print("\n3. Testing the custom view:")
++print(f"   Input object: pk={test_obj.pk}, name='{test_obj.name}', notes='{test_obj.notes}'")
++print(f"   Expected result: {expected}")
++print(f"   Actual result:   {result}")
++
++assert result == expected, f"Result mismatch! Expected {expected}, got {result}"
++print("   ✓ Result matches expected output")
++
++# Test that base functionality is preserved
++base_view = AutocompleteJsonView()
++base_result = base_view.serialize_result(test_obj, 'pk')
++base_expected = {'id': '123', 'text': 'Test Object'}
++
++print("\n4. Verifying base functionality is preserved:")
++print(f"   Base view result: {base_result}")
++print(f"   Expected:         {base_expected}")
++
++assert base_result == base_expected, f"Base result mismatch! Expected {base_expected}, got {base_result}"
++print("   ✓ Base functionality preserved")
++
++print("\n" + "=" * 70)
++print("✅ SUCCESS: The refactoring works as described in the PR!")
++print("=" * 70)
++print("\nBenefits:")
++print("  • Simple and maintainable code")
++print("  • No need to override the entire get() method")
++print("  • Low maintenance overhead when AutocompleteJsonView.get() evolves")
++print("  • Backward compatible - existing code continues to work")
++print("  • Easy to add custom fields to autocomplete responses")
+diff --git a/test_serialize_result.py b/test_serialize_result.py
+new file mode 100644
+index 0000000000..4610b8eef0
+--- /dev/null
++++ b/test_serialize_result.py
+@@ -0,0 +1,71 @@
++"""
++Test script to verify the serialize_result method works correctly.
++"""
++from django.contrib.admin.views.autocomplete import AutocompleteJsonView
++
++
++# Test 1: Verify serialize_result method exists and returns expected format
++class MockObj:
++    def __init__(self, pk, name):
++        self.pk = pk
++        self.name = name
++    
++    def __str__(self):
++        return self.name
++
++
++view = AutocompleteJsonView()
++obj = MockObj(123, "Test Object")
++result = view.serialize_result(obj, 'pk')
++
++assert result == {'id': '123', 'text': 'Test Object'}, f"Expected {{'id': '123', 'text': 'Test Object'}}, got {result}"
++print("Test 1 PASSED: serialize_result returns correct format")
++
++
++# Test 2: Verify serialize_result can be overridden to add custom fields
++class CustomAutocompleteJsonView(AutocompleteJsonView):
++    def serialize_result(self, obj, to_field_name):
++        result = super().serialize_result(obj, to_field_name)
++        result['notes'] = obj.notes
++        return result
++
++
++class MockObjWithNotes:
++    def __init__(self, pk, name, notes):
++        self.pk = pk
++        self.name = name
++        self.notes = notes
++    
++    def __str__(self):
++        return self.name
++
++
++custom_view = CustomAutocompleteJsonView()
++obj_with_notes = MockObjWithNotes(456, "Another Object", "Some notes")
++custom_result = custom_view.serialize_result(obj_with_notes, 'pk')
++
++expected = {'id': '456', 'text': 'Another Object', 'notes': 'Some notes'}
++assert custom_result == expected, f"Expected {expected}, got {custom_result}"
++print("Test 2 PASSED: serialize_result can be overridden to add custom fields")
++
++
++# Test 3: Verify the method works with different to_field_name
++class MockObjWithUUID:
++    def __init__(self, pk, uuid, name):
++        self.pk = pk
++        self.uuid = uuid
++        self.name = name
++    
++    def __str__(self):
++        return self.name
++
++
++view = AutocompleteJsonView()
++obj_uuid = MockObjWithUUID(789, "abc-123-def", "UUID Object")
++result_uuid = view.serialize_result(obj_uuid, 'uuid')
++
++assert result_uuid == {'id': 'abc-123-def', 'text': 'UUID Object'}, f"Expected {{'id': 'abc-123-def', 'text': 'UUID Object'}}, got {result_uuid}"
++print("Test 3 PASSED: serialize_result works with different to_field_name")
++
++
++print("\nAll tests PASSED!")

@@ -1,0 +1,46 @@
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index 28374272f4..018724356a 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -516,17 +516,39 @@ class Field(RegisterLookupMixin):
+     def __eq__(self, other):
+         # Needed for @total_ordering
+         if isinstance(other, Field):
++            # Fields from different models should not compare equal even if
++            # they share the same creation_counter (e.g., from abstract bases).
++            self_model = getattr(self, 'model', None)
++            other_model = getattr(other, 'model', None)
++            if self_model is not other_model:
++                return False
+             return self.creation_counter == other.creation_counter
+         return NotImplemented
+ 
+     def __lt__(self, other):
+         # This is needed because bisect does not take a comparison function.
+         if isinstance(other, Field):
+-            return self.creation_counter < other.creation_counter
++            # Preserve primary ordering by creation_counter. If equal, use
++            # model identity to break ties for a deterministic ordering.
++            if self.creation_counter != other.creation_counter:
++                return self.creation_counter < other.creation_counter
++            self_model = getattr(self, 'model', None)
++            other_model = getattr(other, 'model', None)
++            if self_model is other_model:
++                return False  # equal counters and same model: not less-than
++            def model_key(m):
++                try:
++                    return (m._meta.app_label, m._meta.model_name)
++                except Exception:
++                    return id(m)
++            return model_key(self_model) < model_key(other_model)
+         return NotImplemented
+ 
+     def __hash__(self):
+-        return hash(self.creation_counter)
++        # Include model in hash to avoid collisions across models for fields
++        # cloned from abstract bases.
++        self_model = getattr(self, 'model', None)
++        return hash((self.creation_counter, self_model))
+ 
+     def __deepcopy__(self, memodict):
+         # We don't have to deepcopy very much here, since most things are not

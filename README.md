@@ -52,11 +52,11 @@ After starting the script, the terminal shows the current step content and a com
 
 Each message shows its `role` (system / user / assistant ¡ú mini-swe-agent) with different colors for quick visual distinction when reading trajectories.
 
-## 2. Patch Visualization Tool: `datavis.py`
+## 2. Patch Export Tool: `datavis.py`
 
 Script path: `data/scripts/datavis.py`
 
-Purpose: load the gold patch and model-generated patch for a given instance from the verified results JSON and open a desktop GUI window to compare them side by side, with copy/save support.
+Purpose: batch-export gold patches, model-generated patches, and related metadata (test patch, problem statement, hints) for multiple instances and models, saving them under the `analyse/` directory for further offline analysis or visualization.
 
 ### Input File Layout
 
@@ -79,40 +79,74 @@ data/data/verified/gpt-5-2025-08-07-medium-reasoning/round1.json
 
 The JSON should use `instance_id` as keys, each storing the model's result for that instance.
 
-### Arguments
+### Instance ID Source
 
-- `--m`: model name (must match the directory name of the result file).
-- `--r`: round index.
-- `--i`: instance ID (same as `instance_id` in SWE-bench Verified).
-- `--key`: optional, multi-value argument. Print selected fields from both the result JSON and SWE-bench Verified for comparison.
-- `--v`: if set, open a GUI window to visualize gold patch vs model patch, with copy/save support.
+- The script reads instance IDs line by line from the repository root file:
 
-### Example: only print selected fields
+  ```text
+  id.txt
+  ```
 
-```bash
-python data/scripts/datavis.py \
-  --m gpt-5-2025-08-07-medium-reasoning \
-  --r 1 \
-  --i astropy__astropy-7671 \
-  --key model_patch patch
+- Each non-empty line is treated as one `instance_id`, for example:
+
+  ```text
+  astropy__astropy-14182
+  django__django-10554
+  ...
+  ```
+
+### Fixed Model List
+
+`datavis.py` currently processes three models:
+
+- `claude-sonnet-4-5-20250929`
+- `gemini-3-pro-preview`
+- `gpt-5-2025-08-07-medium-reasoning`
+
+For each model, it looks for `round1.json`, `round2.json`, and `round3.json` under the corresponding `data/data/verified/{model}/` directory.
+
+### Data from SWE-bench Verified
+
+For each `instance_id`, the script loads the entry from HuggingFace dataset `princeton-nlp/SWE-bench_Verified` (split `test`) and extracts:
+
+- `patch` (gold patch)
+- `test_patch`
+- `problem_statement`
+- `hints_text`
+
+### Output Layout under `analyse/`
+
+For each model and instance ID, the script creates a directory:
+
+```text
+analyse/{model}/{instance_id}/
 ```
 
-### Example: open GUI to compare patches
+and writes the following files:
+
+- `{instance_id}_gold.patch` — gold patch (`patch` from SWE-bench Verified)
+- `{round_num}{instance_id}_model.patch` — model-generated patch for each available round (1, 2, 3)
+- `{instance_id}_test.patch` — `test_patch` from SWE-bench Verified
+- `{instance_id}_problem_statement.txt` — `problem_statement` from SWE-bench Verified
+- `{instance_id}_hints.txt` — `hints_text` from SWE-bench Verified
+
+If some fields are missing in the dataset, the corresponding files are still created but may be empty.
+
+### Usage
+
+`datavis.py` no longer requires command-line arguments like `--m` or `--i`. It uses the fixed model list and the IDs from `id.txt`.
+
+From the repository root:
 
 ```bash
-python data/scripts/datavis.py \
-  --m "gpt-5-2025-08-07-medium-reasoning" \
-  --r 1 \
-  --i "astropy__astropy-7671" \
-  --v
+python data/scripts/datavis.py
 ```
 
 After running:
 
-- The script loads the corresponding instance from HuggingFace dataset `princeton-nlp/SWE-bench_Verified`.
-- Loads `model_patch` for that instance from the local result JSON.
-- Opens a modern-styled Tk window showing Gold Patch and Model Patch side by side, and indicates whether they exactly match.
-- Allows copying and saving both patches to local files.
+- The script loads the SWE-bench Verified `test` split from HuggingFace.
+- For each model and instance ID, it reads local result JSONs, collects per-round `model_patch`, and fetches related fields from SWE-bench Verified.
+- All patches and metadata are saved under the `analyse/` directory in a consistent file layout for downstream analysis.
 
 ---
 

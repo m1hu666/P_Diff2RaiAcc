@@ -1,0 +1,847 @@
+diff --git a/django/core/mail/utils.py b/django/core/mail/utils.py
+index d18dfe4667..5fc08a5789 100644
+--- a/django/core/mail/utils.py
++++ b/django/core/mail/utils.py
+@@ -9,12 +9,29 @@ import socket
+ # seconds, which slows down the restart of the server.
+ class CachedDnsName:
+     def __str__(self):
+-        return self.get_fqdn()
++        return self.get_fqdn_punycode()
+ 
+     def get_fqdn(self):
+         if not hasattr(self, '_fqdn'):
+             self._fqdn = socket.getfqdn()
+         return self._fqdn
+ 
++    def get_fqdn_punycode(self):
++        """
++        Return the FQDN as a punycode-encoded ASCII string.
++        This ensures that non-ASCII domain names are properly encoded
++        for use in email headers like Message-ID.
++        """
++        if not hasattr(self, '_fqdn_punycode'):
++            fqdn = self.get_fqdn()
++            try:
++                # Try to encode as ASCII first (most common case)
++                fqdn.encode('ascii')
++                self._fqdn_punycode = fqdn
++            except UnicodeEncodeError:
++                # If the domain contains non-ASCII characters, encode to punycode
++                self._fqdn_punycode = fqdn.encode('idna').decode('ascii')
++        return self._fqdn_punycode
++
+ 
+ DNS_NAME = CachedDnsName()
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..75e143f1ec
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python
++"""Final verification that the fix works correctly."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# Setup Django
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++
++print("Final Verification Test")
++print("=" * 60)
++
++# Test 1: The exact bug scenario from the PR
++print("\n1. Testing the bug scenario (unicode hostname + iso-8859-1 encoding)")
++with patch.object(socket, 'getfqdn', return_value="Êº¢Â≠ó"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    try:
++        email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        print("   PASS: No UnicodeEncodeError raised")
++        print("   Message-ID:", message['Message-ID'])
++    except UnicodeEncodeError:
++        print("   FAIL: UnicodeEncodeError still occurs")
++        sys.exit(1)
++
++# Test 2: Verify punycode is used
++print("\n2. Verifying punycode encoding in Message-ID")
++with patch.object(socket, 'getfqdn', return_value="Êº¢Â≠ó"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++    email.encoding = 'iso-8859-1'
++    message = email.message()
++    
++    if 'xn--p8s937b' in message['Message-ID']:
++        print("   PASS: Punycode 'xn--p8s937b' found in Message-ID")
++    else:
++        print("   FAIL: Punycode not found in Message-ID")
++        sys.exit(1)
++
++# Test 3: Verify ASCII domains still work
++print("\n3. Verifying ASCII domains work correctly")
++with patch.object(socket, 'getfqdn', return_value="example.com"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++    email.encoding = 'iso-8859-1'
++    message = email.message()
++    
++    if 'example.com' in message['Message-ID'] and 'xn--' not in message['Message-ID']:
++        print("   PASS: ASCII domain preserved correctly")
++    else:
++        print("   FAIL: ASCII domain not preserved")
++        sys.exit(1)
++
++# Test 4: Verify get_fqdn() returns original value
++print("\n4. Verifying get_fqdn() returns original hostname")
++with patch.object(socket, 'getfqdn', return_value="Êº¢Â≠ó"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    fqdn = mail_utils.DNS_NAME.get_fqdn()
++    if fqdn == "Êº¢Â≠ó":
++        print("   PASS: get_fqdn() returns original unicode hostname")
++    else:
++        print("   FAIL: get_fqdn() doesn't return original hostname")
++        sys.exit(1)
++
++print("\n" + "=" * 60)
++print("All verification tests PASSED!")
++print("The fix successfully resolves the issue.")
++print("=" * 60)
+diff --git a/test_already_punycode.py b/test_already_punycode.py
+new file mode 100644
+index 0000000000..a2a5047747
+--- /dev/null
++++ b/test_already_punycode.py
+@@ -0,0 +1,51 @@
++#!/usr/bin/env python
++"""Test that already-punycode domains are handled correctly."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++from django.core.mail import utils as mail_utils
++
++print("Testing already-punycode domains...")
++
++# Test with a domain that's already in punycode format
++with patch.object(socket, 'getfqdn', return_value="xn--p8s937b"):
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    try:
++        email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        
++        if 'xn--p8s937b' in message_id:
++            print("PASS: Already-punycode domain preserved correctly")
++            print(f"Message-ID: {message_id}")
++        else:
++            print(f"FAIL: Expected 'xn--p8s937b' in Message-ID, got: {message_id}")
++            
++    except Exception as e:
++        print(f"FAIL: {type(e).__name__}: {str(e)[:100]}")
++        import traceback
++        traceback.print_exc()
++
++print("\nTest completed!")
+diff --git a/test_caching.py b/test_caching.py
+new file mode 100644
+index 0000000000..c7299e50db
+--- /dev/null
++++ b/test_caching.py
+@@ -0,0 +1,56 @@
++#!/usr/bin/env python
++"""Test that DNS_NAME caching works correctly."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch, MagicMock
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++from django.core.mail import utils as mail_utils
++
++print("Testing DNS_NAME caching...")
++
++# Create a mock that tracks how many times getfqdn is called
++mock_getfqdn = MagicMock(return_value="Êº¢Â≠ó")
++
++with patch.object(socket, 'getfqdn', mock_getfqdn):
++    # Clear any cached values
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    # Create multiple emails - getfqdn should only be called once
++    for i in range(5):
++        email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        
++        if 'xn--p8s937b' not in message_id:
++            print(f"FAIL: Email {i+1} - Expected punycode in Message-ID")
++        else:
++            print(f"PASS: Email {i+1} - Punycode correctly used")
++    
++    # Check that getfqdn was only called once (due to caching)
++    call_count = mock_getfqdn.call_count
++    if call_count == 1:
++        print(f"\nPASS: socket.getfqdn() was called only once (caching works)")
++    else:
++        print(f"\nFAIL: socket.getfqdn() was called {call_count} times (caching not working)")
++
++print("\nCaching test completed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..0aba07d9b5
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python
++"""Test edge cases for the unicode domain fix."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++
++test_cases = [
++    ("example.com", "example.com", "ASCII domain"),
++    ("sub.example.com", "sub.example.com", "ASCII subdomain"),
++    ("Ê≠£ÂÆó", "xn--jbt908a", "Chinese characters"),
++    ("Êº¢Â≠ó", "xn--p8s937b", "More Chinese characters"),
++    ("m√ºnchen.de", "xn--mnchen-3ya.de", "German umlaut"),
++    ("Êó•Êú¨.jp", "xn--wgv71a.jp", "Japanese characters"),
++    ("—Ä–æ—Å—Å–∏—è.—Ä—Ñ", "xn--h1alffa9f.xn--p1ai", "Cyrillic characters"),
++]
++
++print("Testing edge cases for unicode domain handling...\n")
++
++for hostname, expected_in_msgid, description in test_cases:
++    print(f"Test: {description}")
++    with patch.object(socket, 'getfqdn', return_value=hostname):
++        from django.core.mail import utils as mail_utils
++        if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++            delattr(mail_utils.DNS_NAME, '_fqdn')
++        if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++            delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++        
++        try:
++            # Test with iso-8859-1 encoding (the problematic case)
++            email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++            email.encoding = 'iso-8859-1'
++            message = email.message()
++            message_id = message['Message-ID']
++            
++            if expected_in_msgid in message_id:
++                print(f"  PASS: Message-ID contains '{expected_in_msgid}'")
++            else:
++                print(f"  FAIL: Expected '{expected_in_msgid}' in Message-ID, got: {message_id}")
++            
++            # Also test with utf-8 encoding
++            email2 = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++            email2.encoding = 'utf-8'
++            message2 = email2.message()
++            message_id2 = message2['Message-ID']
++            
++            if expected_in_msgid in message_id2:
++                print(f"  PASS: UTF-8 encoding also works")
++            else:
++                print(f"  FAIL: UTF-8 encoding failed")
++                
++        except Exception as e:
++            print(f"  FAIL: {type(e).__name__}: {str(e)[:100]}")
++            import traceback
++            traceback.print_exc()
++    
++    print()
++
++print("All edge case tests completed!")
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..f73ed29fc1
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python
++"""Test the exact scenario described in the PR."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++
++print("Testing the exact scenario from the PR description...")
++print("=" * 60)
++
++# Test case from PR: hostname set to unicode characters
++print("\nTest: Hostname set to unicode (Chinese characters)")
++print("Expected: Message-ID should contain 'xn--p8s937b' (punycode)")
++print("-" * 60)
++
++with patch.object(socket, 'getfqdn', return_value="Êº¢Â≠ó"):
++    # Clear any cached values
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    try:
++        email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        
++        print("Result: SUCCESS")
++        print("Message-ID:", message_id)
++        
++        if 'xn--p8s937b' in message_id:
++            print("Verification: PASS - Punycode 'xn--p8s937b' found in Message-ID")
++        else:
++            print("Verification: FAIL - Expected 'xn--p8s937b' not found")
++            
++    except UnicodeEncodeError as e:
++        print("Result: FAILED with UnicodeEncodeError")
++        print("Error:", str(e))
++        print("This is the bug that should be fixed!")
++    except Exception as e:
++        print("Result: FAILED with", type(e).__name__)
++        print("Error:", str(e))
++
++# Test the encoding test from the PR (line 368 in tests/mail/tests.py)
++print("\n" + "=" * 60)
++print("Test: Encoding test with unicode hostname")
++print("This simulates the test_encoding test failing with unicode hostname")
++print("-" * 60)
++
++with patch.object(socket, 'getfqdn', return_value="Ê≠£ÂÆó"):
++    # Clear any cached values
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    try:
++        email = EmailMessage('Subject', 'Firstname S√ºrname is a great guy.', 
++                           'from@example.com', ['other@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        
++        print("Result: SUCCESS")
++        print("Message created with iso-8859-1 encoding")
++        print("Message-ID:", message['Message-ID'])
++        
++        # Verify the body is still encoded correctly
++        payload = message.get_payload()
++        if 'S=FCrname' in payload:
++            print("Body encoding: PASS - Body correctly encoded as iso-8859-1")
++        else:
++            print("Body encoding: FAIL - Body not correctly encoded")
++            
++    except UnicodeEncodeError as e:
++        print("Result: FAILED with UnicodeEncodeError")
++        print("Error:", str(e))
++        print("This is the bug that should be fixed!")
++    except Exception as e:
++        print("Result: FAILED with", type(e).__name__)
++        print("Error:", str(e))
++
++print("\n" + "=" * 60)
++print("All PR scenario tests completed!")
++print("=" * 60)
+diff --git a/test_revised_implementation.py b/test_revised_implementation.py
+new file mode 100644
+index 0000000000..f8d624e869
+--- /dev/null
++++ b/test_revised_implementation.py
+@@ -0,0 +1,85 @@
++#!/usr/bin/env python
++"""Test the revised implementation."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++from django.core.mail import utils as mail_utils
++
++print("Testing revised implementation...")
++
++# Test with a unicode domain
++with patch.object(socket, 'getfqdn', return_value="Êº¢Â≠ó"):
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    # Test 1: get_fqdn() should return the original unicode domain
++    fqdn = mail_utils.DNS_NAME.get_fqdn()
++    if fqdn == "Êº¢Â≠ó":
++        print("PASS: get_fqdn() returns original unicode domain")
++    else:
++        print(f"FAIL: get_fqdn() returned '{fqdn}' instead of unicode")
++    
++    # Test 2: str(DNS_NAME) should return punycode
++    dns_str = str(mail_utils.DNS_NAME)
++    if dns_str == "xn--p8s937b":
++        print("PASS: str(DNS_NAME) returns punycode")
++    else:
++        print(f"FAIL: str(DNS_NAME) returned '{dns_str}' instead of punycode")
++    
++    # Test 3: EmailMessage should work with iso-8859-1 encoding
++    try:
++        email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        
++        if 'xn--p8s937b' in message_id:
++            print("PASS: Message-ID contains punycode")
++        else:
++            print(f"FAIL: Message-ID doesn't contain punycode: {message_id}")
++            
++    except Exception as e:
++        print(f"FAIL: {type(e).__name__}: {str(e)[:100]}")
++
++# Test with ASCII domain
++print("\nTesting with ASCII domain...")
++with patch.object(socket, 'getfqdn', return_value="example.com"):
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    if hasattr(mail_utils.DNS_NAME, '_fqdn_punycode'):
++        delattr(mail_utils.DNS_NAME, '_fqdn_punycode')
++    
++    # Test 1: get_fqdn() should return the original domain
++    fqdn = mail_utils.DNS_NAME.get_fqdn()
++    if fqdn == "example.com":
++        print("PASS: get_fqdn() returns original ASCII domain")
++    else:
++        print(f"FAIL: get_fqdn() returned '{fqdn}'")
++    
++    # Test 2: str(DNS_NAME) should return the same (no encoding needed)
++    dns_str = str(mail_utils.DNS_NAME)
++    if dns_str == "example.com":
++        print("PASS: str(DNS_NAME) returns ASCII domain unchanged")
++    else:
++        print(f"FAIL: str(DNS_NAME) returned '{dns_str}'")
++
++print("\nAll tests completed!")
+diff --git a/test_unicode_domain.py b/test_unicode_domain.py
+new file mode 100644
+index 0000000000..33c7e92e68
+--- /dev/null
++++ b/test_unicode_domain.py
+@@ -0,0 +1,77 @@
++#!/usr/bin/env python
++"""Test script to reproduce the unicode domain issue."""
++import sys
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch, MagicMock
++from email.utils import make_msgid
++
++print("Testing unicode domain in Message-ID with make_msgid...")
++
++# Test 1: Direct test with make_msgid
++try:
++    msg_id = make_msgid(domain="Ê≠£ÂÆó")
++    print("make_msgid with unicode domain succeeded (unexpected)")
++except Exception as e:
++    print("Error with make_msgid (expected):", type(e).__name__)
++
++# Now test with Django's email system
++print("\nTesting with Django's EmailMessage...")
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++from django.core.mail import utils as mail_utils
++
++# Test with a unicode domain
++print("\nTest 1: Unicode domain")
++mock_dns = MagicMock()
++mock_dns.__str__ = MagicMock(return_value="Ê≠£ÂÆó")
++with patch.object(mail_utils, 'DNS_NAME', mock_dns):
++    try:
++        email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID created")
++        
++        # Check if punycode is used
++        if 'xn--' in message_id:
++            print("Punycode encoding detected in Message-ID")
++        else:
++            print("No punycode encoding in Message-ID")
++    except Exception as e:
++        print("Error:", type(e).__name__, str(e)[:100])
++
++# Test with another unicode domain
++print("\nTest 2: Another unicode domain")
++mock_dns2 = MagicMock()
++mock_dns2.__str__ = MagicMock(return_value="Êº¢Â≠ó")
++with patch.object(mail_utils, 'DNS_NAME', mock_dns2):
++    try:
++        email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID created")
++        
++        # Check if punycode is used (xn--p8s937b is punycode for Êº¢Â≠ó)
++        if 'xn--p8s937b' in message_id:
++            print("Correct punycode encoding (xn--p8s937b) detected in Message-ID")
++        else:
++            print("Expected 'xn--p8s937b' in Message-ID")
++    except Exception as e:
++        print("Error:", type(e).__name__, str(e)[:100])
++
++print("\nAll tests completed!")
+diff --git a/test_unicode_domain2.py b/test_unicode_domain2.py
+new file mode 100644
+index 0000000000..93aa3aafc8
+--- /dev/null
++++ b/test_unicode_domain2.py
+@@ -0,0 +1,52 @@
++#!/usr/bin/env python
++"""Test script to reproduce the unicode domain issue."""
++import sys
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch, MagicMock
++from email.utils import make_msgid
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++from django.core.mail import utils as mail_utils
++
++# Test with a unicode domain
++print("Test: Unicode domain with iso-8859-1 encoding")
++mock_dns = MagicMock()
++mock_dns.__str__ = MagicMock(return_value="Ê≠£ÂÆó")
++with patch.object(mail_utils, 'DNS_NAME', mock_dns):
++    try:
++        email = EmailMessage('subject', '', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID:", message_id)
++        
++        # Try to encode the message as string
++        msg_str = message.as_string()
++        print("Message encoded successfully")
++        
++        # Check if punycode is used
++        if 'xn--' in message_id:
++            print("Punycode encoding detected")
++        else:
++            print("No punycode encoding")
++            
++    except Exception as e:
++        print("Error:", type(e).__name__)
++        import traceback
++        traceback.print_exc()
++
++print("\nDone!")
+diff --git a/test_unicode_hostname.py b/test_unicode_hostname.py
+new file mode 100644
+index 0000000000..03493cb322
+--- /dev/null
++++ b/test_unicode_hostname.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python
++"""Test script to reproduce the unicode hostname issue."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++
++# Simulate a unicode hostname by patching socket.getfqdn
++print("Test: Unicode hostname with iso-8859-1 encoding")
++with patch.object(socket, 'getfqdn', return_value="Ê≠£ÂÆó"):
++    # Force DNS_NAME to re-evaluate
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    
++    try:
++        email = EmailMessage('Subject', 'Firstname S√ºrname is a great guy.', 'from@example.com', ['other@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID:", message_id)
++        
++        # Try to encode the message as string
++        msg_str = message.as_string()
++        print("Message encoded successfully")
++        
++        # Check if punycode is used
++        if 'xn--' in message_id:
++            print("Punycode encoding detected")
++        else:
++            print("No punycode encoding - this is the bug!")
++            
++    except Exception as e:
++        print("Error:", type(e).__name__)
++        import traceback
++        traceback.print_exc()
++
++print("\nDone!")
+diff --git a/test_unicode_hostname2.py b/test_unicode_hostname2.py
+new file mode 100644
+index 0000000000..bfb4a13b6f
+--- /dev/null
++++ b/test_unicode_hostname2.py
+@@ -0,0 +1,96 @@
++#!/usr/bin/env python
++"""Test script to verify the fix with different unicode domains."""
++import sys
++import socket
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import patch
++
++# We need to set up minimal Django configuration
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
++        DEFAULT_CHARSET='utf-8',
++    )
++
++from django.core.mail import EmailMessage
++
++# Test 1: Unicode hostname
++print("Test 1: Unicode hostname with iso-8859-1 encoding")
++with patch.object(socket, 'getfqdn', return_value="Ê≠£ÂÆó"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    
++    try:
++        email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID:", message_id)
++        
++        if 'xn--' in message_id:
++            print("Punycode encoding detected: PASS")
++        else:
++            print("No punycode encoding: FAIL")
++            
++    except Exception as e:
++        print("Error:", type(e).__name__)
++        import traceback
++        traceback.print_exc()
++
++# Test 2: Unicode hostname (should encode to xn--p8s937b)
++print("\nTest 2: Another unicode hostname with iso-8859-1 encoding")
++with patch.object(socket, 'getfqdn', return_value="Êº¢Â≠ó"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    
++    try:
++        email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID:", message_id)
++        
++        if 'xn--p8s937b' in message_id:
++            print("Correct punycode encoding (xn--p8s937b) detected: PASS")
++        else:
++            print("Expected 'xn--p8s937b' in Message-ID: FAIL")
++            
++    except Exception as e:
++        print("Error:", type(e).__name__)
++        import traceback
++        traceback.print_exc()
++
++# Test 3: ASCII hostname (should work as before)
++print("\nTest 3: ASCII hostname 'example.com' with iso-8859-1 encoding")
++with patch.object(socket, 'getfqdn', return_value="example.com"):
++    from django.core.mail import utils as mail_utils
++    if hasattr(mail_utils.DNS_NAME, '_fqdn'):
++        delattr(mail_utils.DNS_NAME, '_fqdn')
++    
++    try:
++        email = EmailMessage('Subject', 'Test body', 'from@example.com', ['to@example.com'])
++        email.encoding = 'iso-8859-1'
++        message = email.message()
++        message_id = message['Message-ID']
++        print("Success! Message-ID:", message_id)
++        
++        if 'example.com' in message_id and 'xn--' not in message_id:
++            print("ASCII domain preserved correctly: PASS")
++        else:
++            print("ASCII domain not preserved: FAIL")
++            
++    except Exception as e:
++        print("Error:", type(e).__name__)
++        import traceback
++        traceback.print_exc()
++
++print("\nAll tests completed!")

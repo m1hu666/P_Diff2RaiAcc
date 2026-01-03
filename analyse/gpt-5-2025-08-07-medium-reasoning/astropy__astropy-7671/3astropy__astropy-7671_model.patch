@@ -1,0 +1,98 @@
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc..f470e8a77 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -139,10 +139,7 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
+-    if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
+-    else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++    return _compare_versions(have_version, version, inclusive)
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+@@ -383,3 +380,81 @@ def _isinstancemethod(cls, obj):
+     # This shouldn't happen, though this is the most sensible response if
+     # it does.
+     raise AttributeError(name)
++# Helper for robust version comparison to avoid LooseVersion bugs (e.g., int vs str segments)
++def _compare_versions(have_version, target_version, inclusive=True):
++    """
++    Robustly compare versions using packaging or pkg_resources, falling back to LooseVersion.
++
++    Parameters
++    ----------
++    have_version : str
++        The version string of the installed module.
++    target_version : str
++        The minimum required version string.
++    inclusive : bool
++        If True, use >= comparison; else use >.
++    """
++    try:
++        from packaging.version import parse as packaging_parse
++        have = packaging_parse(str(have_version))
++        need = packaging_parse(str(target_version))
++        return have >= need if inclusive else have > need
++    except Exception:
++        try:
++            from pkg_resources import parse_version as pkg_parse
++            have = pkg_parse(str(have_version))
++            need = pkg_parse(str(target_version))
++            return have >= need if inclusive else have > need
++        except Exception:
++            try:
++                from distutils.version import LooseVersion as _LV
++                have = _LV(str(have_version))
++                need = _LV(str(target_version))
++                return have >= need if inclusive else have > need
++            except Exception:
++                # Final fallback: simple string comparison (not ideal but avoids crashes)
++                return _simple_version_compare(str(have_version), str(target_version), inclusive)
++def _simple_version_key(v):
++    """
++    Very simple version key for comparison when packaging/pkg_resources aren't available.
++    Handles numeric components and basic pre-releases: dev < a/alpha < b/beta < rc < final.
++    """
++    import re
++    v = str(v).strip()
++    # Extract pre-release label if present
++    # Normalize common pre-release tags
++    prerelease_order = {'dev': 0, 'a': 1, 'alpha': 1, 'b': 2, 'beta': 2, 'rc': 3, '': 4}  # final highest
++    # Split numeric and pre parts: e.g. 1.14dev, 1.14rc1, 1.14.3
++    m = re.match(r'^\s*([0-9]+(?:\.[0-9]+)*)?([^\d].*)?$', v)
++    if m:
++        num_part = m.group(1) or ''
++        rest = (m.group(2) or '').lower()
++    else:
++        num_part, rest = v, ''
++    # Build numeric tuple (pad with zeros for fair compare)
++    nums = tuple(int(x) for x in num_part.split('.') if x != '')
++    # Determine pre-release label and number (e.g. rc1 -> ('rc',1))
++    label = ''
++    label_num = 0
++    if rest:
++        # normalize separators
++        rest = rest.strip().lstrip('-').lstrip('.')
++        # map full words to short
++        rest = rest.replace('alpha', 'a').replace('beta', 'b')
++        m2 = re.match(r'^(dev|a|b|rc)(\d*)', rest)
++        if m2:
++            label = m2.group(1)
++            label_num = int(m2.group(2)) if m2.group(2) else 0
++        else:
++            # Unknown label: treat as very early pre-release
++            label = 'dev'
++            label_num = 0
++    order = prerelease_order.get(label, 0)
++    return nums, order, label_num
++
++def _simple_version_compare(have, need, inclusive=True):
++    kh = _simple_version_key(have)
++    kn = _simple_version_key(need)
++    if kh == kn:
++        return inclusive is True
++    return kh > kn

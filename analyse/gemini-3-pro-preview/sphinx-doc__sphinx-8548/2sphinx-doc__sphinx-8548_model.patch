@@ -1,0 +1,161 @@
+diff --git a/method_def.py b/method_def.py
+new file mode 100644
+index 000000000..992a8b422
+--- /dev/null
++++ b/method_def.py
+@@ -0,0 +1,24 @@
++
++    def find_analyzer_doc(self, namespace: str, membername: str, parent: Any) -> Optional[List[str]]:
++        """Find docstring for a member in analyzer, considering inheritance."""
++        if self.analyzer:
++            attr_docs = self.analyzer.find_attr_docs()
++            if (namespace, membername) in attr_docs:
++                return attr_docs[(namespace, membername)]
++
++        # Check inheritance
++        if inspect.isclass(parent):
++            for cls in parent.__mro__:
++                if cls == parent:
++                    continue
++                modname = getattr(cls, '__module__', None)
++                qualname = getattr(cls, '__qualname__', None)
++                if modname and qualname:
++                    try:
++                        analyzer = ModuleAnalyzer.for_module(modname)
++                        attr_docs = analyzer.find_attr_docs()
++                        if (qualname, membername) in attr_docs:
++                            return attr_docs[(qualname, membername)]
++                    except (PycodeError, AttributeError):
++                        pass
++        return None
+diff --git a/reproduction/_build/text_final/.doctrees/environment.pickle b/reproduction/_build/text_final/.doctrees/environment.pickle
+new file mode 100644
+index 000000000..af12e4600
+Binary files /dev/null and b/reproduction/_build/text_final/.doctrees/environment.pickle differ
+diff --git a/reproduction/_build/text_final/.doctrees/index.doctree b/reproduction/_build/text_final/.doctrees/index.doctree
+new file mode 100644
+index 000000000..c7131b7bf
+Binary files /dev/null and b/reproduction/_build/text_final/.doctrees/index.doctree differ
+diff --git a/reproduction/_build/text_final/index.txt b/reproduction/_build/text_final/index.txt
+new file mode 100644
+index 000000000..a8670d4d3
+--- /dev/null
++++ b/reproduction/_build/text_final/index.txt
+@@ -0,0 +1,7 @@
++class example.Derived
++
++   Derived class.
++
++   member = 1
++
++      Docstring for member.
+diff --git a/reproduction/conf.py b/reproduction/conf.py
+new file mode 100644
+index 000000000..60ed45d5b
+--- /dev/null
++++ b/reproduction/conf.py
+@@ -0,0 +1,4 @@
++import os
++import sys
++sys.path.insert(0, os.path.abspath('.'))
++extensions = ['sphinx.ext.autodoc']
+diff --git a/reproduction/example.py b/reproduction/example.py
+new file mode 100644
+index 000000000..e004376ec
+--- /dev/null
++++ b/reproduction/example.py
+@@ -0,0 +1,8 @@
++class Base:
++    """Base class."""
++    member = 1
++    """Docstring for member."""
++
++class Derived(Base):
++    """Derived class."""
++    pass
+diff --git a/reproduction/index.rst b/reproduction/index.rst
+new file mode 100644
+index 000000000..8d6e2f693
+--- /dev/null
++++ b/reproduction/index.rst
+@@ -0,0 +1,3 @@
++.. autoclass:: example.Derived
++   :members:
++   :inherited-members:
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index ddfd2b365..ae4a31e19 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -584,6 +584,31 @@ class Documenter:
+         else:
+             return 'docstring of %s' % fullname
+ 
++
++    def find_analyzer_doc(self, namespace: str, membername: str, parent: Any) -> Optional[List[str]]:
++        """Find docstring for a member in analyzer, considering inheritance."""
++        if self.analyzer:
++            attr_docs = self.analyzer.find_attr_docs()
++            if (namespace, membername) in attr_docs:
++                return attr_docs[(namespace, membername)]
++
++        # Check inheritance
++        if inspect.isclass(parent):
++            for cls in parent.__mro__:
++                if cls == parent:
++                    continue
++                modname = getattr(cls, '__module__', None)
++                qualname = getattr(cls, '__qualname__', None)
++                if modname and qualname:
++                    try:
++                        analyzer = ModuleAnalyzer.for_module(modname)
++                        attr_docs = analyzer.find_attr_docs()
++                        if (qualname, membername) in attr_docs:
++                            return attr_docs[(qualname, membername)]
++                    except (PycodeError, AttributeError):
++                        pass
++        return None
++
+     def add_content(self, more_content: Optional[StringList], no_docstring: bool = False
+                     ) -> None:
+         """Add content from docstrings, attribute documentation and user."""
+@@ -594,20 +619,18 @@ class Documenter:
+ 
+         # set sourcename and add content from attribute documentation
+         sourcename = self.get_sourcename()
+-        if self.analyzer:
+-            attr_docs = self.analyzer.find_attr_docs()
+-            if self.objpath:
+-                key = ('.'.join(self.objpath[:-1]), self.objpath[-1])
+-                if key in attr_docs:
+-                    no_docstring = True
+-                    # make a copy of docstring for attributes to avoid cache
+-                    # the change of autodoc-process-docstring event.
+-                    docstrings = [list(attr_docs[key])]
+-
+-                    for i, line in enumerate(self.process_doc(docstrings)):
+-                        self.add_line(line, sourcename, i)
+-
+         # add content from docstrings
++        if self.objpath:
++            key = ('.'.join(self.objpath[:-1]), self.objpath[-1])
++            doc = self.find_analyzer_doc(key[0], key[1], self.parent)
++            if doc:
++                no_docstring = True
++                # make a copy of docstring for attributes to avoid cache
++                # the change of autodoc-process-docstring event.
++                docstrings = [list(doc)]
++
++                for i, line in enumerate(self.process_doc(docstrings)):
++                    self.add_line(line, sourcename, i)
+         if not no_docstring:
+             docstrings = self.get_doc()
+             if not docstrings:
+@@ -746,7 +769,7 @@ class Documenter:
+                         keep = has_doc or self.options.undoc_members
+                 else:
+                     keep = False
+-            elif (namespace, membername) in attr_docs:
++            elif self.find_analyzer_doc(namespace, membername, self.object):
+                 if want_all and isprivate:
+                     if self.options.private_members is None:
+                         keep = False

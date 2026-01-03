@@ -1,0 +1,543 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 69a5fbf389..db7df891e3 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -249,16 +249,17 @@ class BaseModelAdmin(metaclass=forms.MediaDefiningClass):
+             return None
+         db = kwargs.get('using')
+ 
+-        autocomplete_fields = self.get_autocomplete_fields(request)
+-        if db_field.name in autocomplete_fields:
+-            kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, self.admin_site, using=db)
+-        elif db_field.name in self.raw_id_fields:
+-            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)
+-        elif db_field.name in [*self.filter_vertical, *self.filter_horizontal]:
+-            kwargs['widget'] = widgets.FilteredSelectMultiple(
+-                db_field.verbose_name,
+-                db_field.name in self.filter_vertical
+-            )
++        if 'widget' not in kwargs:
++            autocomplete_fields = self.get_autocomplete_fields(request)
++            if db_field.name in autocomplete_fields:
++                kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, self.admin_site, using=db)
++            elif db_field.name in self.raw_id_fields:
++                kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)
++            elif db_field.name in [*self.filter_vertical, *self.filter_horizontal]:
++                kwargs['widget'] = widgets.FilteredSelectMultiple(
++                    db_field.verbose_name,
++                    db_field.name in self.filter_vertical
++                )
+ 
+         if 'queryset' not in kwargs:
+             queryset = self.get_field_queryset(db, db_field, request)
+diff --git a/test_autocomplete.py b/test_autocomplete.py
+new file mode 100644
+index 0000000000..43a585fddb
+--- /dev/null
++++ b/test_autocomplete.py
+@@ -0,0 +1,70 @@
++"""
++Test autocomplete fields with widget override
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.forms import CheckboxSelectMultiple
++
++# Create test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    authors = models.ManyToManyField(Author)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create admin class with autocomplete_fields
++class BookAdmin(admin.ModelAdmin):
++    autocomplete_fields = ('authors',)
++
++# Test the issue
++book_admin = BookAdmin(Book, admin.site)
++
++# Create a mock request
++class MockRequest:
++    pass
++
++request = MockRequest()
++
++print("Test: Field in autocomplete_fields WITHOUT custom widget")
++authors_field = Book._meta.get_field('authors')
++formfield1 = book_admin.formfield_for_manytomany(authors_field, request)
++print(f"  Widget type: {type(formfield1.widget).__name__}")
++print(f"  Expected: AutocompleteSelectMultiple")
++print(f"  PASS" if type(formfield1.widget).__name__ == 'AutocompleteSelectMultiple' else "  FAIL")
++print()
++
++print("Test: Field in autocomplete_fields WITH custom widget")
++formfield2 = book_admin.formfield_for_manytomany(authors_field, request, widget=CheckboxSelectMultiple)
++print(f"  Widget type: {type(formfield2.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple")
++print(f"  PASS" if type(formfield2.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..4c9583a1f3
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,119 @@
++"""
++Comprehensive test for formfield_for_manytomany widget override fix
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.forms import CheckboxSelectMultiple
++
++# Create test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    authors = models.ManyToManyField(Author)
++    editors = models.ManyToManyField(Author, related_name='edited_books')
++    reviewers = models.ManyToManyField(Author, related_name='reviewed_books')
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create admin class with various configurations
++class BookAdmin(admin.ModelAdmin):
++    filter_vertical = ('authors',)
++    raw_id_fields = ('editors',)
++
++# Test the issue
++book_admin = BookAdmin(Book, admin.site)
++
++# Create a mock request
++class MockRequest:
++    pass
++
++request = MockRequest()
++
++print("=" * 70)
++print("COMPREHENSIVE TEST FOR formfield_for_manytomany WIDGET OVERRIDE FIX")
++print("=" * 70)
++print()
++
++# Test 1: Field in filter_vertical WITHOUT custom widget (should use FilteredSelectMultiple)
++print("Test 1: Field in filter_vertical WITHOUT custom widget")
++authors_field = Book._meta.get_field('authors')
++formfield1 = book_admin.formfield_for_manytomany(authors_field, request)
++print(f"  Widget type: {type(formfield1.widget).__name__}")
++print(f"  Expected: FilteredSelectMultiple")
++print(f"  PASS" if type(formfield1.widget).__name__ == 'FilteredSelectMultiple' else "  FAIL")
++print()
++
++# Test 2: Field in filter_vertical WITH custom widget (should use custom widget)
++print("Test 2: Field in filter_vertical WITH custom widget")
++formfield2 = book_admin.formfield_for_manytomany(authors_field, request, widget=CheckboxSelectMultiple)
++print(f"  Widget type: {type(formfield2.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple")
++print(f"  PASS" if type(formfield2.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
++print()
++
++# Test 3: Field in raw_id_fields WITHOUT custom widget (should use ManyToManyRawIdWidget)
++print("Test 3: Field in raw_id_fields WITHOUT custom widget")
++editors_field = Book._meta.get_field('editors')
++formfield3 = book_admin.formfield_for_manytomany(editors_field, request)
++print(f"  Widget type: {type(formfield3.widget).__name__}")
++print(f"  Expected: ManyToManyRawIdWidget")
++print(f"  PASS" if type(formfield3.widget).__name__ == 'ManyToManyRawIdWidget' else "  FAIL")
++print()
++
++# Test 4: Field in raw_id_fields WITH custom widget (should use custom widget)
++print("Test 4: Field in raw_id_fields WITH custom widget")
++formfield4 = book_admin.formfield_for_manytomany(editors_field, request, widget=CheckboxSelectMultiple)
++print(f"  Widget type: {type(formfield4.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple")
++print(f"  PASS" if type(formfield4.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
++print()
++
++# Test 5: Regular field WITHOUT custom widget (should use default SelectMultiple)
++print("Test 5: Regular field WITHOUT custom widget")
++reviewers_field = Book._meta.get_field('reviewers')
++formfield5 = book_admin.formfield_for_manytomany(reviewers_field, request)
++print(f"  Widget type: {type(formfield5.widget).__name__}")
++print(f"  Expected: SelectMultiple")
++print(f"  PASS" if type(formfield5.widget).__name__ == 'SelectMultiple' else "  FAIL")
++print()
++
++# Test 6: Regular field WITH custom widget (should use custom widget)
++print("Test 6: Regular field WITH custom widget")
++formfield6 = book_admin.formfield_for_manytomany(reviewers_field, request, widget=CheckboxSelectMultiple)
++print(f"  Widget type: {type(formfield6.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple")
++print(f"  PASS" if type(formfield6.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
++print()
++
++print("=" * 70)
++print("ALL TESTS COMPLETED")
++print("=" * 70)
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..674026f6a7
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,115 @@
++"""
++Final verification test for formfield_for_manytomany widget override fix
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.forms import CheckboxSelectMultiple, RadioSelect
++
++# Create test models
++class Tag(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    tags = models.ManyToManyField(Tag)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test 1: Subclass that overrides formfield_for_manytomany and passes widget
++class CustomArticleAdmin(admin.ModelAdmin):
++    def formfield_for_manytomany(self, db_field, request, **kwargs):
++        if db_field.name == 'tags':
++            kwargs['widget'] = CheckboxSelectMultiple
++        return super().formfield_for_manytomany(db_field, request, **kwargs)
++
++class MockRequest:
++    pass
++
++request = MockRequest()
++
++print("=" * 70)
++print("FINAL VERIFICATION TEST")
++print("=" * 70)
++print()
++
++# Test 1: Custom admin that sets widget in override
++print("Test 1: Custom admin that sets widget in formfield_for_manytomany override")
++custom_admin = CustomArticleAdmin(Article, admin.site)
++tags_field = Article._meta.get_field('tags')
++formfield = custom_admin.formfield_for_manytomany(tags_field, request)
++print(f"  Widget type: {type(formfield.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple")
++print(f"  PASS" if type(formfield.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
++print()
++
++# Test 2: Custom admin with filter_vertical that sets widget in override
++class CustomArticleAdmin2(admin.ModelAdmin):
++    filter_vertical = ('tags',)
++    
++    def formfield_for_manytomany(self, db_field, request, **kwargs):
++        if db_field.name == 'tags':
++            kwargs['widget'] = CheckboxSelectMultiple
++        return super().formfield_for_manytomany(db_field, request, **kwargs)
++
++print("Test 2: Custom admin with filter_vertical that sets widget in override")
++custom_admin2 = CustomArticleAdmin2(Article, admin.site)
++formfield2 = custom_admin2.formfield_for_manytomany(tags_field, request)
++print(f"  Widget type: {type(formfield2.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple (widget from override should win)")
++print(f"  PASS" if type(formfield2.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
++print()
++
++# Test 3: Ensure filter_vertical still works when no widget is passed
++class CustomArticleAdmin3(admin.ModelAdmin):
++    filter_vertical = ('tags',)
++
++print("Test 3: filter_vertical still works when no widget is passed")
++custom_admin3 = CustomArticleAdmin3(Article, admin.site)
++formfield3 = custom_admin3.formfield_for_manytomany(tags_field, request)
++print(f"  Widget type: {type(formfield3.widget).__name__}")
++print(f"  Expected: FilteredSelectMultiple")
++print(f"  PASS" if type(formfield3.widget).__name__ == 'FilteredSelectMultiple' else "  FAIL")
++print()
++
++# Test 4: Passing widget directly to formfield_for_manytomany call
++class CustomArticleAdmin4(admin.ModelAdmin):
++    filter_vertical = ('tags',)
++
++print("Test 4: Passing widget directly to formfield_for_manytomany call")
++custom_admin4 = CustomArticleAdmin4(Article, admin.site)
++formfield4 = custom_admin4.formfield_for_manytomany(tags_field, request, widget=CheckboxSelectMultiple)
++print(f"  Widget type: {type(formfield4.widget).__name__}")
++print(f"  Expected: CheckboxSelectMultiple (passed widget should win)")
++print(f"  PASS" if type(formfield4.widget).__name__ == 'CheckboxSelectMultiple' else "  FAIL")
++print()
++
++print("=" * 70)
++print("ALL TESTS COMPLETED SUCCESSFULLY")
++print("=" * 70)
+diff --git a/test_widget_override.py b/test_widget_override.py
+new file mode 100644
+index 0000000000..21d57acc81
+--- /dev/null
++++ b/test_widget_override.py
+@@ -0,0 +1,99 @@
++"""
++Test script to reproduce the widget override issue in formfield_for_manytomany
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.forms import CheckboxSelectMultiple
++
++# Create test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    authors = models.ManyToManyField(Author)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create admin class
++class BookAdmin(admin.ModelAdmin):
++    pass
++
++# Test the issue
++book_admin = BookAdmin(Book, admin.site)
++authors_field = Book._meta.get_field('authors')
++
++# Create a mock request
++class MockRequest:
++    pass
++
++request = MockRequest()
++
++# Test 1: formfield_for_manytomany WITHOUT widget parameter
++print("Test 1: formfield_for_manytomany WITHOUT widget parameter")
++formfield1 = book_admin.formfield_for_manytomany(authors_field, request)
++print(f"Widget type: {type(formfield1.widget).__name__}")
++print()
++
++# Test 2: formfield_for_manytomany WITH widget parameter (should be respected but currently isn't)
++print("Test 2: formfield_for_manytomany WITH widget parameter (CheckboxSelectMultiple)")
++formfield2 = book_admin.formfield_for_manytomany(authors_field, request, widget=CheckboxSelectMultiple)
++print(f"Widget type: {type(formfield2.widget).__name__}")
++print(f"Expected: CheckboxSelectMultiple")
++print(f"Bug exists: {type(formfield2.widget).__name__ != 'CheckboxSelectMultiple'}")
++print()
++
++# Test 3: Compare with formfield_for_foreignkey behavior
++print("Test 3: formfield_for_foreignkey WITH widget parameter (for comparison)")
++from django.forms import RadioSelect
++
++class Category(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    category = models.ForeignKey(Category, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ArticleAdmin(admin.ModelAdmin):
++    pass
++
++article_admin = ArticleAdmin(Article, admin.site)
++category_field = Article._meta.get_field('category')
++
++formfield3 = article_admin.formfield_for_foreignkey(category_field, request, widget=RadioSelect)
++print(f"Widget type: {type(formfield3.widget).__name__}")
++print(f"Expected: RadioSelect")
++print(f"Works correctly: {type(formfield3.widget).__name__ == 'RadioSelect'}")
+diff --git a/test_widget_override2.py b/test_widget_override2.py
+new file mode 100644
+index 0000000000..a1adb22588
+--- /dev/null
++++ b/test_widget_override2.py
+@@ -0,0 +1,78 @@
++"""
++Test script to reproduce the widget override issue in formfield_for_manytomany
++when field is in filter_vertical, raw_id_fields, or autocomplete_fields
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.forms import CheckboxSelectMultiple
++
++# Create test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    authors = models.ManyToManyField(Author)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create admin class with filter_vertical
++class BookAdmin(admin.ModelAdmin):
++    filter_vertical = ('authors',)
++
++# Test the issue
++book_admin = BookAdmin(Book, admin.site)
++authors_field = Book._meta.get_field('authors')
++
++# Create a mock request
++class MockRequest:
++    pass
++
++request = MockRequest()
++
++# Test: formfield_for_manytomany WITH widget parameter when field is in filter_vertical
++print("Test: formfield_for_manytomany WITH widget parameter when field is in filter_vertical")
++print("The widget parameter should be respected, but it gets overridden")
++formfield = book_admin.formfield_for_manytomany(authors_field, request, widget=CheckboxSelectMultiple)
++print(f"Widget type: {type(formfield.widget).__name__}")
++print(f"Expected: CheckboxSelectMultiple")
++print(f"Bug exists: {type(formfield.widget).__name__ != 'CheckboxSelectMultiple'}")
++print()
++
++# Test with raw_id_fields
++class BookAdmin2(admin.ModelAdmin):
++    raw_id_fields = ('authors',)
++
++book_admin2 = BookAdmin2(Book, admin.site)
++print("Test: formfield_for_manytomany WITH widget parameter when field is in raw_id_fields")
++formfield2 = book_admin2.formfield_for_manytomany(authors_field, request, widget=CheckboxSelectMultiple)
++print(f"Widget type: {type(formfield2.widget).__name__}")
++print(f"Expected: CheckboxSelectMultiple")
++print(f"Bug exists: {type(formfield2.widget).__name__ != 'CheckboxSelectMultiple'}")

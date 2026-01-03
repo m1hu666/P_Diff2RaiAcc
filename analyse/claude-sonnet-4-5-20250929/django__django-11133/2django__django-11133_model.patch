@@ -1,0 +1,116 @@
+diff --git a/django/http/response.py b/django/http/response.py
+index 6a84e193ba..b1192f1fc7 100644
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -234,6 +234,8 @@ class HttpResponseBase:
+         if isinstance(value, str):
+             return bytes(value.encode(self.charset))
+         # Handle non-string types.
++        if isinstance(value, memoryview):
++            return bytes(value)
+         return str(value).encode(self.charset)
+ 
+     # These methods partially implement the file-like object interface.
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..35b969ae2a
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,56 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        DEFAULT_CHARSET='utf-8',
++    )
++    django.setup()
++
++from django.http import HttpResponse
++
++print("Testing HttpResponse with memoryview objects...")
++
++# Test 1: Basic memoryview
++response = HttpResponse(memoryview(b"My Content"))
++assert response.content == b'My Content', f"Failed: {response.content}"
++print("PASS: Basic memoryview test")
++
++# Test 2: Memoryview with special characters
++test_data = b"Hello, World! \x00\x01\x02"
++response = HttpResponse(memoryview(test_data))
++assert response.content == test_data, f"Failed: {response.content}"
++print("PASS: Memoryview with special chars")
++
++# Test 3: Empty memoryview
++response = HttpResponse(memoryview(b""))
++assert response.content == b"", f"Failed: {response.content}"
++print("PASS: Empty memoryview")
++
++# Test 4: Memoryview from bytearray
++ba = bytearray(b"ByteArray Content")
++response = HttpResponse(memoryview(ba))
++assert response.content == b"ByteArray Content", f"Failed: {response.content}"
++print("PASS: Memoryview from bytearray")
++
++# Test 5: String content (ensure we didn't break existing functionality)
++response = HttpResponse("My Content")
++assert response.content == b'My Content', f"Failed: {response.content}"
++print("PASS: String content still works")
++
++# Test 6: Bytes content (ensure we didn't break existing functionality)
++response = HttpResponse(b"My Content")
++assert response.content == b'My Content', f"Failed: {response.content}"
++print("PASS: Bytes content still works")
++
++# Test 7: Write method with memoryview
++response = HttpResponse()
++response.write(memoryview(b"Part 1"))
++response.write(memoryview(b"Part 2"))
++assert response.content == b'Part 1Part 2', f"Failed: {response.content}"
++print("PASS: Write method with memoryview")
++
++print("\nAll tests passed! The fix correctly handles memoryview objects.")
+diff --git a/test_pr_description.py b/test_pr_description.py
+new file mode 100644
+index 0000000000..d0847bd746
+--- /dev/null
++++ b/test_pr_description.py
+@@ -0,0 +1,35 @@
++"""
++Test the exact scenario from the PR description:
++HttpResponse doesn't handle memoryview objects
++"""
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(DEBUG=True, SECRET_KEY='test', DEFAULT_CHARSET='utf-8')
++    django.setup()
++
++from django.http import HttpResponse
++
++print("Testing the exact examples from the PR description:\n")
++
++# String content
++response = HttpResponse("My Content")
++print(f"String content: {response.content}")
++assert response.content == b'My Content', "String test failed"
++
++# Bytes content
++response = HttpResponse(b"My Content")
++print(f"Bytes content: {response.content}")
++assert response.content == b'My Content', "Bytes test failed"
++
++# memoryview content - THIS WAS THE BUG
++response = HttpResponse(memoryview(b"My Content"))
++print(f"Memoryview content: {response.content}")
++# Before the fix, this would output: b'<memory at 0x7fcc47ab2648>'
++# After the fix, this correctly outputs: b'My Content'
++assert response.content == b'My Content', "Memoryview test failed"
++assert not response.content.startswith(b'<memory at'), "Still getting string representation!"
++
++print("\nSUCCESS: All tests pass! HttpResponse now correctly handles memoryview objects.")
++print("This fixes the issue where PostgreSQL BinaryFields return memoryview objects.")

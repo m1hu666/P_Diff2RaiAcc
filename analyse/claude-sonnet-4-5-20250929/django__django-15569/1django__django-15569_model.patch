@@ -1,0 +1,178 @@
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index 0caa165e15..6917820604 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -217,6 +217,7 @@ class RegisterLookupMixin:
+         if lookup_name is None:
+             lookup_name = lookup.lookup_name
+         del cls.class_lookups[lookup_name]
++        cls._clear_cached_lookups()
+ 
+ 
+ def select_related_descend(field, restricted, requested, load_fields, reverse=False):
+diff --git a/test_expression_cache.py b/test_expression_cache.py
+new file mode 100644
+index 0000000000..a30ad5c257
+--- /dev/null
++++ b/test_expression_cache.py
+@@ -0,0 +1,35 @@
++"""
++Test that cache clearing works for Expression class as well.
++"""
++from django.db.models import Expression, Lookup
++
++class ExpressionTestLookup(Lookup):
++    lookup_name = 'exprtest'
++    
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        params = lhs_params + rhs_params
++        return '%s = %s' % (lhs, rhs), params
++
++print("Testing Expression class cache clearing...")
++
++# Clear cache
++Expression._lookup_cache = {}
++
++# Register lookup on Expression
++Expression.register_lookup(ExpressionTestLookup)
++print(f"After register: Cache = {Expression._lookup_cache}")
++
++# Get lookup to populate cache
++lookup = Expression.get_lookup('exprtest')
++print(f"After get_lookup: Cache = {Expression._lookup_cache}")
++assert lookup is not None, "Lookup should be found"
++
++# Unregister lookup
++Expression._unregister_lookup(ExpressionTestLookup)
++print(f"After unregister: Cache = {Expression._lookup_cache}")
++
++# Verify cache is cleared
++assert 'exprtest' not in Expression._lookup_cache, "Cache should be cleared"
++print("‚ú? Expression cache clearing works correctly!")
+diff --git a/test_lookup_cache.py b/test_lookup_cache.py
+new file mode 100644
+index 0000000000..7bd37f8cc8
+--- /dev/null
++++ b/test_lookup_cache.py
+@@ -0,0 +1,48 @@
++"""
++Test script to demonstrate the lookup cache issue.
++"""
++from django.db import models
++from django.db.models import Lookup
++
++# Create a simple test lookup
++class TestLookup(Lookup):
++    lookup_name = 'testlookup'
++    
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        params = lhs_params + rhs_params
++        return '%s = %s' % (lhs, rhs), params
++
++# Test the cache behavior
++print("Testing lookup cache behavior...")
++
++# Register the lookup
++models.Field.register_lookup(TestLookup)
++cache = getattr(models.Field, '_lookup_cache', {})
++print(f"After register_lookup: Cache = {cache}")
++
++# Access the lookup to populate cache
++lookup = models.Field.get_lookup('testlookup')
++cache = getattr(models.Field, '_lookup_cache', {})
++print(f"After get_lookup: Cache = {cache}")
++print(f"Lookup found: {lookup is not None}")
++
++# Unregister the lookup
++models.Field._unregister_lookup(TestLookup)
++cache = getattr(models.Field, '_lookup_cache', {})
++print(f"After _unregister_lookup: Cache = {cache}")
++
++# Try to get the lookup again - it should not be found
++lookup_after_unregister = models.Field.get_lookup('testlookup')
++cache = getattr(models.Field, '_lookup_cache', {})
++print(f"After get_lookup (post-unregister): Cache = {cache}")
++print(f"Lookup found after unregister: {lookup_after_unregister is not None}")
++
++# The issue: the cache still contains the old lookup even though it was unregistered
++if 'testlookup' in cache:
++    print("\nBUG CONFIRMED: Cache still contains 'testlookup' after unregister!")
++    print("This is the issue that needs to be fixed.")
++else:
++    print("\nCache is clean - no bug detected.")
++    print("‚ú? Fix verified: Cache is properly cleared after unregister!")
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..adc92de5fd
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,65 @@
++"""
++Verification script to demonstrate the fix works correctly.
++This shows that _unregister_lookup now properly clears the cache,
++making it symmetric with register_lookup.
++"""
++from django.db import models
++from django.db.models import Lookup
++
++class TestLookup(Lookup):
++    lookup_name = 'testlookup'
++    
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        params = lhs_params + rhs_params
++        return '%s = %s' % (lhs, rhs), params
++
++print("=" * 70)
++print("Verification: _unregister_lookup() now clears the lookup cache")
++print("=" * 70)
++
++# Start with a clean slate
++if hasattr(models.CharField, '_lookup_cache'):
++    models.CharField._lookup_cache = {}
++if hasattr(models.CharField, 'class_lookups'):
++    models.CharField.class_lookups = {}
++
++print("\n1. Register a lookup")
++models.CharField.register_lookup(TestLookup)
++print(f"   class_lookups: {models.CharField.class_lookups}")
++
++print("\n2. Access get_lookups() to populate cache")
++lookups = models.CharField.get_lookups()
++print(f"   'testlookup' in lookups: {'testlookup' in lookups}")
++if hasattr(models.CharField, '_lookup_cache'):
++    print(f"   Cache populated: {bool(models.CharField._lookup_cache)}")
++
++print("\n3. Unregister the lookup")
++models.CharField._unregister_lookup(TestLookup)
++print(f"   class_lookups: {models.CharField.class_lookups}")
++
++print("\n4. Check if cache was cleared")
++if hasattr(models.CharField, '_lookup_cache'):
++    cache_cleared = len(models.CharField._lookup_cache) == 0
++    print(f"   Cache cleared: {cache_cleared}")
++    if cache_cleared:
++        print("   ‚ú? SUCCESS: Cache was properly cleared!")
++    else:
++        print(f"   ‚ú? FAILURE: Cache still contains: {models.CharField._lookup_cache}")
++else:
++    print("   ‚ú? SUCCESS: No cache attribute (cache was cleared)")
++
++print("\n5. Verify lookup is truly gone")
++lookups_after = models.CharField.get_lookups()
++lookup_gone = 'testlookup' not in lookups_after
++print(f"   'testlookup' in lookups: {not lookup_gone}")
++if lookup_gone:
++    print("   ‚ú? SUCCESS: Lookup is no longer available!")
++else:
++    print("   ‚ú? FAILURE: Lookup still available in cache")
++
++print("\n" + "=" * 70)
++print("Fix verified: _unregister_lookup() now properly clears the cache,")
++print("making it symmetric with register_lookup().")
++print("=" * 70)

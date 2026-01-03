@@ -1,0 +1,124 @@
+diff --git a/debug_mysql.py b/debug_mysql.py
+new file mode 100644
+index 0000000000..c38c7a248e
+--- /dev/null
++++ b/debug_mysql.py
+@@ -0,0 +1,40 @@
++import os
++import sys
++import django
++import datetime
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.mysql',
++                'NAME': 'test_db',
++                'USER': 'root',
++                'PASSWORD': '',
++                'HOST': 'localhost',
++                'PORT': '3306',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'tests.expressions',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import connection
++from django.db.models import F
++from tests.expressions.models import Experiment
++
++# Check what format_for_duration_arithmetic returns
++from django.db.backends.mysql.operations import DatabaseOperations
++ops = DatabaseOperations(connection)
++print("format_for_duration_arithmetic('123456'):", ops.format_for_duration_arithmetic('123456'))
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index af8cfd86b5..f70eb4a822 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -1,9 +1,11 @@
++import datetime
+ import uuid
+ 
+ from django.conf import settings
+ from django.db.backends.base.operations import BaseDatabaseOperations
+ from django.utils import timezone
+ from django.utils.duration import duration_microseconds
++from django.utils.dateparse import parse_duration
+ from django.utils.encoding import force_str
+ 
+ 
+@@ -298,6 +300,8 @@ class DatabaseOperations(BaseDatabaseOperations):
+                 converters.append(self.convert_datetimefield_value)
+         elif internal_type == 'UUIDField':
+             converters.append(self.convert_uuidfield_value)
++        elif internal_type == 'DurationField':
++            converters.append(self.convert_durationfield_value)
+         return converters
+ 
+     def convert_booleanfield_value(self, value, expression, connection):
+@@ -315,6 +319,14 @@ class DatabaseOperations(BaseDatabaseOperations):
+             value = uuid.UUID(value)
+         return value
+ 
++    def convert_durationfield_value(self, value, expression, connection):
++        if value is not None:
++            if isinstance(value, str):
++                value = parse_duration(value)
++            elif not isinstance(value, datetime.timedelta):
++                value = datetime.timedelta(0, 0, value)
++        return value
++
+     def binary_placeholder_sql(self, value):
+         return '_binary %s' if value is not None and not hasattr(value, 'as_sql') else '%s'
+ 
+diff --git a/django/db/backends/sqlite3/operations.py b/django/db/backends/sqlite3/operations.py
+index 9510b5edd9..a253f7ecc7 100644
+--- a/django/db/backends/sqlite3/operations.py
++++ b/django/db/backends/sqlite3/operations.py
+@@ -10,7 +10,7 @@ from django.db import DatabaseError, NotSupportedError, models
+ from django.db.backends.base.operations import BaseDatabaseOperations
+ from django.db.models.expressions import Col
+ from django.utils import timezone
+-from django.utils.dateparse import parse_date, parse_datetime, parse_time
++from django.utils.dateparse import parse_date, parse_datetime, parse_duration, parse_time
+ from django.utils.duration import duration_microseconds
+ from django.utils.functional import cached_property
+ 
+@@ -269,6 +269,8 @@ class DatabaseOperations(BaseDatabaseOperations):
+             converters.append(self.convert_datefield_value)
+         elif internal_type == 'TimeField':
+             converters.append(self.convert_timefield_value)
++        elif internal_type == 'DurationField':
++            converters.append(self.convert_durationfield_value)
+         elif internal_type == 'DecimalField':
+             converters.append(self.get_decimalfield_converter(expression))
+         elif internal_type == 'UUIDField':
+@@ -297,6 +299,15 @@ class DatabaseOperations(BaseDatabaseOperations):
+                 value = parse_time(value)
+         return value
+ 
++
++    def convert_durationfield_value(self, value, expression, connection):
++        if value is not None:
++            if isinstance(value, str):
++                value = parse_duration(value)
++            elif not isinstance(value, datetime.timedelta):
++                value = datetime.timedelta(0, 0, value)
++        return value
++
+     def get_decimalfield_converter(self, expression):
+         # SQLite stores only 15 significant digits. Digits coming from
+         # float inaccuracy must be removed.

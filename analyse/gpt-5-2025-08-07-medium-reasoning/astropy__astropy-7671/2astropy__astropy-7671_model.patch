@@ -1,0 +1,102 @@
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc..cda73898a 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -6,6 +6,7 @@
+ import inspect
+ import types
+ import importlib
++import re
+ from distutils.version import LooseVersion
+ 
+ 
+@@ -90,36 +91,13 @@ def resolve_name(name, *additional_parts):
+ 
+ def minversion(module, version, inclusive=True, version_path='__version__'):
+     """
+-    Returns `True` if the specified Python module satisfies a minimum version
+-    requirement, and `False` if not.
++    Returns True if the specified Python module satisfies a minimum version
++    requirement, and False if not.
+ 
+-    Parameters
+-    ----------
+-
+-    module : module or `str`
+-        An imported module of which to check the version, or the name of
+-        that module (in which case an import of that module is attempted--
+-        if this fails `False` is returned).
+-
+-    version : `str`
+-        The version as a string that this module must have at a minimum (e.g.
+-        ``'0.12'``).
+-
+-    inclusive : `bool`
+-        The specified version meets the requirement inclusively (i.e. ``>=``)
+-        as opposed to strictly greater than (default: `True`).
+-
+-    version_path : `str`
+-        A dotted attribute path to follow in the module for the version.
+-        Defaults to just ``'__version__'``, which should work for most Python
+-        modules.
+-
+-    Examples
+-    --------
+-
+-    >>> import astropy
+-    >>> minversion(astropy, '0.4.4')
+-    True
++    This attempts to use robust version parsing if available (packaging or
++    pkg_resources). If neither is available, it falls back to distutils.LooseVersion
++    but strips non-numeric additions (e.g., 'dev', 'rc1') from versions to avoid
++    TypeError in LooseVersion.
+     """
+     if isinstance(module, types.ModuleType):
+         module_name = module.__name__
+@@ -139,10 +117,44 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
++    # Try robust parsers first
++    parse_version = None
++    try:
++        from packaging.version import parse as parse_version  # type: ignore
++    except Exception:
++        try:
++            from pkg_resources import parse_version  # type: ignore
++        except Exception:
++            parse_version = None
++
++    if parse_version is not None:
++        hv = parse_version(str(have_version))
++        vv = parse_version(str(version))
++        return hv >= vv if inclusive else hv > vv
++
++    # Fallback: use LooseVersion with sanitization to avoid TypeError
++    def _sanitize(ver):
++        v = str(ver)
++        parts = v.split('.')
++        clean_parts = []
++        for p in parts:
++            if p.isdigit():
++                clean_parts.append(p)
++            else:
++                m = re.match(r'^(\d+)', p)
++                if m:
++                    clean_parts.append(m.group(1))
++                    break
++                else:
++                    break
++        return '.'.join(clean_parts) if clean_parts else v
++
++    hv = _sanitize(have_version)
++    vv = _sanitize(version)
+     if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
++        return LooseVersion(hv) >= LooseVersion(vv)
+     else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++        return LooseVersion(hv) > LooseVersion(vv)
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):

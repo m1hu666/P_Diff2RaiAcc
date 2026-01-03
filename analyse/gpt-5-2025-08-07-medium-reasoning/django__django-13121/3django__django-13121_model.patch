@@ -1,0 +1,91 @@
+diff --git a/django/db/backends/base/operations.py b/django/db/backends/base/operations.py
+index 2e283a3193..e0c87a4fa6 100644
+--- a/django/db/backends/base/operations.py
++++ b/django/db/backends/base/operations.py
+@@ -579,9 +579,45 @@ class BaseDatabaseOperations:
+         return []
+ 
+     def convert_durationfield_value(self, value, expression, connection):
+-        if value is not None:
+-            return datetime.timedelta(0, 0, value)
+-
++        """
++        Convert a database value to a Python timedelta for DurationField on
++        backends without native duration support.
++        Backends typically store durations as integer microseconds, but some
++        expressions (e.g. SQLite's django_format_dtdelta()) may return a
++        string representation of a timedelta. Handle both.
++        """
++        if value is None:
++            return None
++        # Integer microseconds.
++        if isinstance(value, int):
++            return datetime.timedelta(microseconds=value)
++        # Some backends/functions may return decimal, float, or numeric strings
++        # representing microseconds.
++        try:
++            if isinstance(value, (float,)):
++                return datetime.timedelta(microseconds=int(value))
++            if isinstance(value, (bytes, str)):
++                v = value.decode() if isinstance(value, bytes) else value
++                if v.lstrip("-").isdigit():
++                    return datetime.timedelta(microseconds=int(v))
++        except (ValueError, OverflowError):
++            pass
++        # Already a timedelta?
++        if isinstance(value, datetime.timedelta):
++            return value
++        # Fallback: try parsing string duration "[DD] [[HH:]MM:]ss[.uuuuuu]".
++        from django.utils.dateparse import parse_duration
++        if isinstance(value, (str, bytes)):
++            v = value.decode() if isinstance(value, bytes) else value
++            parsed = None
++            try:
++                parsed = parse_duration(v)
++            except Exception:
++                parsed = None
++            if parsed is not None:
++                return parsed
++        # Unknown format; return value unchanged to avoid masking errors.
++        return value
+     def check_expression_support(self, expression):
+         """
+         Check that the backend supports the provided expression.
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index af8cfd86b5..01016f14be 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -1,6 +1,7 @@
+ import uuid
+ 
+ from django.conf import settings
++from django.db import DatabaseError
+ from django.db.backends.base.operations import BaseDatabaseOperations
+ from django.utils import timezone
+ from django.utils.duration import duration_microseconds
+@@ -161,6 +162,25 @@ class DatabaseOperations(BaseDatabaseOperations):
+         """
+         return [(None, ("NULL", [], False))]
+ 
++    def combine_duration_expression(self, connector, sub_expressions):
++        if connector not in ['+', '-']:
++            raise DatabaseError('Invalid connector for timedelta: %s.' % connector)
++        # MySQL doesn't support adding/subtracting two INTERVALs directly.
++        # DurationExpression.compile wraps DurationField operands as
++        # "INTERVAL <expr> MICROSECOND". Convert it to a single INTERVAL with
++        # the combined numeric microseconds expression.
++        inner = []
++        for sql in sub_expressions:
++            prefix = 'INTERVAL '
++            suffix = ' MICROSECOND'
++            if sql.startswith(prefix) and sql.endswith(suffix):
++                inner.append(sql[len(prefix):-len(suffix)])
++            else:
++                inner.append(sql)
++        combined = self.combine_expression(connector, inner)
++        return 'INTERVAL (%s) MICROSECOND' % combined
++
++
+     def last_executed_query(self, cursor, sql, params):
+         # With MySQLdb, cursor objects have an (undocumented) "_executed"
+         # attribute where the exact query sent to the database is saved.

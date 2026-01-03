@@ -1,0 +1,90 @@
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index af8cfd86b5..7f8cf56d0c 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -1,3 +1,4 @@
++import re
+ import uuid
+ 
+ from django.conf import settings
+@@ -153,6 +154,28 @@ class DatabaseOperations(BaseDatabaseOperations):
+     def format_for_duration_arithmetic(self, sql):
+         return 'INTERVAL %s MICROSECOND' % sql
+ 
++    def combine_duration_expression(self, connector, sub_expressions):
++        # Handle duration-only arithmetic and datetime +/- duration for MySQL.
++        # MySQL doesn't support using "+" directly with INTERVAL, and has no native interval type.
++        # Pattern-match "INTERVAL <expr> MICROSECOND" wrappers and transform appropriately.
++        interval_re = re.compile(r'^\s*INTERVAL\s+(?P<inner>.+?)\s+MICROSECOND\s*$')
++        if connector not in ['+', '-']:
++            return super().combine_duration_expression(connector, sub_expressions)
++        left, right = sub_expressions
++        m_left = interval_re.match(left or '')
++        m_right = interval_re.match(right or '')
++        # If both sides are intervals, perform integer microseconds arithmetic.
++        if m_left and m_right:
++            return '(%s %s %s)' % (m_left.group('inner'), connector, m_right.group('inner'))
++        # If exactly one side is an interval, use DATE_ADD/DATE_SUB with the non-interval side.
++        func = 'DATE_ADD' if connector == '+' else 'DATE_SUB'
++        if m_left and not m_right:
++            return '%s(%s, INTERVAL %s MICROSECOND)' % (func, right, m_left.group('inner'))
++        if m_right and not m_left:
++            return '%s(%s, INTERVAL %s MICROSECOND)' % (func, left, m_right.group('inner'))
++        # Fallback to default combination.
++        return super().combine_duration_expression(connector, sub_expressions)
++
+     def force_no_ordering(self):
+         """
+         "ORDER BY NULL" prevents MySQL from implicitly ordering by grouped
+diff --git a/django/db/backends/sqlite3/base.py b/django/db/backends/sqlite3/base.py
+index 31e8a55a43..8fc6e23c56 100644
+--- a/django/db/backends/sqlite3/base.py
++++ b/django/db/backends/sqlite3/base.py
+@@ -547,23 +547,42 @@ def _sqlite_time_extract(lookup_type, dt):
+ def _sqlite_format_dtdelta(conn, lhs, rhs):
+     """
+     LHS and RHS can be either:
+-    - An integer number of microseconds
++    - An integer number of microseconds (or a numeric string representing microseconds)
+     - A string representing a datetime
+     """
+     try:
+-        real_lhs = datetime.timedelta(0, 0, lhs) if isinstance(lhs, int) else backend_utils.typecast_timestamp(lhs)
+-        real_rhs = datetime.timedelta(0, 0, rhs) if isinstance(rhs, int) else backend_utils.typecast_timestamp(rhs)
++        # Treat numeric strings as microseconds to support duration-only arithmetic.
++        def _to_timedelta_or_datetime(value):
++            if isinstance(value, int):
++                return datetime.timedelta(0, 0, value)
++            # Some SQLite calls may pass microseconds as strings. Detect digit-only.
++            if isinstance(value, (str, bytes)):
++                try:
++                    v_str = value.decode() if isinstance(value, bytes) else value
++                except Exception:
++                    v_str = value if isinstance(value, str) else None
++                if isinstance(v_str, str) and v_str.strip().isdigit():
++                    return datetime.timedelta(0, 0, int(v_str.strip()))
++            # Otherwise, treat as timestamp/datetime string.
++            return backend_utils.typecast_timestamp(value)
++
++        real_lhs = _to_timedelta_or_datetime(lhs)
++        real_rhs = _to_timedelta_or_datetime(rhs)
+         if conn.strip() == '+':
+             out = real_lhs + real_rhs
+         else:
+             out = real_lhs - real_rhs
+     except (ValueError, TypeError):
+         return None
++    # For non-native DurationField backends, return microseconds so Django can
++    # convert to timedelta consistently.
++    if isinstance(out, datetime.timedelta):
++        return duration_microseconds(out)
++    # If the operation resulted in a datetime/date (e.g., adding a duration to a datetime),
++    # return it as a formatted string, consistent with other sqlite casting helpers.
+     # typecast_timestamp returns a date or a datetime without timezone.
+     # It will be formatted as "%Y-%m-%d" or "%Y-%m-%d %H:%M:%S[.%f]"
+     return str(out)
+-
+-
+ @none_guard
+ def _sqlite_time_diff(lhs, rhs):
+     left = backend_utils.typecast_time(lhs)

@@ -1,0 +1,535 @@
+diff --git a/django/core/files/locks.py b/django/core/files/locks.py
+index c46b00b905..4938347ea7 100644
+--- a/django/core/files/locks.py
++++ b/django/core/files/locks.py
+@@ -107,9 +107,15 @@ else:
+             return True
+     else:
+         def lock(f, flags):
+-            ret = fcntl.flock(_fd(f), flags)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), flags)
++                return True
++            except OSError:
++                return False
+ 
+         def unlock(f):
+-            ret = fcntl.flock(_fd(f), fcntl.LOCK_UN)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), fcntl.LOCK_UN)
++                return True
++            except OSError:
++                return False
+diff --git a/final_verification_test.py b/final_verification_test.py
+new file mode 100644
+index 0000000000..845fa85973
+--- /dev/null
++++ b/final_verification_test.py
+@@ -0,0 +1,131 @@
++#!/usr/bin/env python3
++"""
++Final verification test for the locks.py fix.
++
++This test verifies that the bug described in the PR has been fixed:
++- fcntl.flock() returns None on success (not 0)
++- fcntl.flock() raises OSError on failure (doesn't return a value)
++- The lock() function should return True on success, False on failure
++- The unlock() function should return True on success, False on failure
++"""
++import os
++import sys
++import tempfile
++
++sys.path.insert(0, '/testbed')
++
++from django.core.files import locks
++
++def test_lock_returns_true_on_success():
++    """Verify lock() returns True when successfully acquiring a lock"""
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f:
++            result = locks.lock(f, locks.LOCK_EX)
++            assert result is True, f"lock() should return True on success, got {result}"
++            locks.unlock(f)
++        print("[PASS] lock() returns True on success")
++    finally:
++        os.unlink(temp_file)
++
++def test_unlock_returns_true_on_success():
++    """Verify unlock() returns True when successfully releasing a lock"""
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f:
++            locks.lock(f, locks.LOCK_EX)
++            result = locks.unlock(f)
++            assert result is True, f"unlock() should return True on success, got {result}"
++        print("[PASS] unlock() returns True on success")
++    finally:
++        os.unlink(temp_file)
++
++def test_nonblocking_lock_returns_false_when_unavailable():
++    """Verify lock() with LOCK_NB returns False when lock is unavailable"""
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f1:
++            # Acquire exclusive lock
++            locks.lock(f1, locks.LOCK_EX)
++            
++            # Try to acquire with non-blocking flag - should return False
++            with open(temp_file, 'r') as f2:
++                result = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++                assert result is False, f"lock() with LOCK_NB should return False when unavailable, got {result}"
++            
++            locks.unlock(f1)
++        print("[PASS] lock() with LOCK_NB returns False when lock unavailable")
++    finally:
++        os.unlink(temp_file)
++
++def test_lock_types():
++    """Verify different lock types work correctly"""
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        # Test exclusive lock
++        with open(temp_file, 'r') as f:
++            result = locks.lock(f, locks.LOCK_EX)
++            assert result is True, "LOCK_EX should succeed"
++            locks.unlock(f)
++        
++        # Test shared lock
++        with open(temp_file, 'r') as f:
++            result = locks.lock(f, locks.LOCK_SH)
++            assert result is True, "LOCK_SH should succeed"
++            locks.unlock(f)
++        
++        # Test that multiple shared locks can coexist
++        with open(temp_file, 'r') as f1:
++            locks.lock(f1, locks.LOCK_SH)
++            with open(temp_file, 'r') as f2:
++                result = locks.lock(f2, locks.LOCK_SH)
++                assert result is True, "Second LOCK_SH should succeed"
++                locks.unlock(f2)
++            locks.unlock(f1)
++        
++        print("[PASS] Different lock types work correctly")
++    finally:
++        os.unlink(temp_file)
++
++def main():
++    print("=" * 70)
++    print("Final Verification Test for locks.py Fix")
++    print("=" * 70)
++    print()
++    
++    test_lock_returns_true_on_success()
++    test_unlock_returns_true_on_success()
++    test_nonblocking_lock_returns_false_when_unavailable()
++    test_lock_types()
++    
++    print()
++    print("=" * 70)
++    print("All verification tests passed!")
++    print("=" * 70)
++    print()
++    print("Summary of fix:")
++    print("- lock() now returns True on success (was returning False)")
++    print("- unlock() now returns True on success (was returning False)")
++    print("- lock() with LOCK_NB returns False when lock unavailable")
++    print("  (was raising OSError)")
++    print("=" * 70)
++
++if __name__ == '__main__':
++    try:
++        main()
++    except AssertionError as e:
++        print(f"\n[FAIL] {e}")
++        sys.exit(1)
++    except Exception as e:
++        print(f"\n[FAIL] Unexpected error: {e}")
++        import traceback
++        traceback.print_exc()
++        sys.exit(1)
+diff --git a/test_cache_locks.py b/test_cache_locks.py
+new file mode 100644
+index 0000000000..fdf0b9de8a
+--- /dev/null
++++ b/test_cache_locks.py
+@@ -0,0 +1,83 @@
++#!/usr/bin/env python3
++"""Test that the locks fix works with Django's file-based cache"""
++import os
++import sys
++import tempfile
++import shutil
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++# Setup Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create minimal settings
++with open('test_settings.py', 'w') as f:
++    f.write("""
++SECRET_KEY = 'test-secret-key'
++INSTALLED_APPS = []
++DATABASES = {}
++""")
++
++import django
++django.setup()
++
++from django.core.cache.backends.filebased import FileBasedCache
++
++def test_filebased_cache_with_locks():
++    """Test that file-based cache works with the fixed locks"""
++    print("=" * 60)
++    print("Test: File-based cache with locks")
++    print("=" * 60)
++    
++    # Create a temporary directory for cache
++    cache_dir = tempfile.mkdtemp()
++    
++    try:
++        # Create cache instance
++        cache = FileBasedCache(cache_dir, {})
++        
++        # Set a value
++        cache.set('test_key', 'test_value', timeout=300)
++        print("[PASS] Cache set operation succeeded")
++        
++        # Get the value
++        value = cache.get('test_key')
++        assert value == 'test_value', f"Expected 'test_value', got {value}"
++        print("[PASS] Cache get operation succeeded")
++        
++        # Touch the value (this uses locks.lock internally)
++        result = cache.touch('test_key', timeout=300)
++        assert result == True, f"Expected True, got {result}"
++        print("[PASS] Cache touch operation succeeded")
++        
++        # Delete the value
++        result = cache.delete('test_key')
++        assert result == True, f"Expected True, got {result}"
++        print("[PASS] Cache delete operation succeeded")
++        
++        # Verify it's gone
++        value = cache.get('test_key')
++        assert value is None, f"Expected None, got {value}"
++        print("[PASS] Cache value was deleted")
++        
++    finally:
++        # Clean up
++        shutil.rmtree(cache_dir)
++        if os.path.exists('test_settings.py'):
++            os.unlink('test_settings.py')
++
++if __name__ == '__main__':
++    try:
++        test_filebased_cache_with_locks()
++        print("\n" + "=" * 60)
++        print("All tests passed!")
++        print("=" * 60)
++    except AssertionError as e:
++        print(f"\n[FAIL] Test failed: {e}")
++        sys.exit(1)
++    except Exception as e:
++        print(f"\n[FAIL] Unexpected error: {e}")
++        import traceback
++        traceback.print_exc()
++        sys.exit(1)
+diff --git a/test_locks.py b/test_locks.py
+new file mode 100644
+index 0000000000..0cf6c8149d
+--- /dev/null
++++ b/test_locks.py
+@@ -0,0 +1,48 @@
++#!/usr/bin/env python3
++"""Test script to verify the lock behavior"""
++import os
++import sys
++import tempfile
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++from django.core.files import locks
++
++def test_lock_behavior():
++    """Test that lock returns True on success"""
++    # Create a temporary file
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        # Test locking
++        with open(temp_file, 'r') as f:
++            # Try to acquire an exclusive lock
++            result = locks.lock(f, locks.LOCK_EX)
++            print(f"Lock result (should be True): {result}")
++            print(f"Lock result type: {type(result)}")
++            
++            # Unlock
++            unlock_result = locks.unlock(f)
++            print(f"Unlock result (should be True): {unlock_result}")
++            print(f"Unlock result type: {type(unlock_result)}")
++            
++        # Test non-blocking lock
++        with open(temp_file, 'r') as f:
++            result = locks.lock(f, locks.LOCK_EX | locks.LOCK_NB)
++            print(f"\nNon-blocking lock result (should be True): {result}")
++            
++            # Try to acquire the same lock again (should fail)
++            with open(temp_file, 'r') as f2:
++                result2 = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++                print(f"Second lock attempt (should be False): {result2}")
++            
++            locks.unlock(f)
++            
++    finally:
++        # Clean up
++        os.unlink(temp_file)
++
++if __name__ == '__main__':
++    test_lock_behavior()
+diff --git a/test_locks_comprehensive.py b/test_locks_comprehensive.py
+new file mode 100644
+index 0000000000..06258c3fb3
+--- /dev/null
++++ b/test_locks_comprehensive.py
+@@ -0,0 +1,139 @@
++#!/usr/bin/env python3
++"""Comprehensive test script to verify the lock behavior"""
++import os
++import sys
++import tempfile
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++from django.core.files import locks
++
++def test_basic_locking():
++    """Test basic lock/unlock operations"""
++    print("=" * 60)
++    print("Test 1: Basic locking")
++    print("=" * 60)
++    
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f:
++            # Acquire exclusive lock
++            result = locks.lock(f, locks.LOCK_EX)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Exclusive lock acquired successfully (returned True)")
++            
++            # Unlock
++            result = locks.unlock(f)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Unlock successful (returned True)")
++            
++    finally:
++        os.unlink(temp_file)
++
++def test_shared_lock():
++    """Test shared locks"""
++    print("\n" + "=" * 60)
++    print("Test 2: Shared locking")
++    print("=" * 60)
++    
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f1:
++            # Acquire shared lock
++            result = locks.lock(f1, locks.LOCK_SH)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Shared lock acquired successfully (returned True)")
++            
++            # Another shared lock should succeed
++            with open(temp_file, 'r') as f2:
++                result = locks.lock(f2, locks.LOCK_SH)
++                assert result == True, f"Expected True, got {result}"
++                print("[PASS] Second shared lock acquired successfully (returned True)")
++                
++                locks.unlock(f2)
++            
++            locks.unlock(f1)
++            
++    finally:
++        os.unlink(temp_file)
++
++def test_non_blocking_lock():
++    """Test non-blocking lock behavior"""
++    print("\n" + "=" * 60)
++    print("Test 3: Non-blocking lock")
++    print("=" * 60)
++    
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f1:
++            # Acquire exclusive lock
++            result = locks.lock(f1, locks.LOCK_EX)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Exclusive lock acquired successfully (returned True)")
++            
++            # Try to acquire another exclusive lock with non-blocking flag
++            with open(temp_file, 'r') as f2:
++                result = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++                assert result == False, f"Expected False, got {result}"
++                print("[PASS] Non-blocking lock correctly returned False when lock unavailable")
++            
++            locks.unlock(f1)
++            
++    finally:
++        os.unlink(temp_file)
++
++def test_blocking_lock_after_unlock():
++    """Test that lock can be acquired after unlock"""
++    print("\n" + "=" * 60)
++    print("Test 4: Lock after unlock")
++    print("=" * 60)
++    
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f1:
++            # Acquire and release lock
++            result = locks.lock(f1, locks.LOCK_EX)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] First lock acquired successfully")
++            
++            result = locks.unlock(f1)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] First lock released successfully")
++            
++        # Now acquire it again
++        with open(temp_file, 'r') as f2:
++            result = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Second lock acquired successfully after first was released")
++            
++            locks.unlock(f2)
++            
++    finally:
++        os.unlink(temp_file)
++
++if __name__ == '__main__':
++    try:
++        test_basic_locking()
++        test_shared_lock()
++        test_non_blocking_lock()
++        test_blocking_lock_after_unlock()
++        print("\n" + "=" * 60)
++        print("All tests passed!")
++        print("=" * 60)
++    except AssertionError as e:
++        print(f"\n[FAIL] Test failed: {e}")
++        sys.exit(1)
++    except Exception as e:
++        print(f"\n[FAIL] Unexpected error: {e}")
++        import traceback
++        traceback.print_exc()
++        sys.exit(1)
+diff --git a/test_locks_fd.py b/test_locks_fd.py
+new file mode 100644
+index 0000000000..3ea928da2a
+--- /dev/null
++++ b/test_locks_fd.py
+@@ -0,0 +1,80 @@
++#!/usr/bin/env python3
++"""Test script to verify lock behavior with file descriptors"""
++import os
++import sys
++import tempfile
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++from django.core.files import locks
++
++def test_with_file_descriptor():
++    """Test locking with file descriptors instead of file objects"""
++    print("=" * 60)
++    print("Test: Locking with file descriptors")
++    print("=" * 60)
++    
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        # Open file and get file descriptor
++        fd = os.open(temp_file, os.O_RDONLY)
++        
++        try:
++            # Lock using file descriptor
++            result = locks.lock(fd, locks.LOCK_EX)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Lock with file descriptor succeeded (returned True)")
++            
++            # Unlock using file descriptor
++            result = locks.unlock(fd)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Unlock with file descriptor succeeded (returned True)")
++            
++        finally:
++            os.close(fd)
++            
++    finally:
++        os.unlink(temp_file)
++
++def test_with_file_object():
++    """Test locking with file objects"""
++    print("\n" + "=" * 60)
++    print("Test: Locking with file objects")
++    print("=" * 60)
++    
++    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
++        temp_file = f.name
++    
++    try:
++        with open(temp_file, 'r') as f:
++            # Lock using file object
++            result = locks.lock(f, locks.LOCK_EX)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Lock with file object succeeded (returned True)")
++            
++            # Unlock using file object
++            result = locks.unlock(f)
++            assert result == True, f"Expected True, got {result}"
++            print("[PASS] Unlock with file object succeeded (returned True)")
++            
++    finally:
++        os.unlink(temp_file)
++
++if __name__ == '__main__':
++    try:
++        test_with_file_descriptor()
++        test_with_file_object()
++        print("\n" + "=" * 60)
++        print("All tests passed!")
++        print("=" * 60)
++    except AssertionError as e:
++        print(f"\n[FAIL] Test failed: {e}")
++        sys.exit(1)
++    except Exception as e:
++        print(f"\n[FAIL] Unexpected error: {e}")
++        import traceback
++        traceback.print_exc()
++        sys.exit(1)

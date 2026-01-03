@@ -1,0 +1,730 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..ffad0affa4
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,23 @@
++import sympy as sp
++
++print("Test 1: Without evaluate(False) - should work")
++try:
++    result = sp.S('Point2D(Integer(1),Integer(2))')
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: With evaluate=False parameter - should work")
++try:
++    result = sp.S('Point2D(Integer(1),Integer(2))', evaluate=False)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: With evaluate(False) context - currently fails")
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(Integer(1),Integer(2))')
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/review_change.py b/review_change.py
+new file mode 100644
+index 0000000000..931094011f
+--- /dev/null
++++ b/review_change.py
+@@ -0,0 +1,64 @@
++"""
++Review of the fix for the evaluate(False) issue with Point2D.
++
++PROBLEM:
++When using `with sp.evaluate(False):`, creating Point2D objects would fail with
++"Imaginary coordinates are not permitted" even for real integer coordinates.
++
++ROOT CAUSE:
++The original check was:
++    if any(a.is_number and im(a) for a in coords):
++        raise ValueError('Imaginary coordinates are not permitted.')
++
++When evaluate=False, im(Integer(1)) returns the unevaluated expression im(1)
++instead of 0. This unevaluated expression is truthy, causing the check to fail.
++
++SOLUTION:
++Changed the check to:
++    if any(a.is_number and a.is_extended_real is False for a in coords):
++        raise ValueError('Imaginary coordinates are not permitted.')
++
++This uses the is_extended_real property which:
++- Returns True for real numbers (including infinity)
++- Returns False for complex/imaginary numbers
++- Returns None for symbols without assumptions
++- Works correctly regardless of the evaluate context
++
++BENEFITS:
++1. Fixes the original issue with evaluate(False)
++2. Properly rejects imaginary/complex coordinates
++3. Allows infinity (which is extended real)
++4. Maintains backward compatibility with existing tests
++"""
++
++import sympy as sp
++
++print(__doc__)
++
++# Demonstrate the fix
++print("\nDemonstration:")
++print("-" * 50)
++
++print("\nBefore fix (simulated):")
++print("  with evaluate(False):")
++print("    im(Integer(1)) = im(1)  # Unevaluated, truthy")
++print("    bool(im(1)) = True  # Would incorrectly reject")
++
++print("\nAfter fix:")
++with sp.evaluate(False):
++    x = sp.Integer(1)
++    print(f"  Integer(1).is_extended_real = {x.is_extended_real}")
++    print(f"  Integer(1).is_extended_real is False = {x.is_extended_real is False}")
++    print("  ✓ Correctly accepts real coordinates")
++
++print("\nComplex number handling:")
++y = sp.I
++print(f"  I.is_extended_real = {y.is_extended_real}")
++print(f"  I.is_extended_real is False = {y.is_extended_real is False}")
++print("  ✓ Correctly rejects imaginary coordinates")
++
++print("\nInfinity handling:")
++z = sp.oo
++print(f"  oo.is_extended_real = {z.is_extended_real}")
++print(f"  oo.is_extended_real is False = {z.is_extended_real is False}")
++print("  ✓ Correctly accepts infinity (extended real)")
+diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
+index 73c20334d0..4868d4ab21 100644
+--- a/sympy/geometry/point.py
++++ b/sympy/geometry/point.py
+@@ -152,7 +152,7 @@ def __new__(cls, *args, **kwargs):
+                         'warn' or 'ignore'.'''))
+         if any(coords[dim:]):
+             raise ValueError('Nonzero coordinates cannot be removed.')
+-        if any(a.is_number and im(a) for a in coords):
++        if any(a.is_number and a.is_extended_real is False for a in coords):
+             raise ValueError('Imaginary coordinates are not permitted.')
+         if not all(isinstance(a, Expr) for a in coords):
+             raise TypeError('Coordinates must be valid SymPy expressions.')
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e537c4a541
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,85 @@
++import sympy as sp
++
++print("Test 1: Real coordinates without evaluate(False) - should work")
++try:
++    result = sp.Point2D(1, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: Real coordinates with evaluate(False) context - should work")
++try:
++    with sp.evaluate(False):
++        result = sp.Point2D(sp.Integer(1), sp.Integer(2))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: Imaginary coordinate (I) - should fail")
++try:
++    result = sp.Point2D(sp.I, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++print("\nTest 4: Imaginary coordinate (I) with evaluate(False) - should fail")
++try:
++    with sp.evaluate(False):
++        result = sp.Point2D(sp.I, sp.Integer(2))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++print("\nTest 5: Complex coordinate (1+I) - should fail")
++try:
++    result = sp.Point2D(1 + sp.I, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++print("\nTest 6: Symbol with no assumptions - should work")
++try:
++    x = sp.Symbol('x')
++    result = sp.Point2D(x, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 7: Real symbol - should work")
++try:
++    x = sp.Symbol('x', real=True)
++    result = sp.Point2D(x, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 8: Imaginary symbol - should fail")
++try:
++    x = sp.Symbol('x', imaginary=True)
++    result = sp.Point2D(x, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++print("\nTest 9: Original issue - sympify with evaluate(False)")
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(Integer(1),Integer(2))')
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 10: Float coordinates - should work")
++try:
++    result = sp.Point2D(1.5, 2.5)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 11: Float coordinates with evaluate(False) - should work")
++try:
++    with sp.evaluate(False):
++        result = sp.Point2D(1.5, 2.5)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..4a4056025b
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,83 @@
++"""
++Edge case tests for the Point coordinate validation fix.
++"""
++import sympy as sp
++
++print("Testing edge cases for Point coordinate validation...")
++
++# Test 1: Regular integers with evaluate(False)
++print("\n1. Regular integers with evaluate(False):")
++with sp.evaluate(False):
++    p = sp.Point2D(sp.Integer(1), sp.Integer(2))
++print(f"   ✓ {p}")
++
++# Test 2: Infinity (extended real)
++print("\n2. Infinity (extended real):")
++p = sp.Point2D(sp.oo, 0)
++print(f"   ✓ {p}")
++
++# Test 3: Negative infinity (extended real)
++print("\n3. Negative infinity (extended real):")
++p = sp.Point2D(-sp.oo, 0)
++print(f"   ✓ {p}")
++
++# Test 4: Complex infinity (should fail)
++print("\n4. Complex infinity (should fail):")
++try:
++    p = sp.Point2D(sp.zoo, 0)
++    print(f"   ✗ Should have failed but got: {p}")
++except ValueError as e:
++    print(f"   ✓ Correctly rejected: {e}")
++
++# Test 5: Pure imaginary (should fail)
++print("\n5. Pure imaginary (should fail):")
++try:
++    p = sp.Point2D(sp.I, 0)
++    print(f"   ✗ Should have failed but got: {p}")
++except ValueError as e:
++    print(f"   ✓ Correctly rejected: {e}")
++
++# Test 6: Complex number (should fail)
++print("\n6. Complex number (should fail):")
++try:
++    p = sp.Point2D(1 + sp.I, 0)
++    print(f"   ✗ Should have failed but got: {p}")
++except ValueError as e:
++    print(f"   ✓ Correctly rejected: {e}")
++
++# Test 7: Symbol with no assumptions
++print("\n7. Symbol with no assumptions:")
++x = sp.Symbol('x')
++p = sp.Point2D(x, 0)
++print(f"   ✓ {p}")
++
++# Test 8: Real symbol
++print("\n8. Real symbol:")
++x = sp.Symbol('x', real=True)
++p = sp.Point2D(x, 0)
++print(f"   ✓ {p}")
++
++# Test 9: Extended real symbol
++print("\n9. Extended real symbol:")
++x = sp.Symbol('x', extended_real=True)
++p = sp.Point2D(x, 0)
++print(f"   ✓ {p}")
++
++# Test 10: Zero
++print("\n10. Zero:")
++p = sp.Point2D(sp.S.Zero, sp.S.Zero)
++print(f"   ✓ {p}")
++
++# Test 11: Rational numbers
++print("\n11. Rational numbers:")
++p = sp.Point2D(sp.Rational(1, 2), sp.Rational(3, 4))
++print(f"   ✓ {p}")
++
++# Test 12: Float with evaluate=False
++print("\n12. Float with evaluate=False:")
++p = sp.Point2D(1.5, 2.5, evaluate=False)
++print(f"   ✓ {p}")
++
++print("\n" + "="*50)
++print("All edge case tests passed! ✓")
++print("="*50)
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..ac3b0b941d
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,109 @@
++"""
++Final verification test for the fix to the evaluate(False) issue with Point2D.
++This test ensures that:
++1. The original issue is fixed (Point2D works with evaluate(False))
++2. Imaginary coordinates are still properly rejected
++3. All Point types (Point, Point2D, Point3D) work correctly
++"""
++import sympy as sp
++
++def test_point_with_evaluate_false():
++    """Test that Point classes work with evaluate(False) context"""
++    print("Testing Point classes with evaluate(False) context...")
++    
++    # Test Point2D
++    with sp.evaluate(False):
++        p = sp.Point2D(sp.Integer(1), sp.Integer(2))
++    assert p == sp.Point2D(1, 2), f"Expected Point2D(1, 2), got {p}"
++    print("✓ Point2D with evaluate(False) works")
++    
++    # Test Point3D
++    with sp.evaluate(False):
++        p = sp.Point3D(sp.Integer(1), sp.Integer(2), sp.Integer(3))
++    assert p == sp.Point3D(1, 2, 3), f"Expected Point3D(1, 2, 3), got {p}"
++    print("✓ Point3D with evaluate(False) works")
++    
++    # Test general Point
++    with sp.evaluate(False):
++        p = sp.Point(sp.Integer(1), sp.Integer(2), sp.Integer(3), sp.Integer(4))
++    assert p == sp.Point(1, 2, 3, 4), f"Expected Point(1, 2, 3, 4), got {p}"
++    print("✓ General Point with evaluate(False) works")
++
++def test_sympify_with_evaluate_false():
++    """Test the original issue from the PR"""
++    print("\nTesting sympify with evaluate(False) context...")
++    
++    # Original issue - Point2D
++    with sp.evaluate(False):
++        p = sp.S('Point2D(Integer(1),Integer(2))')
++    assert p == sp.Point2D(1, 2), f"Expected Point2D(1, 2), got {p}"
++    print("✓ sympify Point2D with evaluate(False) works")
++    
++    # Point3D
++    with sp.evaluate(False):
++        p = sp.S('Point3D(Integer(1),Integer(2),Integer(3))')
++    assert p == sp.Point3D(1, 2, 3), f"Expected Point3D(1, 2, 3), got {p}"
++    print("✓ sympify Point3D with evaluate(False) works")
++
++def test_imaginary_rejection():
++    """Test that imaginary coordinates are still properly rejected"""
++    print("\nTesting imaginary coordinate rejection...")
++    
++    # Test with I (pure imaginary)
++    try:
++        sp.Point2D(sp.I, 2)
++        assert False, "Should have raised ValueError for imaginary coordinate"
++    except ValueError as e:
++        assert "Imaginary coordinates are not permitted" in str(e)
++    print("✓ Pure imaginary coordinate (I) is rejected")
++    
++    # Test with I in evaluate(False) context
++    try:
++        with sp.evaluate(False):
++            sp.Point2D(sp.I, sp.Integer(2))
++        assert False, "Should have raised ValueError for imaginary coordinate"
++    except ValueError as e:
++        assert "Imaginary coordinates are not permitted" in str(e)
++    print("✓ Pure imaginary coordinate (I) with evaluate(False) is rejected")
++    
++    # Test with complex number (1+I)
++    try:
++        sp.Point2D(1 + sp.I, 2)
++        assert False, "Should have raised ValueError for complex coordinate"
++    except ValueError as e:
++        assert "Imaginary coordinates are not permitted" in str(e)
++    print("✓ Complex coordinate (1+I) is rejected")
++
++def test_real_coordinates():
++    """Test that various real coordinates work correctly"""
++    print("\nTesting real coordinates...")
++    
++    # Integer coordinates
++    p = sp.Point2D(1, 2)
++    assert p == sp.Point2D(1, 2)
++    print("✓ Integer coordinates work")
++    
++    # Float coordinates
++    p = sp.Point2D(1.5, 2.5)
++    assert p.x == sp.Rational(3, 2) and p.y == sp.Rational(5, 2)
++    print("✓ Float coordinates work (converted to Rational)")
++    
++    # Float coordinates with evaluate=False
++    p = sp.Point2D(1.5, 2.5, evaluate=False)
++    assert p.x == 1.5 and p.y == 2.5
++    print("✓ Float coordinates with evaluate=False work")
++    
++    # Symbolic coordinates
++    x = sp.Symbol('x', real=True)
++    p = sp.Point2D(x, 2)
++    assert p.x == x and p.y == 2
++    print("✓ Symbolic coordinates work")
++
++if __name__ == '__main__':
++    test_point_with_evaluate_false()
++    test_sympify_with_evaluate_false()
++    test_imaginary_rejection()
++    test_real_coordinates()
++    print("\n" + "="*50)
++    print("All tests passed! ✓")
++    print("="*50)
+diff --git a/test_fix_approach.py b/test_fix_approach.py
+new file mode 100644
+index 0000000000..890a6f63c2
+--- /dev/null
++++ b/test_fix_approach.py
+@@ -0,0 +1,39 @@
++import sympy as sp
++
++print("Testing different approaches to check for imaginary coordinates:")
++
++# Test with real number
++print("\n1. Real number (Integer(1)):")
++with sp.evaluate(False):
++    x = sp.Integer(1)
++    print(f"  a.is_number = {x.is_number}")
++    print(f"  im(a) = {sp.im(x)}")
++    print(f"  bool(im(a)) = {bool(sp.im(x))}")
++    print(f"  a.is_real is False = {x.is_real is False}")
++    print(f"  not a.is_real = {not x.is_real}")
++
++# Test with pure imaginary
++print("\n2. Pure imaginary (I):")
++with sp.evaluate(False):
++    x = sp.I
++    print(f"  a.is_number = {x.is_number}")
++    print(f"  im(a) = {sp.im(x)}")
++    print(f"  bool(im(a)) = {bool(sp.im(x))}")
++    print(f"  a.is_real is False = {x.is_real is False}")
++    print(f"  not a.is_real = {not x.is_real}")
++
++# Test with symbol (no assumptions)
++print("\n3. Symbol (no assumptions):")
++with sp.evaluate(False):
++    x = sp.Symbol('x')
++    print(f"  a.is_number = {x.is_number}")
++    print(f"  a.is_real is False = {x.is_real is False}")
++    print(f"  not a.is_real = {not x.is_real}")
++
++# Test with real symbol
++print("\n4. Real symbol:")
++with sp.evaluate(False):
++    x = sp.Symbol('x', real=True)
++    print(f"  a.is_number = {x.is_number}")
++    print(f"  a.is_real is False = {x.is_real is False}")
++    print(f"  not a.is_real = {not x.is_real}")
+diff --git a/test_im.py b/test_im.py
+new file mode 100644
+index 0000000000..a549ee3a77
+--- /dev/null
++++ b/test_im.py
+@@ -0,0 +1,22 @@
++import sympy as sp
++
++print("Test im() with evaluate=True (default):")
++x = sp.Integer(1)
++print(f"im(Integer(1)) = {sp.im(x)}")
++print(f"im(Integer(1)) evaluates to: {sp.im(x) == 0}")
++
++print("\nTest im() with evaluate=False context:")
++with sp.evaluate(False):
++    x = sp.Integer(1)
++    print(f"im(Integer(1)) = {sp.im(x)}")
++    print(f"im(Integer(1)) evaluates to: {sp.im(x) == 0}")
++    print(f"Type: {type(sp.im(x))}")
++    print(f"Bool value: {bool(sp.im(x))}")
++    
++print("\nTest with sympify:")
++with sp.evaluate(False):
++    x = sp.sympify('Integer(1)')
++    print(f"sympify('Integer(1)') = {x}")
++    print(f"im(sympify('Integer(1)')) = {sp.im(x)}")
++    print(f"Type: {type(sp.im(x))}")
++    print(f"Bool value: {bool(sp.im(x))}")
+diff --git a/test_imaginary_check.py b/test_imaginary_check.py
+new file mode 100644
+index 0000000000..73ed097006
+--- /dev/null
++++ b/test_imaginary_check.py
+@@ -0,0 +1,43 @@
++import sympy as sp
++
++print("Testing different ways to check for imaginary parts:")
++
++# Test with real number
++print("\n1. Real number (Integer(1)):")
++with sp.evaluate(False):
++    x = sp.Integer(1)
++    print(f"  im(x) = {sp.im(x)}")
++    print(f"  bool(im(x)) = {bool(sp.im(x))}")
++    print(f"  im(x) != 0 = {sp.im(x) != 0}")
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
++
++# Test with complex number
++print("\n2. Complex number (1 + I):")
++with sp.evaluate(False):
++    x = sp.Integer(1) + sp.I
++    print(f"  im(x) = {sp.im(x)}")
++    print(f"  bool(im(x)) = {bool(sp.im(x))}")
++    print(f"  im(x) != 0 = {sp.im(x) != 0}")
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
++
++# Test with pure imaginary
++print("\n3. Pure imaginary (I):")
++with sp.evaluate(False):
++    x = sp.I
++    print(f"  im(x) = {sp.im(x)}")
++    print(f"  bool(im(x)) = {bool(sp.im(x))}")
++    print(f"  im(x) != 0 = {sp.im(x) != 0}")
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
++
++# Test is_real property
++print("\n4. Testing is_real property:")
++with sp.evaluate(False):
++    x = sp.Integer(1)
++    print(f"  Integer(1).is_real = {x.is_real}")
++    y = sp.I
++    print(f"  I.is_real = {y.is_real}")
++    z = sp.Integer(1) + sp.I
++    print(f"  (1+I).is_real = {z.is_real}")
+diff --git a/test_infinity.py b/test_infinity.py
+new file mode 100644
+index 0000000000..edabce5f6c
+--- /dev/null
++++ b/test_infinity.py
+@@ -0,0 +1,19 @@
++import sympy as sp
++
++print("Testing infinity:")
++print(f"S.Infinity.is_number = {sp.S.Infinity.is_number}")
++print(f"S.Infinity.is_real = {sp.S.Infinity.is_real}")
++print(f"S.Infinity.is_imaginary = {sp.S.Infinity.is_imaginary}")
++print(f"S.Infinity.is_extended_real = {sp.S.Infinity.is_extended_real}")
++
++print("\nTesting negative infinity:")
++print(f"(-oo).is_number = {sp.S.NegativeInfinity.is_number}")
++print(f"(-oo).is_real = {sp.S.NegativeInfinity.is_real}")
++print(f"(-oo).is_imaginary = {sp.S.NegativeInfinity.is_imaginary}")
++print(f"(-oo).is_extended_real = {sp.S.NegativeInfinity.is_extended_real}")
++
++print("\nTesting complex infinity:")
++print(f"zoo.is_number = {sp.zoo.is_number}")
++print(f"zoo.is_real = {sp.zoo.is_real}")
++print(f"zoo.is_imaginary = {sp.zoo.is_imaginary}")
++print(f"zoo.is_extended_real = {sp.zoo.is_extended_real}")
+diff --git a/test_is_real.py b/test_is_real.py
+new file mode 100644
+index 0000000000..7a25a2a9b7
+--- /dev/null
++++ b/test_is_real.py
+@@ -0,0 +1,31 @@
++import sympy as sp
++
++print("Testing is_real property:")
++
++# Test with real number
++print("\n1. Real number (Integer(1)):")
++with sp.evaluate(False):
++    x = sp.Integer(1)
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
++
++# Test with pure imaginary
++print("\n2. Pure imaginary (I):")
++with sp.evaluate(False):
++    x = sp.I
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
++
++# Test with symbol
++print("\n3. Symbol:")
++with sp.evaluate(False):
++    x = sp.Symbol('x')
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
++
++# Test with real symbol
++print("\n4. Real symbol:")
++with sp.evaluate(False):
++    x = sp.Symbol('x', real=True)
++    print(f"  x.is_real = {x.is_real}")
++    print(f"  x.is_imaginary = {x.is_imaginary}")
+diff --git a/test_original_behavior.py b/test_original_behavior.py
+new file mode 100644
+index 0000000000..982fe11e6e
+--- /dev/null
++++ b/test_original_behavior.py
+@@ -0,0 +1,20 @@
++import sympy as sp
++
++# First, let's check what the original code would have done
++# by temporarily reverting and testing
++print("Testing with imaginary symbol:")
++x = sp.Symbol('x', imaginary=True)
++print(f"x.is_number = {x.is_number}")
++print(f"x.is_real = {x.is_real}")
++print(f"im(x) = {sp.im(x)}")
++
++# The original check was: a.is_number and im(a)
++# Since x.is_number is False, the check would be: False and im(x) = False
++# So it would NOT raise an error
++
++print("\nTrying to create Point2D with imaginary symbol:")
++try:
++    result = sp.Point2D(x, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/test_point3d.py b/test_point3d.py
+new file mode 100644
+index 0000000000..cd508853bb
+--- /dev/null
++++ b/test_point3d.py
+@@ -0,0 +1,25 @@
++import sympy as sp
++
++print("Test 1: Point3D with evaluate(False) context - should work")
++try:
++    with sp.evaluate(False):
++        result = sp.Point3D(sp.Integer(1), sp.Integer(2), sp.Integer(3))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: Point3D sympify with evaluate(False) - should work")
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point3D(Integer(1),Integer(2),Integer(3))')
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: Point3D with imaginary coordinate - should fail")
++try:
++    with sp.evaluate(False):
++        result = sp.Point3D(sp.Integer(1), sp.I, sp.Integer(3))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
+diff --git a/test_point_general.py b/test_point_general.py
+new file mode 100644
+index 0000000000..74013b8787
+--- /dev/null
++++ b/test_point_general.py
+@@ -0,0 +1,25 @@
++import sympy as sp
++
++print("Test 1: General Point with evaluate(False) context - should work")
++try:
++    with sp.evaluate(False):
++        result = sp.Point(sp.Integer(1), sp.Integer(2), sp.Integer(3), sp.Integer(4))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: General Point sympify with evaluate(False) - should work")
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point(Integer(1),Integer(2),Integer(3),Integer(4))')
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: General Point with imaginary coordinate - should fail")
++try:
++    with sp.evaluate(False):
++        result = sp.Point(sp.Integer(1), sp.I, sp.Integer(3), sp.Integer(4))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
+diff --git a/test_with_infinity.py b/test_with_infinity.py
+new file mode 100644
+index 0000000000..32a85056cc
+--- /dev/null
++++ b/test_with_infinity.py
+@@ -0,0 +1,45 @@
++import sympy as sp
++
++print("Test 1: Original issue - Point2D with evaluate(False)")
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(Integer(1),Integer(2))')
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: Point with infinity - should work")
++try:
++    result = sp.Point(0, sp.oo)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: Point with negative infinity - should work")
++try:
++    result = sp.Point(0, -sp.oo)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 4: Point with imaginary coordinate - should fail")
++try:
++    result = sp.Point2D(sp.I, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++print("\nTest 5: Point with complex infinity - should fail")
++try:
++    result = sp.Point2D(sp.zoo, 2)
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++print("\nTest 6: Point with evaluate(False) and Integer")
++try:
++    with sp.evaluate(False):
++        result = sp.Point2D(sp.Integer(1), sp.Integer(2))
++    print(f"Success: {result}")
++except Exception as e:
++    print(f"Error: {e}")

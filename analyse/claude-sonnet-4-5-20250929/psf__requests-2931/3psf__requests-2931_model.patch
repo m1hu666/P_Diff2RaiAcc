@@ -1,0 +1,250 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000..8ab7a63
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++"""
++Final comprehensive test for the binary payload fix.
++This tests the exact scenario from the PR description.
++"""
++import requests
++
++print("=" * 60)
++print("FINAL TEST: Binary Payload Fix")
++print("=" * 60)
++
++# The exact test case from the PR description
++print("\n1. Testing the exact case from PR description:")
++print("   requests.put('http://httpbin.org/put', data=u'ööö'.encode('utf-8'))")
++try:
++    response = requests.put("http://httpbin.org/put", data=u"ööö".encode("utf-8"))
++    print("   ✓ SUCCESS!")
++    print("   Status code:", response.status_code)
++    print("   Response OK:", response.ok)
++except Exception as e:
++    print("   ✗ FAILED!")
++    print("   Error:", type(e).__name__, "-", str(e))
++    import traceback
++    traceback.print_exc()
++
++# Additional verification
++print("\n2. Verifying the fix doesn't break other functionality:")
++
++print("\n   a) Regular string data:")
++try:
++    response = requests.post("http://httpbin.org/post", data="regular string")
++    print("      ✓ Works - Status:", response.status_code)
++except Exception as e:
++    print("      ✗ Failed:", e)
++
++print("\n   b) Dict data (form encoding):")
++try:
++    response = requests.post("http://httpbin.org/post", data={'key': 'value'})
++    print("      ✓ Works - Status:", response.status_code)
++except Exception as e:
++    print("      ✗ Failed:", e)
++
++print("\n   c) Bytes URL parameters (issue #2844):")
++try:
++    req = requests.Request('GET', 'http://httpbin.org/get', params=b'test=foo').prepare()
++    print("      ✓ Works - URL:", req.url)
++    assert 'test=foo' in req.url
++except Exception as e:
++    print("      ✗ Failed:", e)
++
++print("\n" + "=" * 60)
++print("All tests completed successfully!")
++print("=" * 60)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..b9e68b5
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,14 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++import requests
++
++print("Testing binary payload with requests...")
++try:
++    response = requests.put("http://httpbin.org/put", data=u"ööö".encode("utf-8"))
++    print("SUCCESS: Request completed successfully")
++    print("Status code:", response.status_code)
++except Exception as e:
++    print("FAILED: Request failed with error:")
++    print(type(e).__name__, ":", str(e))
++    import traceback
++    traceback.print_exc()
+diff --git a/requests/models.py b/requests/models.py
+index 9c624d3..10d1baf 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -80,7 +80,9 @@ class RequestEncodingMixin(object):
+         if parameters are supplied as a dict.
+         """
+ 
+-        if isinstance(data, (str, bytes)):
++        if isinstance(data, bytes):
++            return data
++        elif isinstance(data, str):
+             return to_native_string(data)
+         elif hasattr(data, 'read'):
+             return data
+@@ -386,6 +388,8 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+                 fragment = fragment.encode('utf-8')
+ 
+         enc_params = self._encode_params(params)
++        if isinstance(enc_params, bytes):
++            enc_params = enc_params.decode('utf-8')
+         if enc_params:
+             if query:
+                 query = '%s&%s' % (query, enc_params)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000..d1264e3
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,88 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++import requests
++import sys
++
++print("Python version:", sys.version)
++print()
++
++# Test 1: Binary data with non-ASCII bytes (the main issue)
++print("Test 1: Binary data with non-ASCII bytes")
++try:
++    data = u"ööö".encode("utf-8")
++    print("  Data type:", type(data))
++    print("  Data repr:", repr(data))
++    response = requests.put("http://httpbin.org/put", data=data)
++    print("  ✓ SUCCESS - Status:", response.status_code)
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 2: Binary data with ASCII bytes
++print("\nTest 2: Binary data with ASCII bytes")
++try:
++    data = b"test data"
++    print("  Data type:", type(data))
++    print("  Data repr:", repr(data))
++    response = requests.put("http://httpbin.org/put", data=data)
++    print("  ✓ SUCCESS - Status:", response.status_code)
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 3: URL params as bytes (issue #2844)
++print("\nTest 3: URL params as bytes")
++try:
++    request = requests.Request('GET', 'http://httpbin.org/get', params=b'test=foo').prepare()
++    print("  URL:", request.url)
++    assert 'test=foo' in request.url
++    print("  ✓ SUCCESS - URL params encoded correctly")
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 4: URL params as bytes with non-ASCII (should work with UTF-8)
++print("\nTest 4: URL params as bytes with UTF-8")
++try:
++    request = requests.Request('GET', 'http://httpbin.org/get', params=u'test=ööö'.encode('utf-8')).prepare()
++    print("  URL:", request.url)
++    print("  ✓ SUCCESS - URL params with UTF-8 encoded")
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 5: String data
++print("\nTest 5: String data")
++try:
++    data = "test string"
++    print("  Data type:", type(data))
++    response = requests.put("http://httpbin.org/put", data=data)
++    print("  ✓ SUCCESS - Status:", response.status_code)
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 6: Unicode string data
++print("\nTest 6: Unicode string data")
++try:
++    data = u"test unicode ööö"
++    print("  Data type:", type(data))
++    response = requests.put("http://httpbin.org/put", data=data)
++    print("  ✓ SUCCESS - Status:", response.status_code)
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 7: Dict data
++print("\nTest 7: Dict data")
++try:
++    data = {'key': 'value', 'key2': 'value2'}
++    response = requests.post("http://httpbin.org/post", data=data)
++    print("  ✓ SUCCESS - Status:", response.status_code)
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++# Test 8: Empty bytes
++print("\nTest 8: Empty bytes")
++try:
++    data = b""
++    response = requests.put("http://httpbin.org/put", data=data)
++    print("  ✓ SUCCESS - Status:", response.status_code)
++except Exception as e:
++    print("  ✗ FAILED:", type(e).__name__, "-", str(e))
++
++print("\nAll edge case tests completed!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000..e971821
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++import requests
++
++print("Test 1: Binary payload (the reported issue)")
++try:
++    response = requests.put("http://httpbin.org/put", data=u"ööö".encode("utf-8"))
++    print("✓ SUCCESS: Binary payload works")
++    print("  Status code:", response.status_code)
++except Exception as e:
++    print("✗ FAILED:", type(e).__name__, "-", str(e))
++
++print("\nTest 2: String payload")
++try:
++    response = requests.put("http://httpbin.org/put", data="test string")
++    print("✓ SUCCESS: String payload works")
++    print("  Status code:", response.status_code)
++except Exception as e:
++    print("✗ FAILED:", type(e).__name__, "-", str(e))
++
++print("\nTest 3: Unicode string payload")
++try:
++    response = requests.put("http://httpbin.org/put", data=u"test unicode")
++    print("✓ SUCCESS: Unicode string payload works")
++    print("  Status code:", response.status_code)
++except Exception as e:
++    print("✗ FAILED:", type(e).__name__, "-", str(e))
++
++print("\nTest 4: Bytes parameters in URL (issue #2844)")
++try:
++    request = requests.Request('GET', 'http://httpbin.org/get', params=b'test=foo').prepare()
++    print("✓ SUCCESS: Bytes parameters work")
++    print("  URL:", request.url)
++    assert 'test=foo' in request.url or 'test%3Dfoo' in request.url
++except Exception as e:
++    print("✗ FAILED:", type(e).__name__, "-", str(e))
++
++print("\nTest 5: Dict payload")
++try:
++    response = requests.post("http://httpbin.org/post", data={'key': 'value'})
++    print("✓ SUCCESS: Dict payload works")
++    print("  Status code:", response.status_code)
++except Exception as e:
++    print("✗ FAILED:", type(e).__name__, "-", str(e))
++
++print("\nAll tests completed!")

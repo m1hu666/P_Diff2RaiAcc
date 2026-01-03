@@ -1,0 +1,552 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 0000000000..f7837f2ffb
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,31 @@
++# Fix Summary: Q() Object Deconstruct Issue
++
++## Problem
++The Q.deconstruct() method had a special case for single-child Q objects that assumed the child was always a subscriptable 2-tuple (key, value). This caused a TypeError when the child was a non-subscriptable object like Exists.
++
++## Root Cause
++In /testbed/django/db/models/query_utils.py, lines 88-90 had code that tried to subscript the child without checking if it was subscriptable.
++
++## Solution
++Removed the special case handling. Now all Q objects consistently deconstruct their children into args instead of kwargs.
++
++## Changes Made
++- Modified /testbed/django/db/models/query_utils.py
++- Removed lines 88-91 (the special case if-else block)
++- Simplified the deconstruct method to always put children in args
++
++## Behavior Change
++Before: Q(x=1).deconstruct() returned ('django.db.models.Q', (), {'x': 1})
++After: Q(x=1).deconstruct() returns ('django.db.models.Q', (('x', 1),), {})
++
++## Impact
++- Fixed: Q objects with non-subscriptable children (like Exists) no longer crash
++- Changed: Single-child Q objects now deconstruct into args instead of kwargs
++- Preserved: Q objects can still be reconstructed correctly from their deconstructed form
++- Note: This is a breaking change for undocumented behavior
++
++## Test Results
++- Q with Exists objects works without TypeError
++- Q with other non-subscriptable objects works
++- Q reconstruction still works correctly
++- All edge cases handled properly
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index ae0f886107..5fcb06915e 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -85,13 +85,9 @@ class Q(tree.Node):
+         if path.startswith('django.db.models.query_utils'):
+             path = path.replace('django.db.models.query_utils', 'django.db.models')
+         args, kwargs = (), {}
+-        if len(self.children) == 1 and not isinstance(self.children[0], Q):
+-            child = self.children[0]
+-            kwargs = {child[0]: child[1]}
+-        else:
+-            args = tuple(self.children)
+-            if self.connector != self.default:
+-                kwargs = {'_connector': self.connector}
++        args = tuple(self.children)
++        if self.connector != self.default:
++            kwargs = {'_connector': self.connector}
+         if self.negated:
+             kwargs['_negated'] = True
+         return path, args, kwargs
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..cdb77d57ff
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,112 @@
++"""Final verification of the Q() deconstruct fix."""
++import os
++import sys
++import django
++
++# Minimal Django settings
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db.models import Q, Exists, F
++from django.contrib.auth import get_user_model
++
++print("=" * 70)
++print("FINAL VERIFICATION: Q() deconstruct fix")
++print("=" * 70)
++
++print("\n" + "=" * 70)
++print("BEHAVIOR CHANGE (as per PR description):")
++print("=" * 70)
++print("\nBEFORE: Single-child Q objects with kwargs deconstructed into kwargs")
++print("  Q(x=1).deconstruct() -> ('django.db.models.Q', (), {'x': 1})")
++print("\nAFTER: All Q objects deconstruct children into args")
++print("  Q(x=1).deconstruct() -> ('django.db.models.Q', (('x', 1),), {})")
++
++print("\n" + "=" * 70)
++print("THE PROBLEM THIS FIXES:")
++print("=" * 70)
++print("\nThe old code assumed single children were always 2-tuples (key, value)")
++print("and tried to subscript them: kwargs = {child[0]: child[1]}")
++print("\nThis crashed with non-subscriptable objects like Exists:")
++print("  TypeError: 'Exists' object is not subscriptable")
++
++print("\n" + "=" * 70)
++print("VERIFICATION TESTS:")
++print("=" * 70)
++
++# Test 1: The original issue - Q with Exists
++print("\n1. Q with Exists (the original bug):")
++try:
++    User = get_user_model()
++    exists_query = Exists(User.objects.filter(username='jim'))
++    result = Q(exists_query).deconstruct()
++    print(f"   SUCCESS - No TypeError!")
++    print(f"   Result: {result[0]}, args={len(result[1])}, kwargs={result[2]}")
++except TypeError as e:
++    print(f"   FAILED: {e}")
++
++# Test 2: Q with single kwarg (behavior changed)
++print("\n2. Q with single kwarg (behavior changed):")
++result = Q(x=1).deconstruct()
++print(f"   Result: {result}")
++print("   Note: Now returns args=(('x', 1),) instead of kwargs={'x': 1}")
++
++# Test 3: Q with multiple kwargs (unchanged)
++print("\n3. Q with multiple kwargs (unchanged):")
++result = Q(x=1, y=2).deconstruct()
++print(f"   Result: {result}")
++print("   Note: Always returned args, still does")
++
++# Test 4: Q with F expression (works)
++print("\n4. Q with F expression:")
++result = Q(price__gt=F('discounted_price')).deconstruct()
++print(f"   Result: {result}")
++
++# Test 5: Nested Q (unchanged)
++print("\n5. Nested Q (unchanged):")
++result = Q(Q(x=1)).deconstruct()
++print(f"   Result: {result}")
++
++# Test 6: Combined Q objects (unchanged)
++print("\n6. Combined Q objects (unchanged):")
++result = (Q(x=1) & Q(y=2)).deconstruct()
++print(f"   Result: {result}")
++
++# Test 7: Negated Q (behavior changed for single kwarg)
++print("\n7. Negated Q (behavior changed for single kwarg):")
++result = (~Q(x=1)).deconstruct()
++print(f"   Result: {result}")
++print("   Note: Now returns args=(('x', 1),) with _negated=True")
++
++# Test 8: Reconstruction still works
++print("\n8. Reconstruction test:")
++q_original = Q(x=1)
++path, args, kwargs = q_original.deconstruct()
++q_reconstructed = Q(*args, **kwargs)
++print(f"   Original: {q_original}")
++print(f"   Reconstructed: {q_reconstructed}")
++print(f"   Equal: {q_original == q_reconstructed}")
++
++print("\n" + "=" * 70)
++print("CONCLUSION:")
++print("=" * 70)
++print("SUCCESS - The fix resolves the TypeError with non-subscriptable objects")
++print("SUCCESS - Q objects can still be reconstructed correctly")
++print("SUCCESS - The behavior change is consistent: all children go into args")
++print("NOTE - This is a breaking change for the undocumented deconstruct() behavior")
++print("=" * 70)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..0040888297
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,63 @@
++"""Script to reproduce the Q() deconstruct issue with non-subscriptable children."""
++import os
++import sys
++
++# Add testbed to path
++sys.path.insert(0, '/testbed')
++
++from django.db.models import Q
++
++# Mock Exists class to simulate the issue
++class MockExists:
++    """Mock Exists object that is not subscriptable."""
++    def __init__(self, queryset):
++        self.queryset = queryset
++    
++    def __repr__(self):
++        return f"MockExists({self.queryset})"
++
++# Test 1: Q with single kwarg (works)
++print("Test 1: Q(x=1).deconstruct()")
++result = Q(x=1).deconstruct()
++print(f"  Result: {result}")
++print()
++
++# Test 2: Q with multiple kwargs (works)
++print("Test 2: Q(x=1, y=2).deconstruct()")
++result = Q(x=1, y=2).deconstruct()
++print(f"  Result: {result}")
++print()
++
++# Test 3: Q with non-subscriptable object (should fail with current code)
++print("Test 3: Q(MockExists('some_queryset')).deconstruct()")
++try:
++    exists_obj = MockExists('some_queryset')
++    result = Q(exists_obj).deconstruct()
++    print(f"  Result: {result}")
++except TypeError as e:
++    print(f"  ERROR: {e}")
++print()
++
++# Test 4: Q with another Q object (should work)
++print("Test 4: Q(Q(x=1)).deconstruct()")
++result = Q(Q(x=1)).deconstruct()
++print(f"  Result: {result}")
++print()
++
++# Test 5: Q with boolean expression (another non-subscriptable)
++print("Test 5: Q with boolean-like object")
++class BooleanExpression:
++    """Mock boolean expression that is not subscriptable."""
++    def __init__(self, value):
++        self.value = value
++    
++    def __repr__(self):
++        return f"BooleanExpression({self.value})"
++
++try:
++    bool_expr = BooleanExpression(True)
++    result = Q(bool_expr).deconstruct()
++    print(f"  Result: {result}")
++except TypeError as e:
++    print(f"  ERROR: {e}")
++print()
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e78f9666e3
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,102 @@
++"""Comprehensive test for Q() deconstruct fix."""
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db.models import Q
++
++# Mock classes
++class MockExists:
++    """Mock Exists object that is not subscriptable."""
++    def __init__(self, queryset):
++        self.queryset = queryset
++    def __repr__(self):
++        return f"MockExists({self.queryset})"
++
++class BooleanExpression:
++    """Mock boolean expression that is not subscriptable."""
++    def __init__(self, value):
++        self.value = value
++    def __repr__(self):
++        return f"BooleanExpression({self.value})"
++
++print("=" * 60)
++print("Testing Q() deconstruct with various inputs")
++print("=" * 60)
++
++# Test 1: Empty Q
++print("\n1. Empty Q()")
++result = Q().deconstruct()
++print(f"   Result: {result}")
++assert result == ('django.db.models.Q', (), {})
++
++# Test 2: Single kwarg
++print("\n2. Q(x=1)")
++result = Q(x=1).deconstruct()
++print(f"   Result: {result}")
++assert result == ('django.db.models.Q', (('x', 1),), {})
++
++# Test 3: Multiple kwargs
++print("\n3. Q(x=1, y=2)")
++result = Q(x=1, y=2).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert len(result[1]) == 2
++assert result[2] == {}
++
++# Test 4: Single non-subscriptable arg (Exists-like)
++print("\n4. Q(MockExists(...))")
++exists_obj = MockExists('queryset')
++result = Q(exists_obj).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert len(result[1]) == 1
++assert result[1][0] == exists_obj
++
++# Test 5: Single non-subscriptable arg (BooleanExpression-like)
++print("\n5. Q(BooleanExpression(...))")
++bool_expr = BooleanExpression(True)
++result = Q(bool_expr).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert len(result[1]) == 1
++assert result[1][0] == bool_expr
++
++# Test 6: Nested Q
++print("\n6. Q(Q(x=1))")
++result = Q(Q(x=1)).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert len(result[1]) == 1
++assert isinstance(result[1][0], Q)
++
++# Test 7: Multiple args including non-subscriptable
++print("\n7. Q(MockExists(...), Q(x=1))")
++result = Q(exists_obj, Q(x=1)).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert len(result[1]) == 2
++
++# Test 8: Q with connector
++print("\n8. Q(x=1, _connector='OR')")
++result = Q(x=1, _connector='OR').deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert result[2] == {'_connector': 'OR'}
++
++# Test 9: Q with negation
++print("\n9. Q(x=1, _negated=True)")
++result = Q(x=1, _negated=True).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert result[2] == {'_negated': True}
++
++# Test 10: Q with both connector and negation
++print("\n10. Q(x=1, _connector='OR', _negated=True)")
++result = Q(x=1, _connector='OR', _negated=True).deconstruct()
++print(f"   Result: {result}")
++assert result[0] == 'django.db.models.Q'
++assert result[2] == {'_connector': 'OR', '_negated': True}
++
++print("\n" + "=" * 60)
++print("All tests passed!")
++print("=" * 60)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..fd55c876d1
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,69 @@
++"""Test edge cases for the Q() deconstruct fix."""
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db.models import Q
++
++print("Testing edge cases")
++print("=" * 60)
++
++# Test 1: Q with tuple child (should work)
++print("\n1. Q with tuple child: Q(('x', 1))")
++try:
++    result = Q(('x', 1)).deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++# Test 2: Q with list child (should work)
++print("\n2. Q with list child: Q(['x', 1])")
++try:
++    result = Q(['x', 1]).deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++# Test 3: Q with string child (should work)
++print("\n3. Q with string child: Q('test')")
++try:
++    result = Q('test').deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++# Test 4: Q with integer child (should work)
++print("\n4. Q with integer child: Q(42)")
++try:
++    result = Q(42).deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++# Test 5: Q with None child (should work)
++print("\n5. Q with None child: Q(None)")
++try:
++    result = Q(None).deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++# Test 6: Combining Q objects
++print("\n6. Combining Q objects: Q(x=1) & Q(y=2)")
++try:
++    q = Q(x=1) & Q(y=2)
++    result = q.deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++# Test 7: Negating Q objects
++print("\n7. Negating Q objects: ~Q(x=1)")
++try:
++    q = ~Q(x=1)
++    result = q.deconstruct()
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   ERROR: {e}")
++
++print("\n" + "=" * 60)
++print("All edge case tests completed!")
+diff --git a/test_pr_issue.py b/test_pr_issue.py
+new file mode 100644
+index 0000000000..96efa9e8f6
+--- /dev/null
++++ b/test_pr_issue.py
+@@ -0,0 +1,51 @@
++"""Test the exact issue from the PR description."""
++import os
++import sys
++import django
++
++# Minimal Django settings
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db.models import Q, Exists
++from django.contrib.auth import get_user_model
++
++print("Testing the exact issue from PR description")
++print("=" * 60)
++
++# Test from PR description
++print("\n1. Q(x=1).deconstruct()")
++result = Q(x=1).deconstruct()
++print(f"   Result: {result}")
++
++print("\n2. Q(x=1, y=2).deconstruct()")
++result = Q(x=1, y=2).deconstruct()
++print(f"   Result: {result}")
++
++print("\n3. Q(Exists(get_user_model().objects.filter(username='jim'))).deconstruct()")
++print("   This was crashing with: TypeError: 'Exists' object is not subscriptable")
++try:
++    User = get_user_model()
++    exists_query = Exists(User.objects.filter(username='jim'))
++    result = Q(exists_query).deconstruct()
++    print(f"   SUCCESS! Result: {result}")
++    print(f"   No TypeError - the issue is FIXED!")
++except TypeError as e:
++    print(f"   FAILED: {e}")
++
++print("\n" + "=" * 60)
+diff --git a/test_with_real_exists.py b/test_with_real_exists.py
+new file mode 100644
+index 0000000000..cb4625c8ee
+--- /dev/null
++++ b/test_with_real_exists.py
+@@ -0,0 +1,61 @@
++"""Test with real Django Exists class."""
++import os
++import sys
++import django
++
++# Minimal Django settings
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models import Q, Exists
++
++# Create a simple model for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++print("Testing Q() with real Django Exists class")
++print("=" * 60)
++
++# Create an Exists query
++exists_query = Exists(TestModel.objects.filter(name='test'))
++
++print("\n1. Creating Q with Exists object")
++print(f"   Exists query: {exists_query}")
++
++print("\n2. Calling Q(exists_query).deconstruct()")
++try:
++    result = Q(exists_query).deconstruct()
++    print(f"   SUCCESS! Result: {result}")
++    print(f"   Path: {result[0]}")
++    print(f"   Args: {result[1]}")
++    print(f"   Kwargs: {result[2]}")
++except Exception as e:
++    print(f"   ERROR: {type(e).__name__}: {e}")
++
++print("\n3. Testing Q with multiple children including Exists")
++try:
++    result = Q(exists_query, Q(name='test')).deconstruct()
++    print(f"   SUCCESS! Result has {len(result[1])} args")
++except Exception as e:
++    print(f"   ERROR: {type(e).__name__}: {e}")
++
++print("\n" + "=" * 60)
++print("Test completed successfully!")

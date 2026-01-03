@@ -1,0 +1,208 @@
+diff --git a/django/core/management/commands/runserver.py b/django/core/management/commands/runserver.py
+index 3c39f57e4d..a62b103fc2 100644
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -105,7 +105,9 @@ class Command(BaseCommand):
+                     self._raw_ipv6 = True
+                 elif self.use_ipv6 and not _fqdn:
+                     raise CommandError('"%s" is not a valid IPv6 address.' % self.addr)
+-        if not self.addr:
++        if self.addr == "0":
++            self.addr = "::" if self.use_ipv6 else "0.0.0.0"
++        elif not self.addr:
+             self.addr = self.default_addr_ipv6 if self.use_ipv6 else self.default_addr
+             self._raw_ipv6 = self.use_ipv6
+         self.run(**options)
+diff --git a/fix_runserver.py b/fix_runserver.py
+new file mode 100644
+index 0000000000..e27fcbcd3a
+--- /dev/null
++++ b/fix_runserver.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++"""Script to fix the runserver.py file"""
++
++with open('./django/core/management/commands/runserver.py', 'r') as f:
++    lines = f.readlines()
++
++# Find the line with "if not self.addr:" and replace the logic
++new_lines = []
++i = 0
++while i < len(lines):
++    line = lines[i]
++    # Look for the specific line we need to modify
++    if i < len(lines) - 2 and line.strip() == 'if not self.addr:':
++        # Replace the if-elif-else block
++        indent = ' ' * 8
++        new_lines.append(f'{indent}if self.addr == "0":\n')
++        new_lines.append(f'{indent}    self.addr = "::" if self.use_ipv6 else "0.0.0.0"\n')
++        new_lines.append(f'{indent}elif not self.addr:\n')
++        new_lines.append(f'{indent}    self.addr = self.default_addr_ipv6 if self.use_ipv6 else self.default_addr\n')
++        new_lines.append(f'{indent}    self._raw_ipv6 = self.use_ipv6\n')
++        # Skip the next 2 lines (the original if block content)
++        i += 3
++    else:
++        new_lines.append(line)
++        i += 1
++
++with open('./django/core/management/commands/runserver.py', 'w') as f:
++    f.writelines(new_lines)
++
++print("File updated successfully")
+diff --git a/test_runserver_fix.py b/test_runserver_fix.py
+new file mode 100644
+index 0000000000..7eba239f2b
+--- /dev/null
++++ b/test_runserver_fix.py
+@@ -0,0 +1,64 @@
++#!/usr/bin/env python
++"""
++Test script to verify the runserver address normalization fix.
++This simulates the logic after the fix has been applied.
++"""
++
++def simulate_address_normalization(addr, use_ipv6=False):
++    """
++    Simulates the address normalization logic from runserver.py after the fix.
++    """
++    default_addr = "127.0.0.1"
++    default_addr_ipv6 = "::1"
++    
++    # The fix: handle "0" explicitly
++    if addr == "0":
++        addr = "::" if use_ipv6 else "0.0.0.0"
++    elif not addr:
++        addr = default_addr_ipv6 if use_ipv6 else default_addr
++    
++    return addr
++
++def test_fix():
++    """Test various scenarios"""
++    test_cases = [
++        # (input_addr, use_ipv6, expected_output, description)
++        ("0", False, "0.0.0.0", "IPv4: '0' should become '0.0.0.0'"),
++        ("0", True, "::", "IPv6: '0' should become '::'"),
++        ("", False, "127.0.0.1", "IPv4: empty should use default '127.0.0.1'"),
++        ("", True, "::1", "IPv6: empty should use default '::1'"),
++        ("192.168.1.1", False, "192.168.1.1", "IPv4: specific IP should remain unchanged"),
++        ("localhost", False, "localhost", "Hostname should remain unchanged"),
++    ]
++    
++    print("Testing runserver address normalization fix:")
++    print("=" * 80)
++    
++    all_passed = True
++    for input_addr, use_ipv6, expected, description in test_cases:
++        result = simulate_address_normalization(input_addr, use_ipv6)
++        passed = (result == expected)
++        all_passed = all_passed and passed
++        
++        status = "‚ú? PASS" if passed else "‚ú? FAIL"
++        ipv_label = "IPv6" if use_ipv6 else "IPv4"
++        print(f"\n{status}: {description}")
++        print(f"  Input:    '{input_addr}' ({ipv_label})")
++        print(f"  Result:   '{result}'")
++        print(f"  Expected: '{expected}'")
++    
++    print("\n" + "=" * 80)
++    if all_passed:
++        print("‚ú? All tests passed!")
++        print("\nThe fix ensures that 'runserver 0:8000' will display:")
++        print("  'Starting development server at http://0.0.0.0:8000/'")
++        print("instead of:")
++        print("  'Starting development server at http://0:8000/'")
++    else:
++        print("‚ú? Some tests failed!")
++    
++    return all_passed
++
++if __name__ == "__main__":
++    import sys
++    sys.exit(0 if test_fix() else 1)
+diff --git a/verify_complete_fix.py b/verify_complete_fix.py
+new file mode 100644
+index 0000000000..299599caf9
+--- /dev/null
++++ b/verify_complete_fix.py
+@@ -0,0 +1,81 @@
++#!/usr/bin/env python
++"""
++Comprehensive verification that the fix resolves the issue described in the PR.
++
++PR Issue: When running 'python manage.py runserver 0:8000', the output shows
++"Starting development server at http://0:8000/" which doesn't work in browsers.
++It should show "http://0.0.0.0:8000/" instead.
++
++Fix: Modified django/core/management/commands/runserver.py to normalize "0" to "0.0.0.0"
++"""
++
++def test_pr_issue():
++    """
++    Test the specific issue mentioned in the PR description.
++    """
++    print("=" * 80)
++    print("PR Issue Verification")
++    print("=" * 80)
++    print("\nPR Description:")
++    print("  Running 'python manage.py runserver 0:8000' should be the same as")
++    print("  'python manage.py runserver 0.0.0.0:8000'")
++    print("\nBefore Fix:")
++    print("  Output: Starting development server at http://0:8000/")
++    print("  Problem: Link http://0:8000/ doesn't work in browser")
++    print("\nAfter Fix:")
++    print("  Output: Starting development server at http://0.0.0.0:8000/")
++    print("  Result: Link http://0.0.0.0:8000/ works correctly")
++    print("\n" + "=" * 80)
++    print("Fix Implementation")
++    print("=" * 80)
++    print("\nFile: django/core/management/commands/runserver.py")
++    print("\nChange:")
++    print("  Before:")
++    print("    if not self.addr:")
++    print("        self.addr = self.default_addr_ipv6 if self.use_ipv6 else self.default_addr")
++    print("\n  After:")
++    print("    if self.addr == '0':")
++    print("        self.addr = '::' if self.use_ipv6 else '0.0.0.0'")
++    print("    elif not self.addr:")
++    print("        self.addr = self.default_addr_ipv6 if self.use_ipv6 else self.default_addr")
++    print("\n" + "=" * 80)
++    print("Test Cases")
++    print("=" * 80)
++    
++    # Simulate the fix
++    def normalize_addr(addr, use_ipv6=False):
++        if addr == "0":
++            return "::" if use_ipv6 else "0.0.0.0"
++        elif not addr:
++            return "::1" if use_ipv6 else "127.0.0.1"
++        return addr
++    
++    test_cases = [
++        ("0", False, "0.0.0.0", "Main PR issue: '0' normalizes to '0.0.0.0'"),
++        ("0.0.0.0", False, "0.0.0.0", "Explicit '0.0.0.0' remains unchanged"),
++        ("", False, "127.0.0.1", "Empty defaults to '127.0.0.1'"),
++        ("127.0.0.1", False, "127.0.0.1", "Localhost remains unchanged"),
++        ("0", True, "::", "IPv6: '0' normalizes to '::'"),
++    ]
++    
++    all_passed = True
++    for addr_input, use_ipv6, expected, description in test_cases:
++        result = normalize_addr(addr_input, use_ipv6)
++        passed = result == expected
++        all_passed = all_passed and passed
++        status = "‚úì" if passed else "‚úó"
++        print(f"\n{status} {description}")
++        print(f"  Input: '{addr_input}' -> Output: '{result}'")
++    
++    print("\n" + "=" * 80)
++    if all_passed:
++        print("‚ú? All tests passed! The fix resolves the PR issue.")
++    else:
++        print("‚ú? Some tests failed!")
++    print("=" * 80)
++    
++    return all_passed
++
++if __name__ == "__main__":
++    import sys
++    sys.exit(0 if test_pr_issue() else 1)

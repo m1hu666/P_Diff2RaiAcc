@@ -1,0 +1,271 @@
+diff --git a/django/contrib/admin/templatetags/admin_modify.py b/django/contrib/admin/templatetags/admin_modify.py
+index 9df4b7aadb..5b742af46a 100644
+--- a/django/contrib/admin/templatetags/admin_modify.py
++++ b/django/contrib/admin/templatetags/admin_modify.py
+@@ -100,6 +100,7 @@ def submit_row(context):
+                 and context.get("show_delete", True)
+             ),
+             "show_save_as_new": not is_popup
++            and has_add_permission
+             and has_change_permission
+             and change
+             and save_as,
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..fcf9a58b04
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,101 @@
++"""
++Final verification test for the save_as_new permission fix.
++
++This test demonstrates the security issue where users with only change permission
++could see and use the "Save as new" button, which creates new objects and should
++require add permission.
++
++The fix adds `has_add_permission` check to the condition for showing the
++"Save as new" button in django/contrib/admin/templatetags/admin_modify.py
++"""
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
++        INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth', 'django.contrib.admin'],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.contrib.admin.templatetags.admin_modify import submit_row
++from django.db import models
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    class Meta:
++        app_label = 'test_app'
++
++def main():
++    print("\n" + "="*80)
++    print("SECURITY FIX VERIFICATION: save_as_new requires add permission")
++    print("="*80 + "\n")
++    
++    base_context = {
++        'has_delete_permission': False,
++        'has_view_permission': True,
++        'has_editable_inline_admin_formsets': False,
++        'show_delete': False,
++        'is_popup': False,
++        'show_save': True,
++        'opts': TestModel._meta,
++        'change': True,
++        'add': False,
++        'save_as': True,
++    }
++    
++    # Critical test: User with change but not add permission
++    print("CRITICAL SECURITY TEST:")
++    print("-" * 80)
++    context = base_context.copy()
++    context['has_change_permission'] = True
++    context['has_add_permission'] = False
++    
++    result = submit_row(context)
++    
++    print(f"User permissions:")
++    print(f"  - has_change_permission: {context['has_change_permission']}")
++    print(f"  - has_add_permission: {context['has_add_permission']}")
++    print(f"\nModelAdmin configuration:")
++    print(f"  - save_as: {context['save_as']}")
++    print(f"\nResult:")
++    print(f"  - show_save_as_new: {result['show_save_as_new']}")
++    print(f"\nExpected: False (user cannot add new objects)")
++    print(f"Status: {'✓ PASS - Security fix working!' if not result['show_save_as_new'] else '✗ FAIL - Security vulnerability!'}")
++    print("-" * 80 + "\n")
++    
++    # Verify normal case still works
++    print("NORMAL OPERATION TEST:")
++    print("-" * 80)
++    context2 = base_context.copy()
++    context2['has_change_permission'] = True
++    context2['has_add_permission'] = True
++    
++    result2 = submit_row(context2)
++    
++    print(f"User permissions:")
++    print(f"  - has_change_permission: {context2['has_change_permission']}")
++    print(f"  - has_add_permission: {context2['has_add_permission']}")
++    print(f"\nResult:")
++    print(f"  - show_save_as_new: {result2['show_save_as_new']}")
++    print(f"\nExpected: True (user has both permissions)")
++    print(f"Status: {'✓ PASS - Normal operation preserved!' if result2['show_save_as_new'] else '✗ FAIL - Broke normal operation!'}")
++    print("-" * 80 + "\n")
++    
++    if not result['show_save_as_new'] and result2['show_save_as_new']:
++        print("="*80)
++        print("✓ ALL TESTS PASSED - Security fix is working correctly!")
++        print("="*80)
++        return True
++    else:
++        print("="*80)
++        print("✗ TESTS FAILED - Issue not fixed properly!")
++        print("="*80)
++        return False
++
++if __name__ == '__main__':
++    success = main()
++    exit(0 if success else 1)
+diff --git a/test_save_as_new_security.py b/test_save_as_new_security.py
+new file mode 100644
+index 0000000000..4767e2096f
+--- /dev/null
++++ b/test_save_as_new_security.py
+@@ -0,0 +1,146 @@
++"""
++Comprehensive test to demonstrate the security issue with save_as_new
++and verify that the fix prevents users without add permission from
++seeing the "Save as new" button.
++"""
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++from django.contrib.admin.templatetags.admin_modify import submit_row
++from django.db import models
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++def test_save_as_new_requires_add_permission():
++    """
++    Test that save_as_new button is only shown when user has add permission.
++    
++    The "Save as new" functionality creates a new object, so it should require
++    add permission in addition to change permission.
++    """
++    
++    print("=" * 70)
++    print("SECURITY TEST: save_as_new should require add permission")
++    print("=" * 70)
++    print()
++    
++    # Base context for a change form with save_as enabled
++    base_context = {
++        'has_delete_permission': False,
++        'has_view_permission': True,
++        'has_editable_inline_admin_formsets': False,
++        'show_delete': False,
++        'show_save_as_new': False,
++        'show_save_and_add_another': False,
++        'show_save_and_continue': True,
++        'is_popup': False,
++        'show_save': True,
++        'preserved_filters': '',
++        'opts': TestModel._meta,
++        'change': True,
++        'add': False,
++        'save_as': True,
++    }
++    
++    test_cases = [
++        {
++            'name': 'No permissions',
++            'has_change_permission': False,
++            'has_add_permission': False,
++            'expected_show_save_as_new': False,
++            'reason': 'User has neither change nor add permission'
++        },
++        {
++            'name': 'Only change permission (THE BUG CASE)',
++            'has_change_permission': True,
++            'has_add_permission': False,
++            'expected_show_save_as_new': False,
++            'reason': 'User can change but cannot add - should NOT see "Save as new"'
++        },
++        {
++            'name': 'Only add permission',
++            'has_change_permission': False,
++            'has_add_permission': True,
++            'expected_show_save_as_new': False,
++            'reason': 'User can add but cannot change - should NOT see "Save as new"'
++        },
++        {
++            'name': 'Both change and add permissions',
++            'has_change_permission': True,
++            'has_add_permission': True,
++            'expected_show_save_as_new': True,
++            'reason': 'User has both permissions - SHOULD see "Save as new"'
++        },
++        {
++            'name': 'Popup mode (both permissions)',
++            'has_change_permission': True,
++            'has_add_permission': True,
++            'is_popup': True,
++            'expected_show_save_as_new': False,
++            'reason': 'Popup mode disables "Save as new" regardless of permissions'
++        },
++    ]
++    
++    all_passed = True
++    
++    for i, test_case in enumerate(test_cases, 1):
++        context = base_context.copy()
++        context['has_change_permission'] = test_case['has_change_permission']
++        context['has_add_permission'] = test_case['has_add_permission']
++        if 'is_popup' in test_case:
++            context['is_popup'] = test_case['is_popup']
++        
++        result = submit_row(context)
++        actual = result['show_save_as_new']
++        expected = test_case['expected_show_save_as_new']
++        passed = actual == expected
++        
++        print(f"Test {i}: {test_case['name']}")
++        print(f"  Permissions: change={context['has_change_permission']}, add={context['has_add_permission']}")
++        if 'is_popup' in test_case:
++            print(f"  is_popup: {context['is_popup']}")
++        print(f"  Reason: {test_case['reason']}")
++        print(f"  Expected show_save_as_new: {expected}")
++        print(f"  Actual show_save_as_new: {actual}")
++        print(f"  Result: {'PASS' if passed else 'FAIL'}")
++        print()
++        
++        if not passed:
++            all_passed = False
++    
++    print("=" * 70)
++    if all_passed:
++        print("ALL TESTS PASSED")
++        print("The fix correctly prevents users without add permission from")
++        print("seeing the 'Save as new' button.")
++    else:
++        print("SOME TESTS FAILED")
++        print("The security issue still exists!")
++    print("=" * 70)
++    return all_passed
++
++if __name__ == '__main__':
++    test_save_as_new_requires_add_permission()

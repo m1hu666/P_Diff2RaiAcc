@@ -1,0 +1,477 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index e6cbf8c64f..5deb50ce76 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -143,6 +143,10 @@ class OutputWrapper(TextIOBase):
+     def isatty(self):
+         return hasattr(self._out, 'isatty') and self._out.isatty()
+ 
++    def flush(self):
++        if hasattr(self._out, 'flush'):
++            self._out.flush()
++
+     def write(self, msg='', style_func=None, ending=None):
+         ending = self.ending if ending is None else ending
+         if ending and not msg.endswith(ending):
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..baf7e311d4
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,65 @@
++"""Final verification that the fix is complete and correct"""
++import sys
++from io import StringIO, TextIOBase
++from django.core.management.base import OutputWrapper
++
++print("FINAL VERIFICATION")
++print("=" * 70)
++
++# Verify the fix is in place
++print("\n1. Verify flush() method exists in OutputWrapper:")
++print(f"   - 'flush' in OutputWrapper.__dict__: {'flush' in OutputWrapper.__dict__}")
++print(f"   - OutputWrapper inherits from TextIOBase: {issubclass(OutputWrapper, TextIOBase)}")
++
++# Verify MRO (Method Resolution Order)
++print("\n2. Method Resolution Order:")
++for i, cls in enumerate(OutputWrapper.__mro__):
++    has_flush = 'flush' in cls.__dict__
++    print(f"   {i}. {cls.__name__}: {'has flush()' if has_flush else 'no flush()'}")
++
++# Verify the flush method works correctly
++print("\n3. Verify flush() delegates to underlying stream:")
++class CountingStream:
++    def __init__(self):
++        self.flush_count = 0
++    def write(self, msg):
++        pass
++    def flush(self):
++        self.flush_count += 1
++    def isatty(self):
++        return False
++
++stream = CountingStream()
++wrapper = OutputWrapper(stream)
++print(f"   - Initial flush count: {stream.flush_count}")
++wrapper.flush()
++print(f"   - After wrapper.flush(): {stream.flush_count}")
++print(f"   - Flush was delegated: {stream.flush_count == 1}")
++
++# Verify it handles missing flush gracefully
++print("\n4. Verify graceful handling when stream lacks flush():")
++class NoFlushStream:
++    def write(self, msg):
++        pass
++    def isatty(self):
++        return False
++
++stream2 = NoFlushStream()
++wrapper2 = OutputWrapper(stream2)
++try:
++    wrapper2.flush()
++    print("   - No error raised: True")
++except Exception as e:
++    print(f"   - Error raised: {e}")
++
++# Test with real streams
++print("\n5. Test with real streams:")
++sio = StringIO()
++wrapper3 = OutputWrapper(sio)
++wrapper3.write("Test message")
++wrapper3.flush()
++print(f"   - StringIO content after flush: '{sio.getvalue()}'")
++
++print("\n" + "=" * 70)
++print("VERIFICATION COMPLETE - All checks passed!")
++print("=" * 70)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..3f07963ccf
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,71 @@
++"""Test edge cases for the flush() fix"""
++from io import StringIO
++from django.core.management.base import OutputWrapper
++
++print("Testing edge cases for flush() fix:")
++print("=" * 60)
++
++# Test 1: Stream with flush method
++print("\n1. Stream with flush method (StringIO):")
++sio = StringIO()
++wrapper = OutputWrapper(sio)
++wrapper.write("Test")
++wrapper.flush()
++print("   OK - No error with StringIO")
++
++# Test 2: Stream without flush method
++print("\n2. Stream without flush method:")
++class NoFlushStream:
++    def write(self, msg):
++        pass
++    def isatty(self):
++        return False
++
++nfs = NoFlushStream()
++wrapper2 = OutputWrapper(nfs)
++wrapper2.write("Test")
++try:
++    wrapper2.flush()
++    print("   OK - No error when stream lacks flush()")
++except AttributeError as e:
++    print(f"   ERROR: {e}")
++
++# Test 3: Stream with flush that raises an exception
++print("\n3. Stream with flush that raises an exception:")
++class ErrorFlushStream:
++    def write(self, msg):
++        pass
++    def flush(self):
++        raise IOError("Simulated flush error")
++    def isatty(self):
++        return False
++
++efs = ErrorFlushStream()
++wrapper3 = OutputWrapper(efs)
++wrapper3.write("Test")
++try:
++    wrapper3.flush()
++    print("   ERROR - Should have raised IOError")
++except IOError as e:
++    print(f"   OK - Correctly propagated error: {e}")
++
++# Test 4: Multiple flushes
++print("\n4. Multiple consecutive flushes:")
++sio2 = StringIO()
++wrapper4 = OutputWrapper(sio2)
++wrapper4.write("Test")
++wrapper4.flush()
++wrapper4.flush()
++wrapper4.flush()
++print("   OK - Multiple flushes work without error")
++
++# Test 5: Flush without prior write
++print("\n5. Flush without prior write:")
++sio3 = StringIO()
++wrapper5 = OutputWrapper(sio3)
++wrapper5.flush()
++print("   OK - Flush works even without prior write")
++
++print("\n" + "=" * 60)
++print("All edge cases handled correctly!")
++print("=" * 60)
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..d294dab00c
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,68 @@
++"""Final verification that the fix works"""
++import sys
++from io import StringIO
++from django.core.management.base import OutputWrapper
++
++print("=" * 60)
++print("FINAL VERIFICATION OF FLUSH FIX")
++print("=" * 60)
++
++# Test 1: Verify flush method exists and is callable
++print("\n1. Checking flush method exists in OutputWrapper:")
++wrapper = OutputWrapper(StringIO())
++print(f"   - hasattr(wrapper, 'flush'): {hasattr(wrapper, 'flush')}")
++print(f"   - 'flush' in OutputWrapper.__dict__: {'flush' in OutputWrapper.__dict__}")
++print(f"   - callable(wrapper.flush): {callable(wrapper.flush)}")
++
++# Test 2: Verify flush is called on underlying stream
++print("\n2. Verifying flush is called on underlying stream:")
++class CountingStream:
++    def __init__(self):
++        self.flush_calls = 0
++    def write(self, msg):
++        pass
++    def flush(self):
++        self.flush_calls += 1
++    def isatty(self):
++        return False
++
++stream = CountingStream()
++wrapper = OutputWrapper(stream)
++wrapper.flush()
++wrapper.flush()
++print(f"   - Flush called {stream.flush_calls} times (expected: 2)")
++assert stream.flush_calls == 2, "Flush not called correctly!"
++
++# Test 3: Verify it works with streams that don't have flush
++print("\n3. Verifying it handles streams without flush:")
++class NoFlushStream:
++    def write(self, msg):
++        pass
++    def isatty(self):
++        return False
++
++stream2 = NoFlushStream()
++wrapper2 = OutputWrapper(stream2)
++try:
++    wrapper2.flush()  # Should not raise an error
++    print("   - No error when stream lacks flush method")
++except Exception as e:
++    print(f"   - ERROR: {e}")
++
++# Test 4: Real-world scenario
++print("\n4. Real-world scenario (migrate-like usage):")
++sio = StringIO()
++wrapper3 = OutputWrapper(sio)
++wrapper3.write("Running migrations:")
++wrapper3.write("  Applying migration...", ending='')
++wrapper3.flush()
++content_after_flush = sio.getvalue()
++wrapper3.write(" OK")
++final_content = sio.getvalue()
++print(f"   - Content after flush: '{content_after_flush}'")
++print(f"   - Final content: '{final_content}'")
++assert "Applying migration..." in content_after_flush, "Content not available after flush!"
++
++print("\n" + "=" * 60)
++print("ALL TESTS PASSED!")
++print("=" * 60)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..28bafc2a67
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,40 @@
++"""Test that the flush fix works"""
++import sys
++import time
++from io import StringIO
++from django.core.management.base import OutputWrapper
++
++print("Test 1: Verify flush() is now explicitly defined")
++wrapper = OutputWrapper(sys.stdout)
++print(f"OutputWrapper has flush method: {hasattr(wrapper, 'flush')}")
++print(f"flush is defined in OutputWrapper: {'flush' in OutputWrapper.__dict__}")
++
++print("\nTest 2: Test flush with StringIO")
++sio = StringIO()
++wrapper = OutputWrapper(sio)
++wrapper.write("Test message", ending='')
++print(f"Before flush: '{sio.getvalue()}'")
++wrapper.flush()
++print(f"After flush: '{sio.getvalue()}'")
++
++print("\nTest 3: Simulate migrate command behavior")
++sio2 = StringIO()
++wrapper2 = OutputWrapper(sio2)
++wrapper2.write("Operations to perform:\n")
++wrapper2.write(" Apply all migrations: myapp\n")
++wrapper2.write("Running migrations:\n")
++wrapper2.write(" Applying myapp.0002_auto_20200817_1030...", ending='')
++wrapper2.flush()
++print(f"After flush (should have content): '{sio2.getvalue()}'")
++print(f"Length: {len(sio2.getvalue())}")
++wrapper2.write(" OK\n")
++print(f"Final: '{sio2.getvalue()}'")
++
++print("\nTest 4: Test with real stdout")
++wrapper3 = OutputWrapper(sys.stdout)
++wrapper3.write("This should appear immediately...", ending='')
++wrapper3.flush()
++time.sleep(0.5)
++wrapper3.write(" OK\n")
++
++print("\nAll tests passed!")
+diff --git a/test_flush_tracking.py b/test_flush_tracking.py
+new file mode 100644
+index 0000000000..577a80c396
+--- /dev/null
++++ b/test_flush_tracking.py
+@@ -0,0 +1,50 @@
++"""Test that flush is actually being called on the underlying stream"""
++import sys
++from io import StringIO
++from django.core.management.base import OutputWrapper
++
++class FlushTrackingStream:
++    """A stream that tracks when flush is called"""
++    def __init__(self):
++        self.buffer = []
++        self.flush_count = 0
++        
++    def write(self, msg):
++        self.buffer.append(msg)
++        return len(msg)
++        
++    def flush(self):
++        self.flush_count += 1
++        print(f"[FLUSH CALLED - count: {self.flush_count}, buffer has {len(self.buffer)} items]", file=sys.stderr)
++        
++    def isatty(self):
++        return False
++        
++    def getvalue(self):
++        return ''.join(self.buffer)
++
++# Test that flush is called on the underlying stream
++print("Testing that flush() is properly delegated:\n")
++
++stream = FlushTrackingStream()
++wrapper = OutputWrapper(stream)
++
++print(f"Initial flush count: {stream.flush_count}")
++
++wrapper.write("Line 1")
++print(f"After write, flush count: {stream.flush_count}")
++
++wrapper.flush()
++print(f"After flush, flush count: {stream.flush_count}")
++
++wrapper.write("Line 2", ending='')
++wrapper.flush()
++print(f"After second flush, flush count: {stream.flush_count}")
++
++print(f"\nFinal buffer content: '{stream.getvalue()}'")
++print(f"Total flush calls: {stream.flush_count}")
++
++if stream.flush_count == 2:
++    print("\n‚ú? SUCCESS: flush() was called on the underlying stream!")
++else:
++    print(f"\n‚ú? FAILURE: Expected 2 flush calls, got {stream.flush_count}")
+diff --git a/test_migrate_scenario.py b/test_migrate_scenario.py
+new file mode 100644
+index 0000000000..483642f867
+--- /dev/null
++++ b/test_migrate_scenario.py
+@@ -0,0 +1,27 @@
++"""Test that simulates the exact migrate command scenario"""
++import sys
++import time
++from django.core.management.base import OutputWrapper
++
++# Simulate what happens during migrate
++print("Simulating migrate command with flush():\n")
++
++# Use stderr like migrate does
++wrapper = OutputWrapper(sys.stderr)
++
++wrapper.write("Operations to perform:")
++wrapper.write("  Apply all migrations: myapp")
++wrapper.write("Running migrations:")
++
++# This is the critical part - write without newline and flush
++wrapper.write("  Applying myapp.0002_auto_20200817_1030...", ending='')
++wrapper.flush()  # This should now work!
++
++# Simulate long-running migration
++print("\n[Simulating 2 second migration work...]", file=sys.stdout)
++time.sleep(2)
++
++# Complete the line
++wrapper.write(" OK")
++
++print("\n[Test completed successfully]", file=sys.stdout)
+diff --git a/test_pr_issue_fixed.py b/test_pr_issue_fixed.py
+new file mode 100644
+index 0000000000..0b22be2616
+--- /dev/null
++++ b/test_pr_issue_fixed.py
+@@ -0,0 +1,99 @@
++"""
++Test that demonstrates the fix for the PR issue:
++"flush() on self.stdout/stderr management commands doesn't work"
++
++This test simulates the exact scenario described in the PR where
++during a migrate command, flush() is called but doesn't work,
++causing output to be buffered until the end.
++"""
++import sys
++import time
++from io import StringIO
++from django.core.management.base import OutputWrapper
++
++print("=" * 70)
++print("TESTING PR FIX: flush() on self.stdout/stderr management commands")
++print("=" * 70)
++
++# Create a custom stream that tracks writes and flushes
++class TrackingStream:
++    def __init__(self):
++        self.writes = []
++        self.flushes = []
++        
++    def write(self, msg):
++        self.writes.append(('write', msg, time.time()))
++        
++    def flush(self):
++        self.flushes.append(('flush', time.time()))
++        
++    def isatty(self):
++        return False
++
++# Test the exact scenario from the PR
++print("\nSimulating the migrate command scenario:")
++print("-" * 70)
++
++stream = TrackingStream()
++wrapper = OutputWrapper(stream)
++
++# This is what migrate does:
++wrapper.write("Operations to perform:")
++wrapper.write("  Apply all migrations: myapp")
++wrapper.write("Running migrations:")
++
++# The critical part - write without newline and flush
++wrapper.write("  Applying myapp.0002_auto_20200817_1030...", ending='')
++wrapper.flush()  # This should now work!
++
++# Simulate migration work
++time.sleep(0.1)
++
++# Complete the line
++wrapper.write(" OK")
++
++# Verify the fix
++print("\nResults:")
++print(f"  Total writes: {len(stream.writes)}")
++print(f"  Total flushes: {len(stream.flushes)}")
++
++print("\nSequence of operations:")
++all_ops = stream.writes + stream.flushes
++all_ops.sort(key=lambda x: x[-1])  # Sort by timestamp
++
++for i, op in enumerate(all_ops, 1):
++    if op[0] == 'write':
++        msg = repr(op[1])
++        if len(msg) > 50:
++            msg = msg[:47] + '...'
++        print(f"  {i}. WRITE: {msg}")
++    else:
++        print(f"  {i}. FLUSH")
++
++# Verify flush was called at the right time
++flush_after_applying = False
++for i, op in enumerate(all_ops):
++    if op[0] == 'write' and 'Applying' in op[1] and '...' in op[1]:
++        # Check if next operation is a flush
++        if i + 1 < len(all_ops) and all_ops[i + 1][0] == 'flush':
++            flush_after_applying = True
++            break
++
++print("\n" + "=" * 70)
++if flush_after_applying and len(stream.flushes) > 0:
++    print("SUCCESS: flush() is now working correctly!")
++    print("  - flush() was called after 'Applying...' message")
++    print("  - This means output will appear immediately, not buffered")
++else:
++    print("FAILURE: flush() is not working as expected")
++print("=" * 70)
++
++# Additional verification with real stdout
++print("\n\nAdditional test with real stdout:")
++print("-" * 70)
++wrapper2 = OutputWrapper(sys.stdout)
++wrapper2.write("Testing immediate output...", ending='')
++wrapper2.flush()
++sys.stdout.write(" [FLUSHED]\n")
++print("If you saw '[FLUSHED]' immediately after 'Testing', flush works!")
++print("-" * 70)

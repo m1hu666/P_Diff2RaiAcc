@@ -1,0 +1,161 @@
+diff --git a/django/http/response.py b/django/http/response.py
+index 6a84e193ba..ad2820d16e 100644
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -233,7 +233,9 @@ class HttpResponseBase:
+             return bytes(value)
+         if isinstance(value, str):
+             return bytes(value.encode(self.charset))
+-        # Handle non-string types.
++        # Handle memoryview objects.
++        if isinstance(value, memoryview):
++            return bytes(value)
+         return str(value).encode(self.charset)
+ 
+     # These methods partially implement the file-like object interface.
+diff --git a/test_database_simulation.py b/test_database_simulation.py
+new file mode 100644
+index 0000000000..16007096f9
+--- /dev/null
++++ b/test_database_simulation.py
+@@ -0,0 +1,60 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        DEFAULT_CHARSET='utf-8',
++    )
++    django.setup()
++
++from django.http import HttpResponse
++
++print("Testing database BinaryField scenario...")
++print("=" * 60)
++
++# Simulate what PostgreSQL returns for a BinaryField
++binary_data = b"Binary data from PostgreSQL database"
++postgres_result = memoryview(binary_data)
++
++print(f"Input type: {type(postgres_result)}")
++print(f"Input value: {postgres_result}")
++
++# Create HttpResponse with the memoryview (as would happen with PostgreSQL)
++response = HttpResponse(postgres_result, content_type='application/octet-stream')
++
++print(f"Output type: {type(response.content)}")
++print(f"Output value: {response.content}")
++
++# Verify the content is correct
++assert response.content == binary_data, f"Expected {binary_data}, got {response.content}"
++print("\nOK: PostgreSQL BinaryField scenario works correctly")
++
++# Test with SQLite (which returns bytes directly)
++sqlite_result = binary_data
++response = HttpResponse(sqlite_result, content_type='application/octet-stream')
++assert response.content == binary_data, f"SQLite test failed"
++print("OK: SQLite BinaryField scenario works correctly")
++
++# Test updating content with memoryview
++response.content = memoryview(b"Updated content")
++assert response.content == b"Updated content", "Content update failed"
++print("OK: Content can be updated with memoryview")
++
++# Test with various binary data types
++test_cases = [
++    (b"Simple text", "Simple text"),
++    (b"\x00\x01\x02\x03", "Binary with null bytes"),
++    (b"", "Empty bytes"),
++    (b"x" * 1000, "Large content"),
++]
++
++for data, description in test_cases:
++    response = HttpResponse(memoryview(data))
++    assert response.content == data, f"Failed for: {description}"
++    print(f"OK: {description}")
++
++print("\n" + "=" * 60)
++print("All database scenario tests passed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..bca8527d8c
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,38 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        DEFAULT_CHARSET='utf-8',
++    )
++    django.setup()
++
++from django.http import HttpResponse
++
++# Test edge case: memoryview of empty bytes
++response = HttpResponse(memoryview(b""))
++assert response.content == b"", f"Empty memoryview failed: {response.content}"
++print("OK: Empty memoryview works")
++
++# Test edge case: memoryview with null bytes
++response = HttpResponse(memoryview(b"\x00\x00\x00"))
++assert response.content == b"\x00\x00\x00", f"Null bytes failed: {response.content}"
++print("OK: Memoryview with null bytes works")
++
++# Test edge case: memoryview from different sources
++ba = bytearray(b"from bytearray")
++response = HttpResponse(memoryview(ba))
++assert response.content == b"from bytearray", f"Bytearray memoryview failed"
++print("OK: Memoryview from bytearray works")
++
++# Test that original bytes/str still work
++response = HttpResponse(b"bytes")
++assert response.content == b"bytes"
++response = HttpResponse("string")
++assert response.content == b"string"
++print("OK: Original bytes/str still work")
++
++print("\nAll edge case tests passed!")
+diff --git a/test_pr_description.py b/test_pr_description.py
+new file mode 100644
+index 0000000000..7e8cc2272b
+--- /dev/null
++++ b/test_pr_description.py
+@@ -0,0 +1,30 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        DEFAULT_CHARSET='utf-8',
++    )
++    django.setup()
++
++from django.http import HttpResponse
++
++# String content
++response = HttpResponse("My Content")
++print("String content:", response.content)
++assert response.content == b'My Content', f"Expected b'My Content', got {response.content}"
++
++# Bytes content
++response = HttpResponse(b"My Content")
++print("Bytes content:", response.content)
++assert response.content == b'My Content', f"Expected b'My Content', got {response.content}"
++
++# memoryview content
++response = HttpResponse(memoryview(b"My Content"))
++print("Memoryview content:", response.content)
++assert response.content == b'My Content', f"Expected b'My Content', got {response.content}"
++
++print("\nAll tests from PR description passed!")

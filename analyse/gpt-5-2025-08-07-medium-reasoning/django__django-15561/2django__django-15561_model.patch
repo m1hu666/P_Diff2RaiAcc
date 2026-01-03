@@ -1,0 +1,65 @@
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index 9d6952df21..2813b6913c 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -1377,6 +1377,7 @@ class BaseDatabaseSchemaEditor:
+         # - changing an attribute that doesn't affect the schema
+         # - adding only a db_column and the column name is not changed
+         non_database_attrs = [
++            "choices",
+             "blank",
+             "db_column",
+             "editable",
+diff --git a/verify_choices_noop.py b/verify_choices_noop.py
+new file mode 100644
+index 0000000000..d4c53cc691
+--- /dev/null
++++ b/verify_choices_noop.py
+@@ -0,0 +1,47 @@
++import django
++from django.conf import settings
++
++# Minimal settings for SQLite in-memory DB.
++settings.configure(
++    DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
++    INSTALLED_APPS=[],
++    SECRET_KEY="x",
++)
++django.setup()
++
++from django.db import connection
++from django.db.backends.sqlite3.schema import DatabaseSchemaEditor
++from django.db import models
++
++editor = DatabaseSchemaEditor(connection)
++
++class M(models.Model):
++    f = models.CharField(max_length=10, choices=[("A", "A")])
++    class Meta:
++        app_label = "app"
++
++old_field = M._meta.get_field("f")
++
++# Case 1: Only 'choices' changes should be a no-op.
++new_field = models.CharField(max_length=10, choices=[("A", "A"), ("B", "B")])
++new_field.set_attributes_from_name("f")
++new_field.column = old_field.column
++print("choices_only_change_should_be_noop:", editor._field_should_be_altered(old_field, new_field))
++
++# Case 2: Real schema change (max_length) should trigger alter.
++new_field2 = models.CharField(max_length=20, choices=[("A", "A")])
++new_field2.set_attributes_from_name("f")
++new_field2.column = old_field.column
++print("length_change_should_trigger_alter:", editor._field_should_be_altered(old_field, new_field2))
++
++# Case 3: Adding db_column only (same column name) should be a no-op.
++class N(models.Model):
++    g = models.CharField(max_length=10)
++    class Meta:
++        app_label = "app"
++
++old_field3 = N._meta.get_field("g")
++new_field3 = models.CharField(max_length=10, db_column=old_field3.column)
++new_field3.set_attributes_from_name("g")
++new_field3.column = old_field3.column
++print("adding_db_column_same_name_noop:", editor._field_should_be_altered(old_field3, new_field3))

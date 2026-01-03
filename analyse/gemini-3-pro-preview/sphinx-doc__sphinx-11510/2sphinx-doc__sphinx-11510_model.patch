@@ -1,0 +1,141 @@
+diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
+index 19f7c0a8d..f8d3279e3 100644
+--- a/sphinx/directives/other.py
++++ b/sphinx/directives/other.py
+@@ -4,10 +4,12 @@ import re
+ from typing import TYPE_CHECKING, Any, cast
+ 
+ from docutils import nodes
++from docutils import io, statemachine
+ from docutils.parsers.rst import directives
+ from docutils.parsers.rst.directives.admonitions import BaseAdmonition
+ from docutils.parsers.rst.directives.misc import Class
+ from docutils.parsers.rst.directives.misc import Include as BaseInclude
++from docutils.parsers.rst.directives.body import CodeBlock
+ 
+ from sphinx import addnodes
+ from sphinx.domains.changeset import VersionChange  # noqa: F401  # for compatibility
+@@ -362,6 +364,7 @@ class Only(SphinxDirective):
+             memo.section_level = surrounding_section_level
+ 
+ 
++
+ class Include(BaseInclude, SphinxDirective):
+     """
+     Like the standard "Include" directive, but interprets absolute paths
+@@ -376,7 +379,107 @@ class Include(BaseInclude, SphinxDirective):
+         rel_filename, filename = self.env.relfn2path(self.arguments[0])
+         self.arguments[0] = filename
+         self.env.note_included(filename)
+-        return super().run()
++
++        if not self.state.document.settings.file_insertion_enabled:
++            raise self.warning('"%s" directive disabled.' % self.name)
++
++        path = filename
++        encoding = self.options.get(
++            'encoding', self.state.document.settings.input_encoding)
++        e_handler = self.state.document.settings.input_encoding_error_handler
++        tab_width = self.options.get(
++            'tab-width', self.state.document.settings.tab_width)
++
++        try:
++            include_file = io.FileInput(source_path=path,
++                                        encoding=encoding,
++                                        error_handler=e_handler)
++        except UnicodeEncodeError:
++            raise self.severe(f'Problems with "{self.name}" directive path:\n'
++                              f'Cannot encode input file path "{path}" '
++                              '(wrong locale?).')
++        except OSError as error:
++            raise self.severe(f'Problems with "{self.name}" directive '
++                              f'path:\n{io.error_string(error)}.')
++
++        # Get to-be-included content
++        startline = self.options.get('start-line', None)
++        endline = self.options.get('end-line', None)
++        try:
++            if startline or (endline is not None):
++                lines = include_file.readlines()
++                rawtext = ''.join(lines[startline:endline])
++            else:
++                rawtext = include_file.read()
++        except UnicodeError as error:
++            raise self.severe(f'Problem with "{self.name}" directive:\n'
++                              + io.error_string(error))
++
++        # start-after/end-before processing
++        after_text = self.options.get('start-after', None)
++        if after_text:
++            after_index = rawtext.find(after_text)
++            if after_index < 0:
++                raise self.severe('Problem with "start-after" option of "%s" '
++                                  'directive:\nText not found.' % self.name)
++            rawtext = rawtext[after_index + len(after_text):]
++
++        before_text = self.options.get('end-before', None)
++        if before_text:
++            before_index = rawtext.find(before_text)
++            if before_index < 0:
++                raise self.severe('Problem with "end-before" option of "%s" '
++                                  'directive:\nText not found.' % self.name)
++            rawtext = rawtext[:before_index]
++
++        # emit "source-read" event
++        arg = [rawtext]
++        self.env.events.emit('source-read', self.env.docname, arg)
++        rawtext = arg[0]
++
++        if 'literal' in self.options:
++            if tab_width:
++                rawtext = rawtext.expandtabs(tab_width)
++
++            literal_block = nodes.literal_block(rawtext, rawtext, source=path,
++                                                classes=self.options.get('class', []))
++            literal_block.line = 1
++            self.add_name(literal_block)
++            if 'number-lines' in self.options:
++                try:
++                    startline = int(self.options['number-lines'] or 1)
++                except ValueError:
++                    raise self.error(':number-lines: with non-integer start value')
++                literal_block['classes'].append('linenos')
++                if startline != 1:
++                    literal_block['data-start'] = startline
++            return [literal_block]
++
++        if 'code' in self.options:
++            self.options['source'] = path
++            
++            if tab_width:
++                rawtext = rawtext.expandtabs(tab_width)
++            
++            lines = statemachine.string2lines(rawtext, tab_width,
++                                              convert_whitespace=True)
++            
++            codeblock = CodeBlock(self.name,
++                                  [self.options.pop('code')],
++                                  self.options,
++                                  lines,
++                                  self.lineno,
++                                  self.content_offset,
++                                  self.block_text,
++                                  self.state,
++                                  self.state_machine)
++            return codeblock.run()
++
++        # Normal include
++        include_lines = statemachine.string2lines(rawtext, tab_width,
++                                                  convert_whitespace=True)
++        self.state_machine.insert_input(include_lines, path)
++        return []
+ 
+ 
+ def setup(app: Sphinx) -> dict[str, Any]:
+@@ -402,4 +505,4 @@ def setup(app: Sphinx) -> dict[str, Any]:
+         'version': 'builtin',
+         'parallel_read_safe': True,
+         'parallel_write_safe': True,
+-    }
++    }
+\ No newline at end of file

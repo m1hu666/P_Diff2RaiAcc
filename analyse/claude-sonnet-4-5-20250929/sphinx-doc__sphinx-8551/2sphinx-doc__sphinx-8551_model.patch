@@ -1,0 +1,66 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 000000000..60b5dd72a
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,14 @@
++# Fix for :type: and :rtype: giving false ambiguous class lookup warnings
++
++## Problem
++The implicit xrefs created by the info fields `:type:` and `:rtype:` were doing lookup differently than explicit xref roles. For unqualified names, they were searching for the name in every (sub)module instead of in the current module and then parent modules, leading to false "more than one target found for cross-reference" warnings.
++
++## Root Cause
++1. The `PyXrefMixin.make_xref()` method was not setting the module context (`py:module` and `py:class`) on the pending xref nodes it created.
++2. The fuzzy search in `find_obj()` was finding all objects ending with the target name without prioritizing based on the current module hierarchy.
++
++## Solution
++Two changes were made to `sphinx/domains/python.py`:
++
++### 1. Added `process_field_xref` method to PythonDomain
++This method sets the `py:module` and `py:class` attributes on pending xref nodes created by field types, ensuring the module context is available when resolving references.
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index 79d7e4f46..fe12784e1 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -1233,6 +1233,13 @@ class PythonDomain(Domain):
+             if mod.docname in docnames:
+                 self.modules[modname] = mod
+ 
++    def process_field_xref(self, pnode: pending_xref) -> None:
++        """Process a pending xref created in a doc field.
++        Attach information about the current scope.
++        """
++        pnode['py:module'] = self.env.ref_context.get('py:module')
++        pnode['py:class'] = self.env.ref_context.get('py:class')
++
+     def find_obj(self, env: BuildEnvironment, modname: str, classname: str,
+                  name: str, type: str, searchmode: int = 0
+                  ) -> List[Tuple[str, ObjectEntry]]:
+@@ -1271,6 +1278,27 @@ class PythonDomain(Domain):
+                         matches = [(oname, self.objects[oname]) for oname in self.objects
+                                    if oname.endswith(searchname) and
+                                    self.objects[oname].objtype in objtypes]
++                        # if multiple matches, prioritize based on module hierarchy
++                        if len(matches) > 1 and modname:
++                            # first, try to find matches in current module or its submodules
++                            module_matches = [m for m in matches 
++                                            if m[0].startswith(modname + '.')]
++                            if module_matches:
++                                # if we have matches in current module, prefer the most specific one
++                                # (i.e., the one in the deepest submodule that matches)
++                                module_matches.sort(key=lambda m: m[0].count('.'), reverse=True)
++                                matches = [module_matches[0]]
++                            else:
++                                # try parent modules
++                                parts = modname.split('.')
++                                for i in range(len(parts) - 1, 0, -1):
++                                    parent = '.'.join(parts[:i])
++                                    parent_matches = [m for m in matches 
++                                                    if m[0] == parent + '.' + name or
++                                                       m[0].startswith(parent + '.' + name + '.')]
++                                    if parent_matches:
++                                        matches = parent_matches
++                                        break
+         else:
+             # NOTE: searching for exact match, object type is not considered
+             if name in self.objects:

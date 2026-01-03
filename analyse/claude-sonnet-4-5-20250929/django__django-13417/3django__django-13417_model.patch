@@ -1,0 +1,418 @@
+diff --git a/debug_ordering.py b/debug_ordering.py
+new file mode 100644
+index 0000000000..9b4e92f5dd
+--- /dev/null
++++ b/debug_ordering.py
+@@ -0,0 +1,45 @@
++import os
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Count
++
++class Foo(models.Model):
++    uuid = models.CharField(max_length=100, primary_key=True)
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++        ordering = ['name']
++
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Foo)
++
++qs2 = Foo.objects.annotate(Count("pk"))
++
++print(f"query.order_by: {qs2.query.order_by}")
++print(f"type: {type(qs2.query.order_by)}")
++print(f"get_meta().ordering: {qs2.query.get_meta().ordering}")
++print(f"type: {type(qs2.query.get_meta().ordering)}")
++print(f"Are they equal? {qs2.query.order_by == qs2.query.get_meta().ordering}")
++print(f"query.default_ordering: {qs2.query.default_ordering}")
++print(f"query.group_by: {qs2.query.group_by}")
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 85cd8311a7..5fa76d1d45 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1225,6 +1225,9 @@ class QuerySet:
+         if self.query.extra_order_by or self.query.order_by:
+             return True
+         elif self.query.default_ordering and self.query.get_meta().ordering:
++            # If there's a GROUP BY, default ordering is cleared by the compiler
++            if self.query.group_by is not None:
++                return False
+             return True
+         else:
+             return False
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..87fa216575
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,169 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Count, Sum, Avg
++
++# Define test models
++class ModelWithOrdering(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++        ordering = ['name']
++
++class ModelWithoutOrdering(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(ModelWithOrdering)
++    schema_editor.create_model(ModelWithoutOrdering)
++
++def test_case(description, qs, expected_ordered):
++    """Test a queryset and verify ordered property matches expectation"""
++    sql_compiler = qs.query.get_compiler(using='default')
++    sql, params = sql_compiler.as_sql()
++    has_order_by = 'ORDER BY' in sql
++    
++    print(f"\n{description}")
++    print(f"  Expected ordered: {expected_ordered}")
++    print(f"  Actual ordered: {qs.ordered}")
++    print(f"  Has ORDER BY: {has_order_by}")
++    
++    # The ordered property should match whether there's an ORDER BY in SQL
++    if qs.ordered != has_order_by:
++        print(f"  [FAIL] ordered={qs.ordered} but ORDER BY in SQL={has_order_by}")
++        print(f"  SQL: {sql}")
++        return False
++    
++    # Also check it matches our expectation
++    if qs.ordered != expected_ordered:
++        print(f"  [FAIL] Expected {expected_ordered} but got {qs.ordered}")
++        return False
++    
++    print(f"  [PASS]")
++    return True
++
++print("="*70)
++print("Testing QuerySet.ordered property with GROUP BY queries")
++print("="*70)
++
++all_passed = True
++
++# Test cases for model WITH default ordering
++print("\n--- Model WITH default ordering ---")
++
++all_passed &= test_case(
++    "1. Simple queryset (no GROUP BY)",
++    ModelWithOrdering.objects.all(),
++    expected_ordered=True
++)
++
++all_passed &= test_case(
++    "2. Annotate with Count (creates GROUP BY)",
++    ModelWithOrdering.objects.annotate(count=Count('id')),
++    expected_ordered=False  # GROUP BY clears default ordering
++)
++
++all_passed &= test_case(
++    "3. Annotate with explicit order_by",
++    ModelWithOrdering.objects.annotate(count=Count('id')).order_by('name'),
++    expected_ordered=True
++)
++
++all_passed &= test_case(
++    "4. Annotate with order_by cleared",
++    ModelWithOrdering.objects.annotate(count=Count('id')).order_by(),
++    expected_ordered=False
++)
++
++all_passed &= test_case(
++    "5. Values with annotate (GROUP BY)",
++    ModelWithOrdering.objects.values('name').annotate(count=Count('id')),
++    expected_ordered=False  # GROUP BY clears default ordering
++)
++
++all_passed &= test_case(
++    "6. Values with annotate and explicit order_by",
++    ModelWithOrdering.objects.values('name').annotate(count=Count('id')).order_by('name'),
++    expected_ordered=True
++)
++
++# Test cases for model WITHOUT default ordering
++print("\n--- Model WITHOUT default ordering ---")
++
++all_passed &= test_case(
++    "7. Simple queryset (no GROUP BY, no ordering)",
++    ModelWithoutOrdering.objects.all(),
++    expected_ordered=False
++)
++
++all_passed &= test_case(
++    "8. Annotate with Count (creates GROUP BY, no ordering)",
++    ModelWithoutOrdering.objects.annotate(count=Count('id')),
++    expected_ordered=False
++)
++
++all_passed &= test_case(
++    "9. Annotate with explicit order_by",
++    ModelWithoutOrdering.objects.annotate(count=Count('id')).order_by('name'),
++    expected_ordered=True
++)
++
++all_passed &= test_case(
++    "10. Simple queryset with explicit order_by",
++    ModelWithoutOrdering.objects.order_by('name'),
++    expected_ordered=True
++)
++
++# Edge cases
++print("\n--- Edge cases ---")
++
++all_passed &= test_case(
++    "11. Multiple aggregations",
++    ModelWithOrdering.objects.annotate(
++        count=Count('id'),
++        total=Sum('value'),
++        avg=Avg('value')
++    ),
++    expected_ordered=False  # GROUP BY clears default ordering
++)
++
++all_passed &= test_case(
++    "12. Explicit order_by before annotate",
++    ModelWithOrdering.objects.order_by('value').annotate(count=Count('id')),
++    expected_ordered=True  # Explicit order_by is preserved
++)
++
++print("\n" + "="*70)
++if all_passed:
++    print("[SUCCESS] All tests PASSED!")
++else:
++    print("[FAILURE] Some tests FAILED!")
++print("="*70)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..b9d4284a82
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,61 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Count
++
++# Define a test model
++class Foo(models.Model):
++    uuid = models.CharField(max_length=100, primary_key=True)
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++        ordering = ['name']
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Foo)
++
++# Test the issue
++print("Test 1: Regular queryset")
++qs = Foo.objects.all()
++print(f"SQL: {qs.query}")
++print(f"qs.ordered: {qs.ordered}")
++print(f"qs.query.default_ordering: {qs.query.default_ordering}")
++print()
++
++print("Test 2: Queryset with annotate (GROUP BY)")
++qs2 = Foo.objects.annotate(Count("pk")).all()
++print(f"SQL: {qs2.query}")
++print(f"qs2.ordered: {qs2.ordered}")
++print(f"qs2.query.default_ordering: {qs2.query.default_ordering}")
++print()
++
++# Check if ORDER BY is actually in the SQL
++from django.db.models.sql import compiler
++sql_compiler = qs2.query.get_compiler(using='default')
++sql, params = sql_compiler.as_sql()
++print(f"Actual SQL: {sql}")
++print(f"Has ORDER BY in SQL: {'ORDER BY' in sql}")
++print(f"qs2.ordered now correctly returns: {qs2.ordered}")
+diff --git a/test_ordered_property.py b/test_ordered_property.py
+new file mode 100644
+index 0000000000..ffe2c12576
+--- /dev/null
++++ b/test_ordered_property.py
+@@ -0,0 +1,105 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Count
++
++# Define test models
++class Foo(models.Model):
++    uuid = models.CharField(max_length=100, primary_key=True)
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++        ordering = ['name']
++
++class Bar(models.Model):
++    id = models.AutoField(primary_key=True)
++    value = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Foo)
++    schema_editor.create_model(Bar)
++
++def check_ordered(qs, description):
++    """Helper to check if ordered property matches actual SQL"""
++    from django.db.models.sql import compiler
++    sql_compiler = qs.query.get_compiler(using='default')
++    sql, params = sql_compiler.as_sql()
++    has_order_by = 'ORDER BY' in sql
++    
++    print(f"\n{description}")
++    print(f"  qs.ordered: {qs.ordered}")
++    print(f"  Has ORDER BY in SQL: {has_order_by}")
++    print(f"  Match: {qs.ordered == has_order_by}")
++    
++    if qs.ordered != has_order_by:
++        print(f"  ERROR: Mismatch!")
++        print(f"  SQL: {sql}")
++        return False
++    return True
++
++# Run tests
++all_passed = True
++
++# Test 1: Regular queryset with default ordering
++qs1 = Foo.objects.all()
++all_passed &= check_ordered(qs1, "Test 1: Regular queryset with default ordering")
++
++# Test 2: Queryset with annotate (GROUP BY) and default ordering
++qs2 = Foo.objects.annotate(Count("pk"))
++all_passed &= check_ordered(qs2, "Test 2: Queryset with annotate (GROUP BY) and default ordering")
++
++# Test 3: Queryset with annotate and explicit order_by
++qs3 = Foo.objects.annotate(Count("pk")).order_by('name')
++all_passed &= check_ordered(qs3, "Test 3: Queryset with annotate and explicit order_by")
++
++# Test 4: Queryset with annotate and order_by cleared
++qs4 = Foo.objects.annotate(Count("pk")).order_by()
++all_passed &= check_ordered(qs4, "Test 4: Queryset with annotate and order_by cleared")
++
++# Test 5: Model without default ordering
++qs5 = Bar.objects.all()
++all_passed &= check_ordered(qs5, "Test 5: Model without default ordering")
++
++# Test 6: Model without default ordering with annotate
++qs6 = Bar.objects.annotate(Count("pk"))
++all_passed &= check_ordered(qs6, "Test 6: Model without default ordering with annotate")
++
++# Test 7: Model without default ordering with explicit order_by
++qs7 = Bar.objects.order_by('value')
++all_passed &= check_ordered(qs7, "Test 7: Model without default ordering with explicit order_by")
++
++# Test 8: Model without default ordering with annotate and explicit order_by
++qs8 = Bar.objects.annotate(Count("pk")).order_by('value')
++all_passed &= check_ordered(qs8, "Test 8: Model without default ordering with annotate and explicit order_by")
++
++print("\n" + "="*50)
++if all_passed:
++    print("All tests PASSED!")
++else:
++    print("Some tests FAILED!")

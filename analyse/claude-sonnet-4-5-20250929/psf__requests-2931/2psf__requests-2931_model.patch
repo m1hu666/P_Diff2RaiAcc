@@ -1,0 +1,471 @@
+diff --git a/SOLUTION_SUMMARY.md b/SOLUTION_SUMMARY.md
+new file mode 100644
+index 0000000..f0c3344
+--- /dev/null
++++ b/SOLUTION_SUMMARY.md
+@@ -0,0 +1,19 @@
++# Fix for Binary Payload Issue
++
++## Problem
++Request with binary payload fails due to calling `to_native_string` on bytes with non-ASCII characters.
++
++The issue was introduced with PR #2844, which changed the `_encode_params` method to call `to_native_string(data)` on all string/bytes data. This worked for ASCII-safe bytes used as URL parameters, but failed for binary payloads containing non-ASCII bytes because `to_native_string` tries to decode bytes using ASCII encoding by default.
++
++## Root Cause
++The `_encode_params` method is used for two different purposes:
++1. Encoding URL parameters (where bytes should be converted to strings)
++2. Encoding request body data (where bytes should remain as bytes for binary payloads)
++
++The fix for issue #2844 converted all bytes to strings, which broke binary payloads.
++
++## Solution
++The fix involves two changes to `requests/models.py`:
++
++### Change 1: In `_encode_params` method (line 83-87)
++Only call `to_native_string` on `str` objects (unicode strings), not on `bytes`:
+diff --git a/fix.patch b/fix.patch
+new file mode 100644
+index 0000000..1af880c
+--- /dev/null
++++ b/fix.patch
+@@ -0,0 +1,14 @@
++--- a/requests/models.py
+++++ b/requests/models.py
++@@ -81,7 +81,10 @@ class RequestEncodingMixin(object):
++         """
++ 
++         if isinstance(data, (str, bytes)):
++-            return to_native_string(data)
+++            if isinstance(data, str):
+++                return to_native_string(data)
+++            else:
+++                return data
++         elif hasattr(data, 'read'):
++             return data
++         elif hasattr(data, '__iter__'):
+diff --git a/fix2.patch b/fix2.patch
+new file mode 100644
+index 0000000..5d11ff9
+--- /dev/null
++++ b/fix2.patch
+@@ -0,0 +1,23 @@
++--- a/requests/models.py
+++++ b/requests/models.py
++@@ -81,10 +81,7 @@ class RequestEncodingMixin(object):
++         """
++ 
++         if isinstance(data, (str, bytes)):
++-            if isinstance(data, str):
++-                return to_native_string(data)
++-            else:
++-                return data
+++            return data
++         elif hasattr(data, 'read'):
++             return data
++         elif hasattr(data, '__iter__'):
++@@ -389,6 +386,8 @@ class PreparedRequest(object):
++                 fragment = fragment.encode('utf-8')
++ 
++         enc_params = self._encode_params(params)
+++        if enc_params and isinstance(enc_params, bytes):
+++            enc_params = to_native_string(enc_params)
++         if enc_params:
++             if query:
++                 query = '%s&%s' % (query, enc_params)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000..5f3de9c
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,13 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++import requests
++
++print("Testing binary payload with requests...")
++try:
++    response = requests.put("http://httpbin.org/put", data=u"√∂√∂√∂".encode("utf-8"))
++    print("SUCCESS: Request completed successfully")
++    print("Status code:", response.status_code)
++except Exception as e:
++    print("ERROR:", type(e).__name__, str(e))
++    import traceback
++    traceback.print_exc()
+diff --git a/requests/models.py b/requests/models.py
+index 9c624d3..f5e1022 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -81,7 +81,10 @@ class RequestEncodingMixin(object):
+         """
+ 
+         if isinstance(data, (str, bytes)):
+-            return to_native_string(data)
++            if isinstance(data, str):
++                return to_native_string(data)
++            else:
++                return data
+         elif hasattr(data, 'read'):
+             return data
+         elif hasattr(data, '__iter__'):
+@@ -386,6 +389,8 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+                 fragment = fragment.encode('utf-8')
+ 
+         enc_params = self._encode_params(params)
++        if enc_params and isinstance(enc_params, bytes):
++            enc_params = to_native_string(enc_params)
+         if enc_params:
+             if query:
+                 query = '%s&%s' % (query, enc_params)
+diff --git a/requests/models.py.rej b/requests/models.py.rej
+new file mode 100644
+index 0000000..e7db04f
+--- /dev/null
++++ b/requests/models.py.rej
+@@ -0,0 +1,23 @@
++--- requests/models.py
+++++ requests/models.py
++@@ -81,7 +81,10 @@ class RequestEncodingMixin(object):
++         """
++ 
++         if isinstance(data, (str, bytes)):
++-            return to_native_string(data)
+++            if isinstance(data, str):
+++                return to_native_string(data)
+++            else:
+++                return data
++         elif hasattr(data, 'read'):
++             return data
++         elif hasattr(data, '__iter__'):
++@@ -389,6 +392,8 @@ class PreparedRequest(object):
++                 fragment = fragment.encode('utf-8')
++ 
++         enc_params = self._encode_params(params)
+++        if enc_params and isinstance(enc_params, bytes):
+++            enc_params = to_native_string(enc_params)
++         if enc_params:
++             if query:
++                 query = '%s&%s' % (query, enc_params)
+diff --git a/requests/models_fixed.py b/requests/models_fixed.py
+new file mode 100644
+index 0000000..f77e8b5
+--- /dev/null
++++ b/requests/models_fixed.py
+@@ -0,0 +1,20 @@
++# This is a temporary file to test the fix
++# I'll show the relevant part of _encode_params
++
++def _encode_params(data):
++    """Encode parameters in a piece of data.
++
++    Will successfully encode parameters when passed as a dict or a list of
++    2-tuples. Order is retained if data is a list of 2-tuples but arbitrary
++    if parameters are supplied as a dict.
++    """
++
++    if isinstance(data, (str, bytes)):
++        if isinstance(data, bytes):
++            try:
++                return to_native_string(data)
++            except UnicodeDecodeError:
++                return data
++        else:
++            return to_native_string(data)
++    # ... rest of the method
+diff --git a/test_binary.py b/test_binary.py
+new file mode 100644
+index 0000000..04bb4a5
+--- /dev/null
++++ b/test_binary.py
+@@ -0,0 +1,59 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++import sys
++sys.path.insert(0, '/testbed')
++
++from requests.models import RequestEncodingMixin
++
++# Test the _encode_params method
++mixin = RequestEncodingMixin()
++
++# Test 1: Binary data (bytes)
++binary_data = u"√∂√∂√∂".encode("utf-8")
++print("Test 1: Binary data (bytes)")
++print("Input:", repr(binary_data))
++try:
++    result = mixin._encode_params(binary_data)
++    print("Result:", repr(result))
++    print("SUCCESS")
++except Exception as e:
++    print("ERROR:", type(e).__name__, str(e))
++
++print()
++
++# Test 2: Unicode string
++unicode_data = u"√∂√∂√∂"
++print("Test 2: Unicode string")
++print("Input:", repr(unicode_data))
++try:
++    result = mixin._encode_params(unicode_data)
++    print("Result:", repr(result))
++    print("SUCCESS")
++except Exception as e:
++    print("ERROR:", type(e).__name__, str(e))
++
++print()
++
++# Test 3: Regular string (for params)
++string_data = "test=foo"
++print("Test 3: Regular string")
++print("Input:", repr(string_data))
++try:
++    result = mixin._encode_params(string_data)
++    print("Result:", repr(result))
++    print("SUCCESS")
++except Exception as e:
++    print("ERROR:", type(e).__name__, str(e))
++
++print()
++
++# Test 4: Bytes string (for params) - this is what issue #2844 was about
++bytes_params = b"test=foo"
++print("Test 4: Bytes params")
++print("Input:", repr(bytes_params))
++try:
++    result = mixin._encode_params(bytes_params)
++    print("Result:", repr(result))
++    print("SUCCESS")
++except Exception as e:
++    print("ERROR:", type(e).__name__, str(e))
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000..697eb48
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,106 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++"""Final verification test for the fix"""
++import sys
++sys.path.insert(0, '/testbed')
++
++import requests
++
++def test_binary_data():
++    """Test that binary data with non-ASCII bytes works"""
++    print("Test 1: Binary data with non-ASCII bytes")
++    req = requests.Request('PUT', 'http://httpbin.org/put', data=u"√∂√∂√∂".encode("utf-8"))
++    prepared = req.prepare()
++    assert isinstance(prepared.body, bytes)
++    assert prepared.body == u"√∂√∂√∂".encode("utf-8")
++    print("  PASSED")
++
++def test_binary_data_null_bytes():
++    """Test that binary data with null bytes works"""
++    print("Test 2: Binary data with null bytes")
++    req = requests.Request('POST', 'http://example.com', data=b'\x00\x01\x02\x03')
++    prepared = req.prepare()
++    assert isinstance(prepared.body, bytes)
++    assert prepared.body == b'\x00\x01\x02\x03'
++    print("  PASSED")
++
++def test_params_bytes():
++    """Test that bytes params are converted to string (issue #2844)"""
++    print("Test 3: Bytes params (issue #2844)")
++    req = requests.Request('GET', 'http://example.com', params=b'test=foo')
++    prepared = req.prepare()
++    assert prepared.url == 'http://example.com/?test=foo'
++    print("  PASSED")
++
++def test_string_data():
++    """Test that string data works"""
++    print("Test 4: String data")
++    req = requests.Request('POST', 'http://example.com', data=u"test data")
++    prepared = req.prepare()
++    assert isinstance(prepared.body, str)
++    assert prepared.body == "test data"
++    print("  PASSED")
++
++def test_dict_data():
++    """Test that dict data is form-encoded"""
++    print("Test 5: Dict data (form-encoded)")
++    req = requests.Request('POST', 'http://example.com', data={'key': 'value'})
++    prepared = req.prepare()
++    assert prepared.body == 'key=value'
++    assert prepared.headers.get('Content-Type') == 'application/x-www-form-urlencoded'
++    print("  PASSED")
++
++def test_params_dict():
++    """Test that dict params work"""
++    print("Test 6: Dict params")
++    req = requests.Request('GET', 'http://example.com', params={'key': 'value'})
++    prepared = req.prepare()
++    assert prepared.url == 'http://example.com/?key=value'
++    print("  PASSED")
++
++def test_params_unicode():
++    """Test that unicode params work"""
++    print("Test 7: Unicode params")
++    req = requests.Request('GET', 'http://example.com', params={'key': u'√∂√∂√∂'})
++    prepared = req.prepare()
++    assert 'key=' in prepared.url
++    print("  PASSED")
++
++def test_binary_data_image():
++    """Test that binary image data works"""
++    print("Test 8: Binary image data (simulated)")
++    # Simulate binary image data
++    binary_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
++    req = requests.Request('POST', 'http://example.com', data=binary_data)
++    prepared = req.prepare()
++    assert isinstance(prepared.body, bytes)
++    assert prepared.body == binary_data
++    print("  PASSED")
++
++if __name__ == '__main__':
++    print("Running final verification tests...")
++    print("=" * 60)
++    
++    try:
++        test_binary_data()
++        test_binary_data_null_bytes()
++        test_params_bytes()
++        test_string_data()
++        test_dict_data()
++        test_params_dict()
++        test_params_unicode()
++        test_binary_data_image()
++        
++        print("=" * 60)
++        print("All tests PASSED!")
++        sys.exit(0)
++    except AssertionError as e:
++        print(f"\nTest FAILED: {e}")
++        import traceback
++        traceback.print_exc()
++        sys.exit(1)
++    except Exception as e:
++        print(f"\nUnexpected error: {e}")
++        import traceback
++        traceback.print_exc()
++        sys.exit(1)
+diff --git a/test_pr_exact.py b/test_pr_exact.py
+new file mode 100644
+index 0000000..24b8723
+--- /dev/null
++++ b/test_pr_exact.py
+@@ -0,0 +1,34 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++"""Test the exact scenario from the PR description"""
++import sys
++sys.path.insert(0, '/testbed')
++
++import requests
++
++print("Testing the exact scenario from the PR description:")
++print("requests.put('http://httpbin.org/put', data=u'√∂√∂√∂'.encode('utf-8'))")
++print()
++
++try:
++    # Prepare the request (we can't actually send it without network)
++    req = requests.Request('PUT', 'http://httpbin.org/put', data=u"√∂√∂√∂".encode("utf-8"))
++    prepared = req.prepare()
++    
++    print("SUCCESS: Request prepared without errors")
++    print(f"Body type: {type(prepared.body)}")
++    print(f"Body value: {repr(prepared.body)}")
++    print(f"Body equals expected: {prepared.body == u'√∂√∂√∂'.encode('utf-8')}")
++    
++    assert isinstance(prepared.body, bytes), "Body should be bytes"
++    assert prepared.body == u"√∂√∂√∂".encode("utf-8"), "Body should contain the original UTF-8 encoded bytes"
++    
++    print()
++    print("‚úì The issue is FIXED!")
++    print("  Binary payloads with non-ASCII characters now work correctly.")
++    
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
+diff --git a/test_pr_issue.py b/test_pr_issue.py
+new file mode 100644
+index 0000000..65e4c96
+--- /dev/null
++++ b/test_pr_issue.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++"""Test the issue described in the PR"""
++import sys
++sys.path.insert(0, '/testbed')
++
++import requests
++
++print("Testing the PR issue: binary payload with non-ASCII characters")
++print("=" * 60)
++
++# Test 1: The exact example from the PR
++print("\nTest 1: PUT request with binary UTF-8 data")
++try:
++    # Note: We can't actually make the request to httpbin.org in this test environment
++    # But we can test that the request preparation works
++    req = requests.Request('PUT', 'http://httpbin.org/put', data=u"√∂√∂√∂".encode("utf-8"))
++    prepared = req.prepare()
++    print("SUCCESS: Request prepared successfully")
++    print("Body type:", type(prepared.body))
++    print("Body value:", repr(prepared.body))
++    assert isinstance(prepared.body, bytes), "Body should be bytes"
++    assert prepared.body == u"√∂√∂√∂".encode("utf-8"), "Body should contain the original bytes"
++except Exception as e:
++    print("FAILED:", type(e).__name__, str(e))
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
++
++# Test 2: POST request with binary data
++print("\nTest 2: POST request with binary data")
++try:
++    req = requests.Request('POST', 'http://example.com', data=b'\x00\x01\x02\x03')
++    prepared = req.prepare()
++    print("SUCCESS: Request prepared successfully")
++    print("Body type:", type(prepared.body))
++    print("Body value:", repr(prepared.body))
++    assert isinstance(prepared.body, bytes), "Body should be bytes"
++    assert prepared.body == b'\x00\x01\x02\x03', "Body should contain the original bytes"
++except Exception as e:
++    print("FAILED:", type(e).__name__, str(e))
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
++
++# Test 3: GET request with bytes params (issue #2844)
++print("\nTest 3: GET request with bytes params")
++try:
++    req = requests.Request('GET', 'http://example.com', params=b'test=foo')
++    prepared = req.prepare()
++    print("SUCCESS: Request prepared successfully")
++    print("URL:", prepared.url)
++    assert prepared.url == 'http://example.com/?test=foo', "URL should contain decoded params"
++except Exception as e:
++    print("FAILED:", type(e).__name__, str(e))
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
++
++# Test 4: POST request with string data
++print("\nTest 4: POST request with string data")
++try:
++    req = requests.Request('POST', 'http://example.com', data=u"test data")
++    prepared = req.prepare()
++    print("SUCCESS: Request prepared successfully")
++    print("Body type:", type(prepared.body))
++    print("Body value:", repr(prepared.body))
++except Exception as e:
++    print("FAILED:", type(e).__name__, str(e))
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
++
++print("\n" + "=" * 60)
++print("All tests passed!")

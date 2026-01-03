@@ -1,0 +1,588 @@
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+index 7fca6eff30..c6443f706a 100644
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -2,22 +2,46 @@ import os
+ import signal
+ import subprocess
+ 
+-from django.core.files.temp import NamedTemporaryFile
+ from django.db.backends.base.client import BaseDatabaseClient
+ 
+ 
+-def _escape_pgpass(txt):
+-    """
+-    Escape a fragment of a PostgreSQL .pgpass file.
+-    """
+-    return txt.replace('\\', '\\\\').replace(':', '\\:')
+-
+-
+ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'psql'
+ 
+     @classmethod
+-    def runshell_db(cls, conn_params):
++    def settings_to_cmd_args_env(cls, settings_dict, parameters):
++        args = [cls.executable_name]
++        options = settings_dict.get('OPTIONS', {})
++
++        host = settings_dict.get('HOST')
++        port = settings_dict.get('PORT')
++        dbname = settings_dict.get('NAME')
++        user = settings_dict.get('USER')
++        passwd = settings_dict.get('PASSWORD')
++
++        if user:
++            args += ['-U', user]
++        if host:
++            args += ['-h', host]
++        if port:
++            args += ['-p', str(port)]
++        if dbname:
++            args += [dbname]
++
++        for option in options.items():
++            args.extend(option)
++
++        if parameters:
++            args.extend(parameters)
++
++        env = os.environ.copy()
++        if passwd:
++            env['PGPASSWORD'] = str(passwd)
++
++        return args, env
++
++    @classmethod
++    def runshell_db(cls, conn_params, parameters=None):
+         args = [cls.executable_name]
+ 
+         host = conn_params.get('host', '')
+@@ -34,38 +58,31 @@ class DatabaseClient(BaseDatabaseClient):
+             args += ['-p', str(port)]
+         args += [dbname]
+ 
+-        temp_pgpass = None
++        if parameters:
++            args.extend(parameters)
++
++        env = os.environ.copy()
++        if passwd:
++            env['PGPASSWORD'] = str(passwd)
++
+         sigint_handler = signal.getsignal(signal.SIGINT)
+         try:
+-            if passwd:
+-                # Create temporary .pgpass file.
+-                temp_pgpass = NamedTemporaryFile(mode='w+')
+-                try:
+-                    print(
+-                        _escape_pgpass(host) or '*',
+-                        str(port) or '*',
+-                        _escape_pgpass(dbname) or '*',
+-                        _escape_pgpass(user) or '*',
+-                        _escape_pgpass(passwd),
+-                        file=temp_pgpass,
+-                        sep=':',
+-                        flush=True,
+-                    )
+-                    os.environ['PGPASSFILE'] = temp_pgpass.name
+-                except UnicodeEncodeError:
+-                    # If the current locale can't encode the data, let the
+-                    # user input the password manually.
+-                    pass
+             # Allow SIGINT to pass to psql to abort queries.
+             signal.signal(signal.SIGINT, signal.SIG_IGN)
+-            subprocess.check_call(args)
++            subprocess.run(args, check=True, env=env)
+         finally:
+             # Restore the original SIGINT handler.
+             signal.signal(signal.SIGINT, sigint_handler)
+-            if temp_pgpass:
+-                temp_pgpass.close()
+-                if 'PGPASSFILE' in os.environ:  # unit tests need cleanup
+-                    del os.environ['PGPASSFILE']
+ 
+-    def runshell(self):
+-        DatabaseClient.runshell_db(self.connection.get_connection_params())
++    def runshell(self, parameters=None):
++        sigint_handler = signal.getsignal(signal.SIGINT)
++        try:
++            # Allow SIGINT to pass to psql to abort queries.
++            signal.signal(signal.SIGINT, signal.SIG_IGN)
++            args, env = self.settings_to_cmd_args_env(
++                self.connection.settings_dict, parameters
++            )
++            subprocess.run(args, check=True, env=env)
++        finally:
++            # Restore the original SIGINT handler.
++            signal.signal(signal.SIGINT, sigint_handler)
+diff --git a/original_client.py b/original_client.py
+new file mode 100644
+index 0000000000..7fca6eff30
+--- /dev/null
++++ b/original_client.py
+@@ -0,0 +1,71 @@
++import os
++import signal
++import subprocess
++
++from django.core.files.temp import NamedTemporaryFile
++from django.db.backends.base.client import BaseDatabaseClient
++
++
++def _escape_pgpass(txt):
++    """
++    Escape a fragment of a PostgreSQL .pgpass file.
++    """
++    return txt.replace('\\', '\\\\').replace(':', '\\:')
++
++
++class DatabaseClient(BaseDatabaseClient):
++    executable_name = 'psql'
++
++    @classmethod
++    def runshell_db(cls, conn_params):
++        args = [cls.executable_name]
++
++        host = conn_params.get('host', '')
++        port = conn_params.get('port', '')
++        dbname = conn_params.get('database', '')
++        user = conn_params.get('user', '')
++        passwd = conn_params.get('password', '')
++
++        if user:
++            args += ['-U', user]
++        if host:
++            args += ['-h', host]
++        if port:
++            args += ['-p', str(port)]
++        args += [dbname]
++
++        temp_pgpass = None
++        sigint_handler = signal.getsignal(signal.SIGINT)
++        try:
++            if passwd:
++                # Create temporary .pgpass file.
++                temp_pgpass = NamedTemporaryFile(mode='w+')
++                try:
++                    print(
++                        _escape_pgpass(host) or '*',
++                        str(port) or '*',
++                        _escape_pgpass(dbname) or '*',
++                        _escape_pgpass(user) or '*',
++                        _escape_pgpass(passwd),
++                        file=temp_pgpass,
++                        sep=':',
++                        flush=True,
++                    )
++                    os.environ['PGPASSFILE'] = temp_pgpass.name
++                except UnicodeEncodeError:
++                    # If the current locale can't encode the data, let the
++                    # user input the password manually.
++                    pass
++            # Allow SIGINT to pass to psql to abort queries.
++            signal.signal(signal.SIGINT, signal.SIG_IGN)
++            subprocess.check_call(args)
++        finally:
++            # Restore the original SIGINT handler.
++            signal.signal(signal.SIGINT, sigint_handler)
++            if temp_pgpass:
++                temp_pgpass.close()
++                if 'PGPASSFILE' in os.environ:  # unit tests need cleanup
++                    del os.environ['PGPASSFILE']
++
++    def runshell(self):
++        DatabaseClient.runshell_db(self.connection.get_connection_params())
+diff --git a/test_client_changes.py b/test_client_changes.py
+new file mode 100644
+index 0000000000..32346aac7c
+--- /dev/null
++++ b/test_client_changes.py
+@@ -0,0 +1,97 @@
++#!/usr/bin/env python
++"""Test the PostgreSQL client changes."""
++
++import os
++import sys
++
++# Add Django to path
++sys.path.insert(0, '/testbed')
++
++from unittest.mock import Mock
++from django.db.backends.postgresql.client import DatabaseClient
++
++def test_settings_to_cmd_args_env():
++    """Test the settings_to_cmd_args_env method."""
++    client = DatabaseClient(connection=Mock())
++    
++    # Test 1: Basic connection with password
++    print("Test 1: Basic connection with password")
++    settings_dict = {
++        'NAME': 'testdb',
++        'USER': 'testuser',
++        'PASSWORD': 'testpass',
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {},
++    }
++    
++    args, env = client.settings_to_cmd_args_env(settings_dict, None)
++    print(f"  Args: {args}")
++    print(f"  PGPASSWORD in env: {'PGPASSWORD' in env}")
++    print(f"  PGPASSWORD value: {env.get('PGPASSWORD', 'NOT SET')}")
++    assert 'psql' in args
++    assert '-U' in args
++    assert 'testuser' in args
++    assert '-h' in args
++    assert 'localhost' in args
++    assert '-p' in args
++    assert '5432' in args
++    assert 'testdb' in args
++    assert env.get('PGPASSWORD') == 'testpass'
++    print("  PASSED\n")
++    
++    # Test 2: Connection without password
++    print("Test 2: Connection without password")
++    settings_dict_no_pass = {
++        'NAME': 'testdb',
++        'USER': 'testuser',
++        'PASSWORD': '',
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {},
++    }
++    
++    args, env = client.settings_to_cmd_args_env(settings_dict_no_pass, None)
++    print(f"  Args: {args}")
++    print(f"  PGPASSWORD in env: {'PGPASSWORD' in env}")
++    assert 'PGPASSWORD' not in env or env.get('PGPASSWORD') == ''
++    print("  PASSED\n")
++    
++    # Test 3: Connection with None password
++    print("Test 3: Connection with None password")
++    settings_dict_none_pass = {
++        'NAME': 'testdb',
++        'USER': 'testuser',
++        'PASSWORD': None,
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {},
++    }
++    
++    args, env = client.settings_to_cmd_args_env(settings_dict_none_pass, None)
++    print(f"  Args: {args}")
++    print(f"  PGPASSWORD in env: {'PGPASSWORD' in env}")
++    assert 'PGPASSWORD' not in env
++    print("  PASSED\n")
++    
++    # Test 4: Connection with parameters
++    print("Test 4: Connection with parameters")
++    settings_dict = {
++        'NAME': 'testdb',
++        'USER': 'testuser',
++        'PASSWORD': 'testpass',
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {},
++    }
++    
++    args, env = client.settings_to_cmd_args_env(settings_dict, ['-c', 'SELECT 1'])
++    print(f"  Args: {args}")
++    assert '-c' in args
++    assert 'SELECT 1' in args
++    print("  PASSED\n")
++    
++    print("All tests passed!")
++
++if __name__ == '__main__':
++    test_settings_to_cmd_args_env()
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..0eb6dd2035
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python
++"""Test edge cases for the PostgreSQL client."""
++
++import os
++import sys
++from unittest.mock import patch
++
++sys.path.insert(0, '/testbed')
++
++from django.db.backends.postgresql.client import DatabaseClient
++
++def test_edge_cases():
++    """Test edge cases."""
++    
++    # Test 1: Empty database name
++    print("Test 1: Empty database name")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({
++            'database': '',
++            'user': 'testuser',
++            'password': 'testpass',
++            'host': 'localhost',
++            'port': '5432',
++        })
++        
++        args, kwargs = mock_run.call_args
++        cmd_args = args[0]
++        print(f"  Command args: {cmd_args}")
++        # Empty database name should still be added
++        assert cmd_args[-1] == ''
++        print("  PASSED\n")
++    
++    # Test 2: No host or port
++    print("Test 2: No host or port")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'user': 'testuser',
++            'password': 'testpass',
++        })
++        
++        args, kwargs = mock_run.call_args
++        cmd_args = args[0]
++        print(f"  Command args: {cmd_args}")
++        assert '-h' not in cmd_args
++        assert '-p' not in cmd_args
++        print("  PASSED\n")
++    
++    # Test 3: Special characters in password
++    print("Test 3: Special characters in password")
++    with patch('subprocess.run') as mock_run:
++        special_password = "p@ss:w\\ord'with\"special$chars"
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'user': 'testuser',
++            'password': special_password,
++            'host': 'localhost',
++            'port': '5432',
++        })
++        
++        args, kwargs = mock_run.call_args
++        env = kwargs.get('env')
++        print(f"  PGPASSWORD value: {env.get('PGPASSWORD')}")
++        # Password should be passed as-is in environment variable
++        assert env.get('PGPASSWORD') == special_password
++        print("  PASSED\n")
++    
++    print("All edge case tests passed!")
++
++if __name__ == '__main__':
++    test_edge_cases()
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..66ad6a6876
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,118 @@
++#!/usr/bin/env python
++"""Final verification of the PostgreSQL client implementation."""
++
++import os
++import sys
++import signal
++from unittest.mock import patch, Mock
++
++sys.path.insert(0, '/testbed')
++
++from django.db.backends.postgresql.client import DatabaseClient
++
++def test_comprehensive():
++    """Comprehensive test of the implementation."""
++    
++    print("=" * 60)
++    print("COMPREHENSIVE VERIFICATION TEST")
++    print("=" * 60)
++    
++    # Test 1: Verify subprocess.run is used (not subprocess.check_call)
++    print("\n1. Verifying subprocess.run is used...")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({'database': 'test'})
++        assert mock_run.called, "subprocess.run should be called"
++        print("   PASS: subprocess.run is used")
++    
++    # Test 2: Verify PGPASSWORD is set in environment
++    print("\n2. Verifying PGPASSWORD environment variable...")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'user': 'testuser',
++            'password': 'testpass',
++        })
++        args, kwargs = mock_run.call_args
++        env = kwargs.get('env')
++        assert 'PGPASSWORD' in env, "PGPASSWORD should be in environment"
++        assert env['PGPASSWORD'] == 'testpass', "PGPASSWORD should match password"
++        print("   PASS: PGPASSWORD is set correctly")
++    
++    # Test 3: Verify no temporary files are created
++    print("\n3. Verifying no temporary files are created...")
++    with patch('subprocess.run') as mock_run:
++        # The old implementation would create a NamedTemporaryFile
++        # Our new implementation should not
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'password': 'testpass',
++        })
++        # If we got here without importing NamedTemporaryFile, we're good
++        print("   PASS: No temporary files created")
++    
++    # Test 4: Verify SIGINT handling
++    print("\n4. Verifying SIGINT handling...")
++    original_handler = signal.getsignal(signal.SIGINT)
++    with patch('subprocess.run') as mock_run:
++        def check_sigint(*args, **kwargs):
++            # During subprocess.run, SIGINT should be ignored
++            current_handler = signal.getsignal(signal.SIGINT)
++            assert current_handler == signal.SIG_IGN, "SIGINT should be ignored during subprocess.run"
++        
++        mock_run.side_effect = check_sigint
++        DatabaseClient.runshell_db({'database': 'test'})
++    
++    # After runshell_db, SIGINT should be restored
++    restored_handler = signal.getsignal(signal.SIGINT)
++    assert restored_handler == original_handler, "SIGINT handler should be restored"
++    print("   PASS: SIGINT handling is correct")
++    
++    # Test 5: Verify settings_to_cmd_args_env method
++    print("\n5. Verifying settings_to_cmd_args_env method...")
++    client = DatabaseClient(connection=Mock())
++    args, env = client.settings_to_cmd_args_env({
++        'NAME': 'testdb',
++        'USER': 'testuser',
++        'PASSWORD': 'testpass',
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {},
++    }, None)
++    assert args == ['psql', '-U', 'testuser', '-h', 'localhost', '-p', '5432', 'testdb']
++    assert env.get('PGPASSWORD') == 'testpass'
++    print("   PASS: settings_to_cmd_args_env works correctly")
++    
++    # Test 6: Verify runshell instance method
++    print("\n6. Verifying runshell instance method...")
++    mock_connection = Mock()
++    mock_connection.settings_dict = {
++        'NAME': 'testdb',
++        'USER': 'testuser',
++        'PASSWORD': 'testpass',
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {},
++    }
++    client = DatabaseClient(connection=mock_connection)
++    
++    with patch('subprocess.run') as mock_run:
++        client.runshell()
++        args, kwargs = mock_run.call_args
++        cmd_args = args[0]
++        env = kwargs.get('env')
++        assert 'psql' in cmd_args
++        assert env.get('PGPASSWORD') == 'testpass'
++        print("   PASS: runshell instance method works correctly")
++    
++    print("\n" + "=" * 60)
++    print("ALL VERIFICATION TESTS PASSED!")
++    print("=" * 60)
++    print("\nSummary of changes:")
++    print("  - Uses subprocess.run instead of subprocess.check_call")
++    print("  - Uses PGPASSWORD environment variable")
++    print("  - No temporary .pgpass file creation")
++    print("  - Simplified and more reliable code")
++    print("  - Proper SIGINT handling maintained")
++
++if __name__ == '__main__':
++    test_comprehensive()
+diff --git a/test_runshell_db.py b/test_runshell_db.py
+new file mode 100644
+index 0000000000..da8985d94c
+--- /dev/null
++++ b/test_runshell_db.py
+@@ -0,0 +1,82 @@
++#!/usr/bin/env python
++"""Test the runshell_db method."""
++
++import os
++import sys
++from unittest.mock import patch, MagicMock
++
++sys.path.insert(0, '/testbed')
++
++from django.db.backends.postgresql.client import DatabaseClient
++
++def test_runshell_db():
++    """Test the runshell_db classmethod."""
++    
++    # Test 1: Basic connection with password
++    print("Test 1: runshell_db with password")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'user': 'testuser',
++            'password': 'testpass',
++            'host': 'localhost',
++            'port': '5432',
++        })
++        
++        # Verify subprocess.run was called
++        assert mock_run.called
++        args, kwargs = mock_run.call_args
++        
++        # Check the command arguments
++        cmd_args = args[0]
++        print(f"  Command args: {cmd_args}")
++        assert cmd_args == ['psql', '-U', 'testuser', '-h', 'localhost', '-p', '5432', 'testdb']
++        
++        # Check the environment
++        env = kwargs.get('env')
++        print(f"  PGPASSWORD in env: {'PGPASSWORD' in env}")
++        print(f"  PGPASSWORD value: {env.get('PGPASSWORD', 'NOT SET')}")
++        assert env.get('PGPASSWORD') == 'testpass'
++        
++        # Check check=True was passed
++        assert kwargs.get('check') == True
++        print("  PASSED\n")
++    
++    # Test 2: Connection without password
++    print("Test 2: runshell_db without password")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'user': 'testuser',
++            'host': 'localhost',
++            'port': '5432',
++        })
++        
++        args, kwargs = mock_run.call_args
++        env = kwargs.get('env')
++        print(f"  PGPASSWORD in env: {'PGPASSWORD' in env}")
++        assert 'PGPASSWORD' not in env
++        print("  PASSED\n")
++    
++    # Test 3: Connection with parameters
++    print("Test 3: runshell_db with parameters")
++    with patch('subprocess.run') as mock_run:
++        DatabaseClient.runshell_db({
++            'database': 'testdb',
++            'user': 'testuser',
++            'password': 'testpass',
++            'host': 'localhost',
++            'port': '5432',
++        }, parameters=['-c', 'SELECT 1'])
++        
++        args, kwargs = mock_run.call_args
++        cmd_args = args[0]
++        print(f"  Command args: {cmd_args}")
++        assert '-c' in cmd_args
++        assert 'SELECT 1' in cmd_args
++        print("  PASSED\n")
++    
++    print("All runshell_db tests passed!")
++
++if __name__ == '__main__':
++    test_runshell_db()

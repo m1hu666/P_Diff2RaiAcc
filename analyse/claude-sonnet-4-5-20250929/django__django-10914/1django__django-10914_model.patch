@@ -1,0 +1,658 @@
+diff --git a/CHANGE_SUMMARY.md b/CHANGE_SUMMARY.md
+new file mode 100644
+index 0000000000..a9b115cbb8
+--- /dev/null
++++ b/CHANGE_SUMMARY.md
+@@ -0,0 +1,24 @@
++# Fix for File Upload Permissions Inconsistency
++
++## Problem
++As described in the PR, file upload permissions were inconsistent depending on the upload method:
++- Small files (MemoryUploadedFile): Created with `os.open()` using mode `0o666` (masked by umask), typically resulting in `0o644`
++- Large files (TemporaryUploadedFile): Moved from temporary files with permissions `0o600` (set by Python's tempfile module for security)
++
++This inconsistency was caused by the default `FILE_UPLOAD_PERMISSIONS = None`, which meant no explicit `chmod` was called after file creation.
++
++## Solution
++Changed the default value of `FILE_UPLOAD_PERMISSIONS` from `None` to `0o644` in `/testbed/django/conf/global_settings.py`.
++
++## Impact
++1. **Consistency**: Both small and large uploaded files now have consistent permissions (`0o644`)
++2. **Backward Compatibility**: Users can still set `FILE_UPLOAD_PERMISSIONS = None` in their settings to get the old umask-based behavior
++3. **Customization**: Users can set any custom permissions (e.g., `0o600`, `0o755`, etc.)
++
++## Testing
++- All existing permission-related tests pass
++- Created comprehensive tests demonstrating the fix
++- Verified that the fix resolves the inconsistency issue
++
++## Files Modified
++- `/testbed/django/conf/global_settings.py`: Changed `FILE_UPLOAD_PERMISSIONS = None` to `FILE_UPLOAD_PERMISSIONS = 0o644`
+diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py
+index acee9887d2..bdeec80610 100644
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -304,7 +304,7 @@ FILE_UPLOAD_TEMP_DIR = None
+ 
+ # The numeric mode to set newly-uploaded files to. The value should be a mode
+ # you'd pass directly to os.chmod; see https://docs.python.org/library/os.html#files-and-directories.
+-FILE_UPLOAD_PERMISSIONS = None
++FILE_UPLOAD_PERMISSIONS = 0o644
+ 
+ # The numeric mode to assign to newly-created directories, when uploading files.
+ # The value should be a mode as you'd pass to os.chmod;
+diff --git a/test_comprehensive_permissions.py b/test_comprehensive_permissions.py
+new file mode 100644
+index 0000000000..64493d7a0c
+--- /dev/null
++++ b/test_comprehensive_permissions.py
+@@ -0,0 +1,134 @@
++"""
++Comprehensive test for FILE_UPLOAD_PERMISSIONS fix.
++Tests various scenarios to ensure the fix works correctly.
++"""
++import os
++import sys
++import tempfile
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={},
++    MEDIA_ROOT=tempfile.mkdtemp(),
++    DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++from django.core.files.uploadedfile import TemporaryUploadedFile
++from django.test import override_settings
++
++print("=" * 80)
++print("COMPREHENSIVE FILE UPLOAD PERMISSIONS TEST")
++print("=" * 80)
++
++# Test 1: Default behavior
++print("\n1. Testing default FILE_UPLOAD_PERMISSIONS (0o644):")
++assert settings.FILE_UPLOAD_PERMISSIONS == 0o644
++storage = FileSystemStorage()
++assert storage.file_permissions_mode == 0o644
++print("   PASS: Default is 0o644")
++
++# Test 2: Small file with default settings
++print("\n2. Testing small file with default settings:")
++content = ContentFile(b"test")
++name = storage.save("test1.txt", content)
++path = storage.path(name)
++perms = os.stat(path).st_mode & 0o777
++assert perms == 0o644, f"Expected 0o644, got {oct(perms)}"
++print(f"   PASS: Small file has {oct(perms)} permissions")
++os.remove(path)
++
++# Test 3: Large file with default settings
++print("\n3. Testing large file with default settings:")
++temp_file = TemporaryUploadedFile("test2.txt", "text/plain", 1000, "utf-8")
++temp_file.write(b"test" * 1000)
++temp_file.seek(0)
++name = storage.save("test2.txt", temp_file)
++path = storage.path(name)
++perms = os.stat(path).st_mode & 0o777
++assert perms == 0o644, f"Expected 0o644, got {oct(perms)}"
++print(f"   PASS: Large file has {oct(perms)} permissions")
++os.remove(path)
++temp_file.close()
++
++# Test 4: Custom permissions via storage initialization
++print("\n4. Testing custom permissions via storage initialization:")
++custom_storage = FileSystemStorage(file_permissions_mode=0o600)
++assert custom_storage.file_permissions_mode == 0o600
++content = ContentFile(b"test")
++name = custom_storage.save("test3.txt", content)
++path = custom_storage.path(name)
++perms = os.stat(path).st_mode & 0o777
++assert perms == 0o600, f"Expected 0o600, got {oct(perms)}"
++print(f"   PASS: Custom permissions {oct(perms)} applied")
++os.remove(path)
++
++# Test 5: Passing None to storage falls back to settings default
++print("\n5. Testing None passed to storage (falls back to settings):")
++none_storage = FileSystemStorage(file_permissions_mode=None)
++# When None is passed, it falls back to settings.FILE_UPLOAD_PERMISSIONS
++assert none_storage.file_permissions_mode == 0o644
++content = ContentFile(b"test")
++name = none_storage.save("test4.txt", content)
++path = none_storage.path(name)
++perms = os.stat(path).st_mode & 0o777
++assert perms == 0o644, f"Expected 0o644, got {oct(perms)}"
++print(f"   PASS: None falls back to settings default (0o644)")
++os.remove(path)
++
++# Test 6: Consistency between small and large files
++print("\n6. Testing consistency between small and large files:")
++storage = FileSystemStorage()
++
++# Small file
++small_content = ContentFile(b"small")
++small_name = storage.save("small.txt", small_content)
++small_path = storage.path(small_name)
++small_perms = os.stat(small_path).st_mode & 0o777
++
++# Large file
++large_file = TemporaryUploadedFile("large.txt", "text/plain", 1000, "utf-8")
++large_file.write(b"large" * 1000)
++large_file.seek(0)
++large_name = storage.save("large.txt", large_file)
++large_path = storage.path(large_name)
++large_perms = os.stat(large_path).st_mode & 0o777
++
++assert small_perms == large_perms == 0o644, \
++    f"Inconsistent permissions: small={oct(small_perms)}, large={oct(large_perms)}"
++print(f"   Small file: {oct(small_perms)}")
++print(f"   Large file: {oct(large_perms)}")
++print("   PASS: Permissions are consistent")
++
++os.remove(small_path)
++os.remove(large_path)
++large_file.close()
++
++# Test 7: Different custom permissions
++print("\n7. Testing various custom permissions:")
++for perm in [0o600, 0o640, 0o644, 0o664, 0o666]:
++    custom_storage = FileSystemStorage(file_permissions_mode=perm)
++    content = ContentFile(b"test")
++    name = custom_storage.save(f"test_{oct(perm)}.txt", content)
++    path = custom_storage.path(name)
++    actual_perms = os.stat(path).st_mode & 0o777
++    assert actual_perms == perm, f"Expected {oct(perm)}, got {oct(actual_perms)}"
++    os.remove(path)
++print(f"   PASS: All custom permissions work correctly")
++
++print("\n" + "=" * 80)
++print("ALL TESTS PASSED!")
++print("=" * 80)
++print("\nSummary:")
++print("- Default FILE_UPLOAD_PERMISSIONS is 0o644")
++print("- Small and large files have consistent permissions")
++print("- Custom permissions can be set via storage initialization")
++print("- Passing None to storage falls back to settings default")
++print("- The fix resolves the inconsistency issue described in the PR")
++print("=" * 80)
+diff --git a/test_file_permissions.py b/test_file_permissions.py
+new file mode 100644
+index 0000000000..0cf2e8f64b
+--- /dev/null
++++ b/test_file_permissions.py
+@@ -0,0 +1,62 @@
++import os
++import sys
++import tempfile
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={},
++    MEDIA_ROOT=tempfile.mkdtemp(),
++    DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++from django.core.files.uploadedfile import TemporaryUploadedFile
++
++# Test 1: Check that FILE_UPLOAD_PERMISSIONS default is 0o644
++print(f"FILE_UPLOAD_PERMISSIONS default: {oct(settings.FILE_UPLOAD_PERMISSIONS)}")
++assert settings.FILE_UPLOAD_PERMISSIONS == 0o644, f"Expected 0o644, got {oct(settings.FILE_UPLOAD_PERMISSIONS)}"
++print("PASS: FILE_UPLOAD_PERMISSIONS default is 0o644")
++
++# Test 2: Test with a small file (MemoryUploadedFile-like behavior)
++storage = FileSystemStorage()
++print(f"Storage file_permissions_mode: {oct(storage.file_permissions_mode)}")
++assert storage.file_permissions_mode == 0o644, f"Expected 0o644, got {oct(storage.file_permissions_mode)}"
++print("PASS: Storage file_permissions_mode is 0o644")
++
++# Test 3: Save a small file and check permissions
++content = ContentFile(b"Hello, World!")
++name = storage.save("test_small.txt", content)
++full_path = storage.path(name)
++file_mode = os.stat(full_path).st_mode & 0o777
++print(f"Small file permissions: {oct(file_mode)}")
++assert file_mode == 0o644, f"Expected 0o644, got {oct(file_mode)}"
++print("PASS: Small file has correct permissions (0o644)")
++os.remove(full_path)
++
++# Test 4: Save a file using TemporaryUploadedFile (simulating large file upload)
++temp_file = TemporaryUploadedFile(
++    name="test_large.txt",
++    content_type="text/plain",
++    size=100,
++    charset="utf-8"
++)
++temp_file.write(b"This is a test file content for large file simulation.")
++temp_file.seek(0)
++
++name = storage.save("test_large.txt", temp_file)
++full_path = storage.path(name)
++file_mode = os.stat(full_path).st_mode & 0o777
++print(f"Large file (TemporaryUploadedFile) permissions: {oct(file_mode)}")
++assert file_mode == 0o644, f"Expected 0o644, got {oct(file_mode)}"
++print("PASS: Large file (TemporaryUploadedFile) has correct permissions (0o644)")
++os.remove(full_path)
++
++temp_file.close()
++
++print("\nAll tests passed!")
+diff --git a/test_permission_consistency.py b/test_permission_consistency.py
+new file mode 100644
+index 0000000000..f58777ef10
+--- /dev/null
++++ b/test_permission_consistency.py
+@@ -0,0 +1,150 @@
++"""
++Test to verify that file permissions are consistent regardless of upload method.
++
++This test demonstrates the issue described in the PR:
++- Small files (MemoryUploadedFile) get permissions based on umask (typically 0o644)
++- Large files (TemporaryUploadedFile) get permissions from the temp file (0o600)
++
++With the fix (FILE_UPLOAD_PERMISSIONS = 0o644), both should get 0o644.
++"""
++import os
++import sys
++import tempfile
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={},
++    MEDIA_ROOT=tempfile.mkdtemp(),
++    DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++from django.core.files.uploadedfile import TemporaryUploadedFile
++
++print("=" * 70)
++print("Testing File Upload Permission Consistency")
++print("=" * 70)
++
++# Test with default settings (should be 0o644 after the fix)
++print("\n1. Testing with default FILE_UPLOAD_PERMISSIONS (should be 0o644):")
++print(f"   FILE_UPLOAD_PERMISSIONS = {oct(settings.FILE_UPLOAD_PERMISSIONS)}")
++
++storage = FileSystemStorage()
++
++# Test small file (MemoryUploadedFile-like)
++small_content = ContentFile(b"Small file content")
++small_name = storage.save("small_file.txt", small_content)
++small_path = storage.path(small_name)
++small_perms = os.stat(small_path).st_mode & 0o777
++print(f"   Small file permissions: {oct(small_perms)}")
++
++# Test large file (TemporaryUploadedFile)
++temp_file = TemporaryUploadedFile(
++    name="large_file.txt",
++    content_type="text/plain",
++    size=1000,
++    charset="utf-8"
++)
++temp_file.write(b"Large file content " * 100)
++temp_file.seek(0)
++
++large_name = storage.save("large_file.txt", temp_file)
++large_path = storage.path(large_name)
++large_perms = os.stat(large_path).st_mode & 0o777
++print(f"   Large file permissions: {oct(large_perms)}")
++
++# Check consistency
++if small_perms == large_perms == 0o644:
++    print("   PASS: Both files have consistent permissions (0o644)")
++else:
++    print(f"   FAIL: Permissions are inconsistent!")
++    print(f"         Small: {oct(small_perms)}, Large: {oct(large_perms)}")
++    sys.exit(1)
++
++# Cleanup
++os.remove(small_path)
++os.remove(large_path)
++temp_file.close()
++
++# Test with explicit None (to verify backward compatibility)
++print("\n2. Testing with FILE_UPLOAD_PERMISSIONS explicitly set to None:")
++storage_none = FileSystemStorage(file_permissions_mode=None)
++print(f"   file_permissions_mode = {storage_none.file_permissions_mode}")
++
++small_content2 = ContentFile(b"Small file content 2")
++small_name2 = storage_none.save("small_file2.txt", small_content2)
++small_path2 = storage_none.path(small_name2)
++small_perms2 = os.stat(small_path2).st_mode & 0o777
++print(f"   Small file permissions: {oct(small_perms2)}")
++
++temp_file2 = TemporaryUploadedFile(
++    name="large_file2.txt",
++    content_type="text/plain",
++    size=1000,
++    charset="utf-8"
++)
++temp_file2.write(b"Large file content 2 " * 100)
++temp_file2.seek(0)
++
++large_name2 = storage_none.save("large_file2.txt", temp_file2)
++large_path2 = storage_none.path(large_name2)
++large_perms2 = os.stat(large_path2).st_mode & 0o777
++print(f"   Large file permissions: {oct(large_perms2)}")
++
++if small_perms2 != large_perms2:
++    print(f"   NOTE: Permissions are inconsistent when file_permissions_mode=None")
++    print(f"         This is expected behavior when explicitly set to None")
++else:
++    print(f"   Both files have permissions: {oct(small_perms2)}")
++
++# Cleanup
++os.remove(small_path2)
++os.remove(large_path2)
++temp_file2.close()
++
++# Test with custom permissions
++print("\n3. Testing with custom FILE_UPLOAD_PERMISSIONS (0o600):")
++storage_custom = FileSystemStorage(file_permissions_mode=0o600)
++print(f"   file_permissions_mode = {oct(storage_custom.file_permissions_mode)}")
++
++small_content3 = ContentFile(b"Small file content 3")
++small_name3 = storage_custom.save("small_file3.txt", small_content3)
++small_path3 = storage_custom.path(small_name3)
++small_perms3 = os.stat(small_path3).st_mode & 0o777
++print(f"   Small file permissions: {oct(small_perms3)}")
++
++temp_file3 = TemporaryUploadedFile(
++    name="large_file3.txt",
++    content_type="text/plain",
++    size=1000,
++    charset="utf-8"
++)
++temp_file3.write(b"Large file content 3 " * 100)
++temp_file3.seek(0)
++
++large_name3 = storage_custom.save("large_file3.txt", temp_file3)
++large_path3 = storage_custom.path(large_name3)
++large_perms3 = os.stat(large_path3).st_mode & 0o777
++print(f"   Large file permissions: {oct(large_perms3)}")
++
++if small_perms3 == large_perms3 == 0o600:
++    print("   PASS: Both files have consistent custom permissions (0o600)")
++else:
++    print(f"   FAIL: Permissions don't match expected 0o600!")
++    print(f"         Small: {oct(small_perms3)}, Large: {oct(large_perms3)}")
++    sys.exit(1)
++
++# Cleanup
++os.remove(small_path3)
++os.remove(large_path3)
++temp_file3.close()
++
++print("\n" + "=" * 70)
++print("All tests passed! File permissions are now consistent.")
++print("=" * 70)
+diff --git a/test_pr_fix.py b/test_pr_fix.py
+new file mode 100644
+index 0000000000..0184cabbfa
+--- /dev/null
++++ b/test_pr_fix.py
+@@ -0,0 +1,120 @@
++"""
++Test to demonstrate the fix for the file upload permissions inconsistency issue.
++
++This test shows that:
++1. Before the fix (FILE_UPLOAD_PERMISSIONS=None by default), small and large files
++   could have different permissions.
++2. After the fix (FILE_UPLOAD_PERMISSIONS=0o644 by default), both small and large
++   files have consistent permissions.
++"""
++import os
++import sys
++import tempfile
++import django
++from django.conf import settings
++
++# Configure Django settings with the new default
++settings.configure(
++    DEBUG=True,
++    DATABASES={},
++    MEDIA_ROOT=tempfile.mkdtemp(),
++    DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++from django.core.files.uploadedfile import TemporaryUploadedFile
++
++print("=" * 80)
++print("DEMONSTRATING THE FIX FOR FILE UPLOAD PERMISSIONS INCONSISTENCY")
++print("=" * 80)
++
++print("\nPR Issue Description:")
++print("-" * 80)
++print("The permissions for a file uploaded to FileSystemStorage might not be")
++print("consistent depending on whether a MemoryUploadedFile or a")
++print("TemporaryUploadedFile was used for temporary storage of the uploaded data.")
++print()
++print("- Small files (MemoryUploadedFile): created with os.open() using mode 0o666")
++print("  (masked by umask), typically resulting in 0o644")
++print("- Large files (TemporaryUploadedFile): moved from temp file with permissions")
++print("  0o600 (set by Python's tempfile module for security)")
++print("-" * 80)
++
++print("\n\nFIX VERIFICATION:")
++print("=" * 80)
++
++# Verify the default setting
++print(f"\n1. Default FILE_UPLOAD_PERMISSIONS: {oct(settings.FILE_UPLOAD_PERMISSIONS)}")
++assert settings.FILE_UPLOAD_PERMISSIONS == 0o644, \
++    f"Expected default to be 0o644, got {oct(settings.FILE_UPLOAD_PERMISSIONS)}"
++print("   PASS: Default is now 0o644 (was None before the fix)")
++
++# Test with default storage
++storage = FileSystemStorage()
++print(f"\n2. FileSystemStorage.file_permissions_mode: {oct(storage.file_permissions_mode)}")
++assert storage.file_permissions_mode == 0o644, \
++    f"Expected 0o644, got {oct(storage.file_permissions_mode)}"
++print("   PASS: Storage uses the default 0o644")
++
++# Test small file (MemoryUploadedFile behavior)
++print("\n3. Testing small file (MemoryUploadedFile-like):")
++small_content = ContentFile(b"Small file content")
++small_name = storage.save("test_small.txt", small_content)
++small_path = storage.path(small_name)
++small_perms = os.stat(small_path).st_mode & 0o777
++print(f"   File permissions: {oct(small_perms)}")
++assert small_perms == 0o644, f"Expected 0o644, got {oct(small_perms)}"
++print("   PASS: Small file has 0o644 permissions")
++
++# Test large file (TemporaryUploadedFile behavior)
++print("\n4. Testing large file (TemporaryUploadedFile):")
++temp_file = TemporaryUploadedFile(
++    name="test_large.txt",
++    content_type="text/plain",
++    size=1000,
++    charset="utf-8"
++)
++temp_file.write(b"Large file content " * 100)
++temp_file.seek(0)
++
++# Check the temp file permissions (should be 0o600)
++temp_path = temp_file.temporary_file_path()
++temp_perms = os.stat(temp_path).st_mode & 0o777
++print(f"   Temporary file permissions: {oct(temp_perms)}")
++print(f"   (Note: temp files typically have 0o600 for security)")
++
++large_name = storage.save("test_large.txt", temp_file)
++large_path = storage.path(large_name)
++large_perms = os.stat(large_path).st_mode & 0o777
++print(f"   Saved file permissions: {oct(large_perms)}")
++assert large_perms == 0o644, f"Expected 0o644, got {oct(large_perms)}"
++print("   PASS: Large file has 0o644 permissions (corrected from temp file's 0o600)")
++
++# Verify consistency
++print("\n5. Verifying consistency:")
++print(f"   Small file: {oct(small_perms)}")
++print(f"   Large file: {oct(large_perms)}")
++assert small_perms == large_perms == 0o644, \
++    f"Permissions are inconsistent! Small: {oct(small_perms)}, Large: {oct(large_perms)}"
++print("   PASS: Both files have consistent permissions (0o644)")
++
++# Cleanup
++os.remove(small_path)
++os.remove(large_path)
++temp_file.close()
++
++print("\n" + "=" * 80)
++print("SUCCESS: The fix ensures consistent file permissions!")
++print("=" * 80)
++print("\nSummary:")
++print("- Default FILE_UPLOAD_PERMISSIONS is now 0o644 (was None)")
++print("- Small files (MemoryUploadedFile): 0o644")
++print("- Large files (TemporaryUploadedFile): 0o644 (corrected via os.chmod)")
++print("- Permissions are now consistent regardless of file size")
++print("\nBackward compatibility:")
++print("- Users can still set FILE_UPLOAD_PERMISSIONS=None to get umask-based behavior")
++print("- Users can set any custom permissions (e.g., 0o600, 0o755, etc.)")
++print("=" * 80)
+diff --git a/test_pr_issue_demonstration.py b/test_pr_issue_demonstration.py
+new file mode 100644
+index 0000000000..4c8ed48419
+--- /dev/null
++++ b/test_pr_issue_demonstration.py
+@@ -0,0 +1,119 @@
++"""
++This test demonstrates the exact issue described in the PR and verifies the fix.
++
++PR Issue:
++---------
++The permissions for a file uploaded to FileSystemStorage might not be consistent
++depending on whether a MemoryUploadedFile or a TemporaryUploadedFile was used
++for temporary storage of the uploaded data.
++
++The tempfile.NamedTemporaryFile + os.rename sequence causes the resulting file
++permissions to be 0o0600 on some systems. In all probability, the implementation
++of Python's built-in tempfile module explicitly sets such permissions for
++temporary files due to security considerations.
++
++Fix:
++----
++Set default FILE_UPLOAD_PERMISSIONS to 0o644 to ensure consistent permissions
++regardless of the upload method.
++"""
++import os
++import tempfile
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={},
++    MEDIA_ROOT=tempfile.mkdtemp(),
++)
++
++django.setup()
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++from django.core.files.uploadedfile import TemporaryUploadedFile
++
++print("=" * 80)
++print("DEMONSTRATION OF PR ISSUE AND FIX")
++print("=" * 80)
++
++print("\nPR Issue Summary:")
++print("-" * 80)
++print("Before the fix, file permissions were inconsistent:")
++print("  - Small files (MemoryUploadedFile): 0o644 (from umask)")
++print("  - Large files (TemporaryUploadedFile): 0o600 (from temp file)")
++print()
++print("After the fix, file permissions are consistent:")
++print("  - Both small and large files: 0o644 (from FILE_UPLOAD_PERMISSIONS)")
++print("-" * 80)
++
++print("\n\nVerifying the fix:")
++print("=" * 80)
++
++# Verify default setting
++print(f"\n1. FILE_UPLOAD_PERMISSIONS default: {oct(settings.FILE_UPLOAD_PERMISSIONS)}")
++assert settings.FILE_UPLOAD_PERMISSIONS == 0o644, "Default should be 0o644"
++print("   VERIFIED: Default is 0o644 (was None before the fix)")
++
++# Create storage
++storage = FileSystemStorage()
++
++# Test with small file (MemoryUploadedFile behavior)
++print("\n2. Testing small file (MemoryUploadedFile-like):")
++small_file = ContentFile(b"Small file content")
++small_name = storage.save("small_test.txt", small_file)
++small_path = storage.path(small_name)
++small_perms = os.stat(small_path).st_mode & 0o777
++print(f"   Permissions: {oct(small_perms)}")
++
++# Test with large file (TemporaryUploadedFile)
++print("\n3. Testing large file (TemporaryUploadedFile):")
++large_file = TemporaryUploadedFile(
++    name="large_test.txt",
++    content_type="text/plain",
++    size=10000,
++    charset="utf-8"
++)
++large_file.write(b"Large file content " * 500)
++large_file.seek(0)
++
++# Check temp file permissions (should be 0o600 for security)
++temp_path = large_file.temporary_file_path()
++temp_perms = os.stat(temp_path).st_mode & 0o777
++print(f"   Temp file permissions: {oct(temp_perms)}")
++print(f"   (Temp files have restrictive permissions for security)")
++
++# Save the file
++large_name = storage.save("large_test.txt", large_file)
++large_path = storage.path(large_name)
++large_perms = os.stat(large_path).st_mode & 0o777
++print(f"   Saved file permissions: {oct(large_perms)}")
++
++# Verify consistency
++print("\n4. Verifying consistency:")
++print(f"   Small file: {oct(small_perms)}")
++print(f"   Large file: {oct(large_perms)}")
++
++if small_perms == large_perms == 0o644:
++    print("\n   SUCCESS: Permissions are consistent!")
++    print("   Both files have 0o644 permissions as expected.")
++else:
++    print(f"\n   FAILURE: Permissions are inconsistent!")
++    print(f"   Small: {oct(small_perms)}, Large: {oct(large_perms)}")
++    raise AssertionError("Permissions should be consistent")
++
++# Cleanup
++os.remove(small_path)
++os.remove(large_path)
++large_file.close()
++
++print("\n" + "=" * 80)
++print("FIX VERIFIED SUCCESSFULLY")
++print("=" * 80)
++print("\nThe fix ensures that:")
++print("1. FILE_UPLOAD_PERMISSIONS defaults to 0o644 (was None)")
++print("2. All uploaded files get consistent permissions (0o644)")
++print("3. The inconsistency between small and large files is resolved")
++print("4. Users can still customize permissions if needed")
++print("=" * 80)

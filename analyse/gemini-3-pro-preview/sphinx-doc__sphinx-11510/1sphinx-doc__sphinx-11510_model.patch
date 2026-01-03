@@ -1,0 +1,65 @@
+diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
+index 19f7c0a8d..3d486f22f 100644
+--- a/sphinx/directives/other.py
++++ b/sphinx/directives/other.py
+@@ -4,6 +4,7 @@ import re
+ from typing import TYPE_CHECKING, Any, cast
+ 
+ from docutils import nodes
++from docutils import io
+ from docutils.parsers.rst import directives
+ from docutils.parsers.rst.directives.admonitions import BaseAdmonition
+ from docutils.parsers.rst.directives.misc import Class
+@@ -14,6 +15,7 @@ from sphinx.domains.changeset import VersionChange  # noqa: F401  # for compatib
+ from sphinx.domains.std import StandardDomain
+ from sphinx.locale import _, __
+ from sphinx.util import docname_join, logging, url_re
++from sphinx.io import SphinxFileInput
+ from sphinx.util.docutils import SphinxDirective
+ from sphinx.util.matching import Matcher, patfilter
+ from sphinx.util.nodes import explicit_title_re
+@@ -376,7 +378,43 @@ class Include(BaseInclude, SphinxDirective):
+         rel_filename, filename = self.env.relfn2path(self.arguments[0])
+         self.arguments[0] = filename
+         self.env.note_included(filename)
+-        return super().run()
++
++        encoding = self.options.get('encoding', self.config.source_encoding)
++        error_handler = 'sphinx'
++
++        try:
++            reader = SphinxFileInput(source_path=filename, encoding=encoding,
++                                 error_handler=error_handler)
++            text = reader.read()
++        except (OSError, UnicodeError):
++            return super().run()
++
++        # emit "source-read" event
++        arg = [text]
++        self.env.events.emit('source-read', self.env.docname, arg)
++        text = arg[0]
++
++        class MockFileInput(io.FileInput):
++            def __init__(self, *args, **kwargs):
++                self.source_path = kwargs.get('source_path')
++                self.error_handler = kwargs.get('error_handler', 'strict')
++                self.encoding = kwargs.get('encoding')
++                self._content = text
++
++            def read(self):
++                return self._content
++
++            def readlines(self):
++                return self._content.splitlines(True)
++
++        # patch io.FileInput to read from memory
++        original_FileInput = io.FileInput
++        try:
++            io.FileInput = MockFileInput
++            return super().run()
++        finally:
++            io.FileInput = original_FileInput
++
+ 
+ 
+ def setup(app: Sphinx) -> dict[str, Any]:

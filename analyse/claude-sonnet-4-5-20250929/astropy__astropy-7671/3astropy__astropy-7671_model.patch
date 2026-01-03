@@ -1,0 +1,678 @@
+diff --git a/SOLUTION_SUMMARY.md b/SOLUTION_SUMMARY.md
+new file mode 100644
+index 000000000..69126f84f
+--- /dev/null
++++ b/SOLUTION_SUMMARY.md
+@@ -0,0 +1,39 @@
++# Solution Summary: Fix minversion failures with LooseVersion
++
++## Problem
++The `minversion` function in `astropy/utils/introspection.py` was failing with a `TypeError` when comparing certain version strings due to a bug in Python's `distutils.version.LooseVersion` (https://bugs.python.org/issue30272).
++
++The bug occurs when comparing versions with mixed int/str components, such as:
++- `'1.14.3'` vs `'1.14dev'`
++- `'1.2.3'` vs `'1.2dev'`
++- `'2.0.1'` vs `'2.0rc1'`
++
++## Root Cause
++PR #7647 changed from using `pkg_resources.parse_version` to `LooseVersion`, which has a known bug when comparing versions with different component types (int vs str).
++
++## Solution
++Wrapped the `LooseVersion` comparison in a try-except block that:
++
++1. **First tries**: Use `LooseVersion` for the comparison (maintains backward compatibility)
++2. **On TypeError**: Falls back to `packaging.version.parse` if available
++3. **If packaging unavailable**: Returns `False` with a warning message
++
++This approach:
++- Fixes the immediate bug
++- Maintains backward compatibility for cases where LooseVersion works
++- Provides a graceful fallback using the modern `packaging` library
++- Handles the edge case where neither works by being conservative (returning False with a warning)
++
++## Changes Made
++Modified `/testbed/astropy/utils/introspection.py`:
++- Lines 142-147: Wrapped version comparison in try-except block
++- Added fallback to `packaging.version.parse`
++- Added warning when both methods fail
++
++## Testing
++All tests pass, including:
++- Existing `test_minversion` test
++- New comprehensive tests for edge cases
++- Tests with dev versions (e.g., '2.0.0.dev0')
++- Tests with rc versions (e.g., '2.0rc1')
++- Tests with both inclusive and exclusive comparisons
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc..ffe8e45dc 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -139,10 +139,32 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
+-    if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
+-    else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++    try:
++        if inclusive:
++            return LooseVersion(have_version) >= LooseVersion(version)
++        else:
++            return LooseVersion(have_version) > LooseVersion(version)
++    except TypeError:
++        # LooseVersion comparison failed due to mixed types (e.g., '1.14.3' vs '1.14dev')
++        # This is a known issue: https://bugs.python.org/issue30272
++        # Try using packaging.version as a fallback
++        try:
++            from packaging.version import parse as parse_version
++            if inclusive:
++                return parse_version(have_version) >= parse_version(version)
++            else:
++                return parse_version(have_version) > parse_version(version)
++        except ImportError:
++            # packaging not available, be conservative and return False
++            import warnings
++            warnings.warn(
++                "Cannot compare versions '{0}' and '{1}' using LooseVersion "
++                "due to a known issue (https://bugs.python.org/issue30272). "
++                "Install the 'packaging' package for more reliable version "
++                "comparisons.".format(have_version, version),
++                UserWarning
++            )
++            return False
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 000000000..17c76248c
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python
++"""
++Final verification that the PR issue is resolved.
++
++This script demonstrates that the minversion function now handles
++the LooseVersion bug gracefully by falling back to packaging.version
++when LooseVersion fails with TypeError.
++"""
++
++import sys
++import types
++from distutils.version import LooseVersion
++
++print("=" * 70)
++print("VERIFICATION: PR Issue - minversion failures")
++print("=" * 70)
++
++print("\n1. Demonstrating the LooseVersion bug (from Python bug #30272):")
++print("-" * 70)
++try:
++    result = LooseVersion('1.14.3') >= LooseVersion('1.14dev')
++    print("LooseVersion('1.14.3') >= LooseVersion('1.14dev'): {}".format(result))
++except TypeError as e:
++    print("LooseVersion('1.14.3') >= LooseVersion('1.14dev'): TypeError")
++    print("  Error: {}".format(e))
++
++print("\n2. Testing the fixed minversion function:")
++print("-" * 70)
++
++# Import after demonstrating the bug
++from astropy.utils import minversion
++
++# Create mock modules for testing
++test_cases = [
++    ('1.14.3', '1.14dev', 'The exact case from the PR'),
++    ('1.14', '1.14dev', 'Case without patch number (works with LooseVersion)'),
++    ('1.2.3', '1.2dev', 'Another problematic case'),
++]
++
++for have_ver, req_ver, description in test_cases:
++    mock_module = types.ModuleType('test_module')
++    mock_module.__version__ = have_ver
++    sys.modules['test_module'] = mock_module
++    
++    try:
++        result = minversion('test_module', req_ver)
++        print("minversion('{}', '{}'): {} - {}".format(
++            have_ver, req_ver, result, description))
++    except Exception as e:
++        print("minversion('{}', '{}'): ERROR - {}".format(
++            have_ver, req_ver, e))
++    finally:
++        del sys.modules['test_module']
++
++print("\n3. Comparison with pkg_resources.parse_version (the old implementation):")
++print("-" * 70)
++
++try:
++    from pkg_resources import parse_version
++    print("parse_version('1.14.3') >= parse_version('1.14dev'): {}".format(
++        parse_version('1.14.3') >= parse_version('1.14dev')))
++except ImportError:
++    print("pkg_resources not available (expected in some environments)")
++
++try:
++    from packaging.version import parse as parse_version
++    print("packaging.parse('1.14.3') >= packaging.parse('1.14dev'): {}".format(
++        parse_version('1.14.3') >= parse_version('1.14dev')))
++except ImportError:
++    print("packaging not available")
++
++print("\n" + "=" * 70)
++print("CONCLUSION: The minversion function now handles the LooseVersion bug")
++print("by falling back to packaging.version when LooseVersion raises TypeError.")
++print("=" * 70)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..e8e146e04
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,67 @@
++#!/usr/bin/env python
++"""Test edge cases for the minversion fix"""
++
++import sys
++import types
++from astropy.utils import minversion
++
++print("Testing edge cases for minversion:")
++print("=" * 60)
++
++# Create mock modules with different version formats
++test_cases = [
++    ('1.14.3', '1.14dev', True, "Version with patch vs dev"),
++    ('1.14', '1.14dev', False, "Version without patch vs dev"),
++    ('1.2.3', '1.2dev', True, "Another version with patch vs dev"),
++    ('2.0.1', '2.0rc1', True, "Version with patch vs rc"),
++    ('1.15.0', '1.14.0', True, "Normal comparison (higher)"),
++    ('1.14.0', '1.15.0', False, "Normal comparison (lower)"),
++    ('1.14.0', '1.14.0', True, "Equal versions (inclusive)"),
++]
++
++for have_ver, req_ver, expected, description in test_cases:
++    # Create a mock module
++    mock_name = f'mock_module_{have_ver.replace(".", "_")}'
++    mock_module = types.ModuleType(mock_name)
++    mock_module.__version__ = have_ver
++    sys.modules[mock_name] = mock_module
++    
++    try:
++        result = minversion(mock_name, req_ver)
++        status = "PASS" if result == expected else "FAIL"
++        print(f"{status}: {description}")
++        print(f"  minversion('{have_ver}', '{req_ver}') = {result} (expected {expected})")
++    except Exception as e:
++        print(f"ERROR: {description}")
++        print(f"  minversion('{have_ver}', '{req_ver}') raised {type(e).__name__}: {e}")
++    
++    # Clean up
++    del sys.modules[mock_name]
++
++print()
++print("=" * 60)
++print("Testing inclusive=False:")
++print("=" * 60)
++
++# Test with inclusive=False
++test_cases_exclusive = [
++    ('1.15.0', '1.14.0', True, "Higher version (exclusive)"),
++    ('1.14.0', '1.14.0', False, "Equal versions (exclusive)"),
++]
++
++for have_ver, req_ver, expected, description in test_cases_exclusive:
++    mock_name = f'mock_module_{have_ver.replace(".", "_")}_excl'
++    mock_module = types.ModuleType(mock_name)
++    mock_module.__version__ = have_ver
++    sys.modules[mock_name] = mock_module
++    
++    try:
++        result = minversion(mock_name, req_ver, inclusive=False)
++        status = "PASS" if result == expected else "FAIL"
++        print(f"{status}: {description}")
++        print(f"  minversion('{have_ver}', '{req_ver}', inclusive=False) = {result} (expected {expected})")
++    except Exception as e:
++        print(f"ERROR: {description}")
++        print(f"  minversion('{have_ver}', '{req_ver}', inclusive=False) raised {type(e).__name__}: {e}")
++    
++    del sys.modules[mock_name]
+diff --git a/test_final_comprehensive.py b/test_final_comprehensive.py
+new file mode 100644
+index 000000000..7bff97413
+--- /dev/null
++++ b/test_final_comprehensive.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python
++"""
++Comprehensive final test to ensure the minversion fix is robust.
++"""
++
++import sys
++import types
++from astropy.utils import minversion
++
++print("Comprehensive test of minversion fix")
++print("=" * 70)
++
++# Test cases: (have_version, required_version, inclusive, expected_result, description)
++test_cases = [
++    # Cases that trigger the LooseVersion bug
++    ('1.14.3', '1.14dev', True, True, "Bug case: 1.14.3 >= 1.14dev"),
++    ('1.2.3', '1.2dev', True, True, "Bug case: 1.2.3 >= 1.2dev"),
++    ('2.0.1', '2.0rc1', True, True, "Bug case: 2.0.1 >= 2.0rc1"),
++    
++    # Cases that work with LooseVersion
++    ('1.14', '1.14dev', True, False, "Works: 1.14 >= 1.14dev"),
++    ('1.15', '1.14', True, True, "Works: 1.15 >= 1.14"),
++    ('1.14', '1.15', True, False, "Works: 1.14 >= 1.15"),
++    ('1.14.0', '1.14.0', True, True, "Works: 1.14.0 >= 1.14.0 (equal, inclusive)"),
++    
++    # Test inclusive=False
++    ('1.15', '1.14', False, True, "Exclusive: 1.15 > 1.14"),
++    ('1.14', '1.14', False, False, "Exclusive: 1.14 > 1.14 (equal)"),
++    
++    # Dev versions
++    ('2.0.0.dev0', '1.9', True, True, "Dev version: 2.0.0.dev0 >= 1.9"),
++]
++
++passed = 0
++failed = 0
++
++for have_ver, req_ver, inclusive, expected, description in test_cases:
++    # Create a mock module
++    mock_module = types.ModuleType('test_module')
++    mock_module.__version__ = have_ver
++    sys.modules['test_module'] = mock_module
++    
++    try:
++        result = minversion('test_module', req_ver, inclusive=inclusive)
++        if result == expected:
++            print("PASS: {}".format(description))
++            passed += 1
++        else:
++            print("FAIL: {} - got {}, expected {}".format(description, result, expected))
++            failed += 1
++    except Exception as e:
++        print("ERROR: {} - {}".format(description, e))
++        failed += 1
++    finally:
++        del sys.modules['test_module']
++
++print("\n" + "=" * 70)
++print("Results: {} passed, {} failed".format(passed, failed))
++
++if failed == 0:
++    print("SUCCESS: All tests passed!")
++    sys.exit(0)
++else:
++    print("FAILURE: Some tests failed")
++    sys.exit(1)
+diff --git a/test_minversion_comprehensive.py b/test_minversion_comprehensive.py
+new file mode 100644
+index 000000000..260fe7696
+--- /dev/null
++++ b/test_minversion_comprehensive.py
+@@ -0,0 +1,56 @@
++#!/usr/bin/env python
++"""Comprehensive test script to reproduce the minversion issue"""
++
++import sys
++from distutils.version import LooseVersion
++
++print("Testing LooseVersion comparisons:")
++print("=" * 50)
++
++# Test cases that should fail
++test_cases = [
++    ('1.14.3', '1.14dev'),
++    ('1.2.3', '1.2dev'),
++    ('2.0.1', '2.0rc1'),
++]
++
++for v1, v2 in test_cases:
++    try:
++        result = LooseVersion(v1) >= LooseVersion(v2)
++        print(f"LooseVersion('{v1}') >= LooseVersion('{v2}'): {result}")
++    except TypeError as e:
++        print(f"ERROR: LooseVersion('{v1}') >= LooseVersion('{v2}')")
++        print(f"  TypeError: {e}")
++
++print()
++
++# Now let's test with a mock module
++print("=" * 50)
++print("Testing minversion with mock module:")
++print("=" * 50)
++
++import types
++
++# Create a mock module with version 1.14.3
++mock_module = types.ModuleType('mock_module')
++mock_module.__version__ = '1.14.3'
++sys.modules['mock_module'] = mock_module
++
++from astropy.utils import minversion
++
++# This should trigger the error
++try:
++    result = minversion('mock_module', '1.14dev')
++    print(f"minversion('mock_module', '1.14dev'): {result}")
++except TypeError as e:
++    print(f"ERROR: minversion('mock_module', '1.14dev')")
++    print(f"  TypeError: {e}")
++
++# Test with version that doesn't have the issue
++mock_module.__version__ = '1.14'
++try:
++    result = minversion('mock_module', '1.14dev')
++    print(f"minversion('mock_module' with version '1.14', '1.14dev'): {result}")
++except TypeError as e:
++    print(f"ERROR: minversion('mock_module' with version '1.14', '1.14dev')")
++    print(f"  TypeError: {e}")
+diff --git a/test_minversion_issue.py b/test_minversion_issue.py
+new file mode 100644
+index 000000000..11f345a50
+--- /dev/null
++++ b/test_minversion_issue.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python
++"""Test script to reproduce the minversion issue"""
++
++from distutils.version import LooseVersion
++
++print("Testing LooseVersion comparisons:")
++print("=" * 50)
++
++# This should fail according to the bug report
++try:
++    result = LooseVersion('1.14.3') >= LooseVersion('1.14dev')
++    print(f"LooseVersion('1.14.3') >= LooseVersion('1.14dev'): {result}")
++except TypeError as e:
++    print(f"ERROR: LooseVersion('1.14.3') >= LooseVersion('1.14dev')")
++    print(f"  TypeError: {e}")
++
++print()
++
++# This should work according to the bug report
++try:
++    result = LooseVersion('1.14') >= LooseVersion('1.14dev')
++    print(f"LooseVersion('1.14') >= LooseVersion('1.14dev'): {result}")
++except TypeError as e:
++    print(f"ERROR: LooseVersion('1.14') >= LooseVersion('1.14dev')")
++    print(f"  TypeError: {e}")
++
++print()
++
++# Test with pkg_resources.parse_version (the old implementation)
++try:
++    from pkg_resources import parse_version
++    result = parse_version('1.14.3') >= parse_version('1.14dev')
++    print(f"parse_version('1.14.3') >= parse_version('1.14dev'): {result}")
++except ImportError:
++    print("pkg_resources not available")
++except Exception as e:
++    print(f"ERROR with parse_version: {e}")
++
++print()
++print("=" * 50)
++print("\nNow testing the minversion function:")
++print("=" * 50)
++
++# Test the actual minversion function
++try:
++    from astropy.utils import minversion
++    result = minversion('numpy', '1.14dev')
++    print(f"minversion('numpy', '1.14dev'): {result}")
++except TypeError as e:
++    print(f"ERROR: minversion('numpy', '1.14dev')")
++    print(f"  TypeError: {e}")
++except Exception as e:
++    print(f"ERROR: minversion('numpy', '1.14dev')")
++    print(f"  {type(e).__name__}: {e}")
+diff --git a/test_no_packaging.py b/test_no_packaging.py
+new file mode 100644
+index 000000000..0fd9e3cce
+--- /dev/null
++++ b/test_no_packaging.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python
++"""Test minversion behavior when packaging is not available"""
++
++import sys
++import types
++import warnings
++
++# Hide packaging module if it exists
++packaging_backup = sys.modules.get('packaging', None)
++if 'packaging' in sys.modules:
++    del sys.modules['packaging']
++if 'packaging.version' in sys.modules:
++    del sys.modules['packaging.version']
++
++# Block packaging import
++class PackagingBlocker:
++    def find_module(self, fullname, path=None):
++        if fullname.startswith('packaging'):
++            return self
++        return None
++    
++    def load_module(self, fullname):
++        raise ImportError(f"No module named '{fullname}'")
++
++sys.meta_path.insert(0, PackagingBlocker())
++
++print("Testing minversion when packaging is not available:")
++print("=" * 60)
++
++# Create a mock module with a problematic version
++mock_module = types.ModuleType('mock_module_no_pkg')
++mock_module.__version__ = '1.14.3'
++sys.modules['mock_module_no_pkg'] = mock_module
++
++# Capture warnings
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    
++    from astropy.utils import minversion
++    
++    try:
++        result = minversion('mock_module_no_pkg', '1.14dev')
++        print(f"minversion('mock_module_no_pkg', '1.14dev'): {result}")
++        
++        if len(w) > 0:
++            print(f"\nWarning raised (as expected):")
++            print(f"  Category: {w[0].category.__name__}")
++            print(f"  Message: {w[0].message}")
++        else:
++            print("\nNo warning raised (unexpected)")
++            
++    except Exception as e:
++        print(f"ERROR: {type(e).__name__}: {e}")
++
++# Cleanup
++sys.meta_path.pop(0)
++if packaging_backup is not None:
++    sys.modules['packaging'] = packaging_backup
+diff --git a/test_pr_bug_fix.py b/test_pr_bug_fix.py
+new file mode 100644
+index 000000000..76c1047da
+--- /dev/null
++++ b/test_pr_bug_fix.py
+@@ -0,0 +1,90 @@
++#!/usr/bin/env python
++"""
++Test that the specific bug mentioned in the PR is fixed.
++
++The bug was that minversion would fail with TypeError when comparing
++versions like '1.14.3' vs '1.14dev' due to a LooseVersion bug.
++"""
++
++import sys
++import types
++from astropy.utils import minversion
++
++print("Testing the specific bug from PR description:")
++print("=" * 60)
++
++# Create a mock module with version 1.14.3 (like numpy might have)
++mock_numpy = types.ModuleType('mock_numpy')
++mock_numpy.__version__ = '1.14.3'
++sys.modules['mock_numpy'] = mock_numpy
++
++print("\nTest 1: The exact case from the PR description")
++print("-" * 60)
++try:
++    result = minversion('mock_numpy', '1.14dev')
++    print("PASS: minversion('mock_numpy' [v1.14.3], '1.14dev') = {}".format(result))
++    print("  SUCCESS: No TypeError raised!")
++except TypeError as e:
++    print("FAIL: TypeError raised: {}".format(e))
++    sys.exit(1)
++
++print("\nTest 2: Other problematic version comparisons")
++print("-" * 60)
++
++test_cases = [
++    ('1.2.3', '1.2dev', "Version 1.2.3 vs 1.2dev"),
++    ('2.0.1', '2.0rc1', "Version 2.0.1 vs 2.0rc1"),
++    ('1.14.3', '1.14.0', "Version 1.14.3 vs 1.14.0 (normal case)"),
++]
++
++all_passed = True
++for have_ver, req_ver, description in test_cases:
++    mock_module = types.ModuleType('test_mod')
++    mock_module.__version__ = have_ver
++    sys.modules['test_mod'] = mock_module
++    
++    try:
++        result = minversion('test_mod', req_ver)
++        print("PASS: {}: {}".format(description, result))
++    except TypeError as e:
++        print("FAIL: {}: TypeError: {}".format(description, e))
++        all_passed = False
++    finally:
++        del sys.modules['test_mod']
++
++print("\nTest 3: Verify correct comparison results")
++print("-" * 60)
++
++# Test that the comparisons give correct results
++comparison_tests = [
++    ('1.14.3', '1.14dev', True, "1.14.3 >= 1.14dev should be True"),
++    ('1.14', '1.14dev', False, "1.14 >= 1.14dev should be False"),
++    ('1.15', '1.14', True, "1.15 >= 1.14 should be True"),
++    ('1.14', '1.15', False, "1.14 >= 1.15 should be False"),
++]
++
++for have_ver, req_ver, expected, description in comparison_tests:
++    mock_module = types.ModuleType('test_mod')
++    mock_module.__version__ = have_ver
++    sys.modules['test_mod'] = mock_module
++    
++    try:
++        result = minversion('test_mod', req_ver)
++        if result == expected:
++            print("PASS: {}".format(description))
++        else:
++            print("FAIL: {} - got {}, expected {}".format(description, result, expected))
++            all_passed = False
++    except Exception as e:
++        print("FAIL: {} - raised {}: {}".format(description, type(e).__name__, e))
++        all_passed = False
++    finally:
++        del sys.modules['test_mod']
++
++print("\n" + "=" * 60)
++if all_passed:
++    print("ALL TESTS PASSED!")
++    print("The bug from the PR description has been fixed.")
++else:
++    print("SOME TESTS FAILED")
++    sys.exit(1)
+diff --git a/test_pr_example.py b/test_pr_example.py
+new file mode 100644
+index 000000000..69b01b6ea
+--- /dev/null
++++ b/test_pr_example.py
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python
++"""Test the exact example from the PR description"""
++
++from astropy.utils import minversion
++
++print("Testing the exact example from the PR description:")
++print("=" * 60)
++
++try:
++    result = minversion('numpy', '1.14dev')
++    print(f"minversion('numpy', '1.14dev'): {result}")
++    print("SUCCESS: No TypeError raised!")
++except TypeError as e:
++    print(f"FAILED: TypeError raised")
++    print(f"  {e}")
++except Exception as e:
++    print(f"FAILED: Other exception raised")
++    print(f"  {type(e).__name__}: {e}")
+diff --git a/test_version_solutions.py b/test_version_solutions.py
+new file mode 100644
+index 000000000..4e1e9072a
+--- /dev/null
++++ b/test_version_solutions.py
+@@ -0,0 +1,55 @@
++#!/usr/bin/env python
++"""Test different version comparison solutions"""
++
++from distutils.version import LooseVersion
++
++def compare_versions_safe(have_version, required_version, inclusive=True):
++    """
++    Safely compare versions, handling LooseVersion TypeError.
++    """
++    try:
++        have_lv = LooseVersion(have_version)
++        required_lv = LooseVersion(required_version)
++        if inclusive:
++            return have_lv >= required_lv
++        else:
++            return have_lv > required_lv
++    except TypeError:
++        # LooseVersion comparison failed, try using packaging if available
++        try:
++            from packaging.version import parse as parse_version
++            have_pv = parse_version(have_version)
++            required_pv = parse_version(required_version)
++            if inclusive:
++                return have_pv >= required_pv
++            else:
++                return have_pv > required_pv
++        except ImportError:
++            # packaging not available, fall back to string comparison
++            # This is not ideal but better than crashing
++            # We'll try to be conservative and return False if we can't determine
++            import warnings
++            warnings.warn(
++                f"Could not compare versions '{have_version}' and '{required_version}' "
++                "using LooseVersion. Install 'packaging' for better version comparison.",
++                UserWarning
++            )
++            return False
++
++# Test cases
++test_cases = [
++    ('1.14.3', '1.14dev', True),
++    ('1.14', '1.14dev', True),
++    ('1.2.3', '1.2dev', True),
++    ('2.0.1', '2.0rc1', True),
++    ('1.15', '1.14', True),
++    ('1.14', '1.15', True),
++]
++
++print("Testing safe version comparison:")
++print("=" * 60)
++for have, required, inclusive in test_cases:
++    result = compare_versions_safe(have, required, inclusive)
++    op = '>=' if inclusive else '>'
++    print(f"compare_versions_safe('{have}', '{required}', {inclusive}): {result}")
++    print(f"  ('{have}' {op} '{required}')")

@@ -1,0 +1,371 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 00000000..fb43734d
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,54 @@
++import numpy as np
++import xarray as xr
++
++print("Testing to_stacked_array and to_unstacked_dataset roundtrip...")
++
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++print("Original dataset:")
++print(data)
++print()
++
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++print("Stacked array:")
++print(stacked)
++print("\nStacked coords:")
++print(stacked.coords)
++print("\nStacked indexes:")
++print(stacked.indexes)
++print("\nStacked dims:")
++print(stacked.dims)
++print()
++
++# Let's manually try what to_unstacked_dataset does
++idx = stacked.indexes['y']
++print("MultiIndex:")
++print(idx)
++print("\nMultiIndex levels:")
++print(idx.levels)
++print("\nMultiIndex names:")
++print(idx.names)
++
++level_number = idx._get_level_number(0)
++variables = idx.levels[level_number]
++variable_dim = idx.names[level_number]
++
++print(f"\nlevel_number: {level_number}")
++print(f"variables: {variables}")
++print(f"variable_dim: {variable_dim}")
++
++# Try selecting one variable
++print("\nSelecting variable 'a':")
++selected = stacked.sel({variable_dim: 'a'})
++print(selected)
++print("\nSelected coords:")
++print(selected.coords)
++
++print("\nAfter squeeze(drop=True):")
++squeezed = selected.squeeze(drop=True)
++print(squeezed)
++print("\nSqueezed coords:")
++print(squeezed.coords)
+diff --git a/debug_issue2.py b/debug_issue2.py
+new file mode 100644
+index 00000000..2ef0765a
+--- /dev/null
++++ b/debug_issue2.py
+@@ -0,0 +1,33 @@
++import numpy as np
++import xarray as xr
++
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++
++idx = stacked.indexes['y']
++level_number = idx._get_level_number(0)
++variables = idx.levels[level_number]
++variable_dim = idx.names[level_number]
++
++# pull variables out of datarray
++data_dict = {}
++for k in variables:
++    selected = stacked.sel({variable_dim: k}).squeeze(drop=True)
++    print(f"Variable {k}:")
++    print(selected)
++    print(f"Coords: {selected.coords}")
++    print()
++    data_dict[k] = selected
++
++# Try to create the dataset
++print("Trying to create Dataset...")
++try:
++    result = xr.Dataset(data_dict)
++    print("SUCCESS!")
++    print(result)
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..c6f1b89d
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,26 @@
++import numpy as np
++import xarray as xr
++
++print("Testing to_stacked_array and to_unstacked_dataset roundtrip...")
++
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++print("Original dataset:")
++print(data)
++print()
++
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++print("Stacked array:")
++print(stacked)
++print()
++
++try:
++    unstacked = stacked.to_unstacked_dataset('y')
++    print("Unstacked dataset:")
++    print(unstacked)
++    print("\nSUCCESS: Roundtrip worked!")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 00000000..29e0d796
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,83 @@
++import numpy as np
++import xarray as xr
++
++def test_single_dim_roundtrip():
++    """Test the original bug report case"""
++    print("Test 1: Single dimension variables")
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    assert data.identical(unstacked), "Single dimension roundtrip failed"
++    print("✓ Single dimension roundtrip works")
++
++def test_multi_dim_roundtrip():
++    """Test with multi-dimensional variables"""
++    print("\nTest 2: Multi-dimensional variables")
++    arr = xr.DataArray(
++        np.arange(12).reshape(3, 4),
++        coords=[("x", [0, 1, 2]), ("y", [0, 1, 2, 3])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('z', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('z')
++    assert data.identical(unstacked), "Multi-dimensional roundtrip failed"
++    print("✓ Multi-dimensional roundtrip works")
++
++def test_mixed_dim_roundtrip():
++    """Test with variables of different dimensionality"""
++    print("\nTest 3: Mixed dimensionality variables")
++    arr2d = xr.DataArray(
++        np.arange(12).reshape(3, 4),
++        coords=[("x", [0, 1, 2]), ("y", [0, 1, 2, 3])],
++    )
++    arr1d = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr2d, "b": arr1d})
++    stacked = data.to_stacked_array('z', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('z')
++    assert data.identical(unstacked), "Mixed dimensionality roundtrip failed"
++    print("✓ Mixed dimensionality roundtrip works")
++
++def test_single_variable():
++    """Test with a single variable"""
++    print("\nTest 4: Single variable")
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    assert data.identical(unstacked), "Single variable roundtrip failed"
++    print("✓ Single variable roundtrip works")
++
++def test_different_values():
++    """Test with different values in variables"""
++    print("\nTest 5: Different values in variables")
++    arr_a = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    arr_b = xr.DataArray(
++        np.arange(3, 6),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr_a, "b": arr_b})
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    assert data.identical(unstacked), "Different values roundtrip failed"
++    print("✓ Different values roundtrip works")
++
++if __name__ == "__main__":
++    test_single_dim_roundtrip()
++    test_multi_dim_roundtrip()
++    test_mixed_dim_roundtrip()
++    test_single_variable()
++    test_different_values()
++    print("\n✅ All tests passed!")
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 00000000..5ed5743d
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,82 @@
++import numpy as np
++import xarray as xr
++
++def test_original_issue():
++    """Test the exact case from the issue"""
++    print("Testing original issue...")
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    assert data.identical(unstacked)
++    print("✓ Original issue fixed")
++
++def test_with_level_parameter():
++    """Test with different level parameter"""
++    print("\nTesting with level parameter...")
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    # Test with level=0 (default)
++    unstacked = stacked.to_unstacked_dataset('y', level=0)
++    assert data.identical(unstacked)
++    # Test with level='variable' (by name)
++    unstacked = stacked.to_unstacked_dataset('y', level='variable')
++    assert data.identical(unstacked)
++    print("✓ Level parameter works correctly")
++
++def test_transposed_stacked():
++    """Test with transposed stacked array"""
++    print("\nTesting with transposed stacked array...")
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x']).transpose('y', 'x')
++    unstacked = stacked.to_unstacked_dataset('y')
++    assert data.identical(unstacked)
++    print("✓ Transposed stacked array works")
++
++def test_with_attrs():
++    """Test that attributes are preserved"""
++    print("\nTesting attribute preservation...")
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++        attrs={"units": "meters"}
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    # Check that the data is the same
++    assert data["a"].values.tolist() == unstacked["a"].values.tolist()
++    assert data["b"].values.tolist() == unstacked["b"].values.tolist()
++    print("✓ Attributes handled correctly")
++
++def test_multiple_sample_dims():
++    """Test with multiple sample dimensions"""
++    print("\nTesting with multiple sample dimensions...")
++    arr = xr.DataArray(
++        np.arange(12).reshape(3, 4),
++        coords=[("x", [0, 1, 2]), ("z", [0, 1, 2, 3])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    stacked = data.to_stacked_array('y', sample_dims=['x', 'z'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    assert data.identical(unstacked)
++    print("✓ Multiple sample dimensions work")
++
++if __name__ == "__main__":
++    test_original_issue()
++    test_with_level_parameter()
++    test_transposed_stacked()
++    test_with_attrs()
++    test_multiple_sample_dims()
++    print("\n✅ All verification tests passed!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 00000000..ac8215c8
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,39 @@
++import numpy as np
++import xarray as xr
++
++# Test the fix idea
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++
++idx = stacked.indexes['y']
++level_number = idx._get_level_number(0)
++variables = idx.levels[level_number]
++variable_dim = idx.names[level_number]
++
++# pull variables out of datarray
++data_dict = {}
++for k in variables:
++    selected = stacked.sel({variable_dim: k}).squeeze(drop=True)
++    # Drop the 'y' coordinate (the dim we're unstacking)
++    selected = selected.drop_vars('y')
++    print(f"Variable {k}:")
++    print(selected)
++    print(f"Coords: {selected.coords}")
++    print()
++    data_dict[k] = selected
++
++# Try to create the dataset
++print("Trying to create Dataset...")
++try:
++    result = xr.Dataset(data_dict)
++    print("SUCCESS!")
++    print(result)
++    print("\nOriginal dataset:")
++    print(data)
++    print("\nAre they identical?", data.identical(result))
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index b0df8749..e1aec382 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -1961,7 +1961,12 @@ class DataArray(AbstractArray, DataWithCoords):
+         # pull variables out of datarray
+         data_dict = {}
+         for k in variables:
+-            data_dict[k] = self.sel({variable_dim: k}).squeeze(drop=True)
++            data_array = self.sel({variable_dim: k}).squeeze(drop=True)
++            # Drop the stacked coordinate (dim) if it exists as a scalar coordinate
++            # This happens when variables only have the sample dimensions
++            if dim in data_array.coords:
++                data_array = data_array.drop_vars(dim)
++            data_dict[k] = data_array
+ 
+         # unstacked dataset
+         return Dataset(data_dict)

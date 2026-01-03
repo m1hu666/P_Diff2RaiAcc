@@ -1,0 +1,49 @@
+diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
+index 19f7c0a8d..ce306869c 100644
+--- a/sphinx/directives/other.py
++++ b/sphinx/directives/other.py
+@@ -3,7 +3,7 @@ from __future__ import annotations
+ import re
+ from typing import TYPE_CHECKING, Any, cast
+ 
+-from docutils import nodes
++from docutils import nodes, statemachine
+ from docutils.parsers.rst import directives
+ from docutils.parsers.rst.directives.admonitions import BaseAdmonition
+ from docutils.parsers.rst.directives.misc import Class
+@@ -376,7 +376,34 @@ class Include(BaseInclude, SphinxDirective):
+         rel_filename, filename = self.env.relfn2path(self.arguments[0])
+         self.arguments[0] = filename
+         self.env.note_included(filename)
+-        return super().run()
++
++        original_insert_input = self.state_machine.insert_input
++
++        def wrapped_insert_input(input_lines: list[str], source: str) -> None:
++            text = '\n'.join(input_lines)
++            arg = [text]
++            self.env.events.emit('source-read', source, arg)
++            text = arg[0]
++            new_lines = statemachine.string2lines(text, convert_whitespace=True)
++            original_insert_input(new_lines, source)
++
++        self.state_machine.insert_input = wrapped_insert_input
++        try:
++            ret = super().run()
++        finally:
++            self.state_machine.insert_input = original_insert_input
++
++        if ret:
++            for i, node in enumerate(ret):
++                if isinstance(node, nodes.literal_block):
++                    text = node.astext()
++                    arg = [text]
++                    self.env.events.emit('source-read', filename, arg)
++                    new_text = arg[0]
++                    new_node = nodes.literal_block(new_text, new_text, **node.attributes)
++                    ret[i] = new_node
++
++        return ret
+ 
+ 
+ def setup(app: Sphinx) -> dict[str, Any]:

@@ -1,0 +1,608 @@
+diff --git a/apply_fix.py b/apply_fix.py
+new file mode 100644
+index 000000000..79beb3291
+--- /dev/null
++++ b/apply_fix.py
+@@ -0,0 +1,43 @@
++# Read the file with UTF-8 encoding
++with open('/testbed/sklearn/feature_extraction/text.py', 'r', encoding='utf-8') as f:
++    lines = f.readlines()
++
++# Find the function and fix it
++new_lines = []
++i = 0
++
++while i < len(lines):
++    line = lines[i]
++    
++    if 'def strip_accents_unicode(s):' in line:
++        new_lines.append(line)
++        i += 1
++        
++        # Copy the docstring
++        while i < len(lines) and not (lines[i].strip().endswith('"""') and lines[i].strip() != '"""'):
++            new_lines.append(lines[i])
++            i += 1
++        # Add the closing """
++        new_lines.append(lines[i])
++        i += 1
++        
++        # Add the fixed implementation
++        new_lines.append('    normalized = unicodedata.normalize(\'NFKD\', s)\n')
++        new_lines.append('    return normalized.encode(\'ascii\', \'ignore\').decode(\'ascii\')\n')
++        new_lines.append('\n')
++        
++        # Skip the old implementation until we hit the next function
++        while i < len(lines):
++            if lines[i].strip() and not lines[i].startswith(' ') and not lines[i].startswith('\t'):
++                break
++            i += 1
++        continue
++    
++    new_lines.append(line)
++    i += 1
++
++# Write back with UTF-8 encoding
++with open('/testbed/sklearn/feature_extraction/text.py', 'w', encoding='utf-8') as f:
++    f.writelines(new_lines)
++
++print("Fix applied successfully")
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..80a5d6a35
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,68 @@
++from sklearn.feature_extraction.text import strip_accents_unicode
++import unicodedata
++
++print("Comprehensive test of strip_accents_unicode fix")
++print("=" * 60)
++
++# Test 1: Original issue - composed vs decomposed
++print("\nTest 1: Original issue (composed vs decomposed)")
++s1 = chr(241)  # ñ as single code point
++s2 = chr(110) + chr(771)  # ñ as n + combining tilde
++r1 = strip_accents_unicode(s1)
++r2 = strip_accents_unicode(s2)
++print(f"  Composed: {r1 == 'n'} (expected True)")
++print(f"  Decomposed: {r2 == 'n'} (expected True)")
++print(f"  Both equal: {r1 == r2} (expected True)")
++assert r1 == r2 == 'n', "Test 1 failed"
++
++# Test 2: Various accented characters
++print("\nTest 2: Various accented characters")
++test_cases = [
++    ("café", "cafe"),
++    ("naïve", "naive"),
++    ("résumé", "resume"),
++    ("Zürich", "Zurich"),
++]
++for input_str, expected in test_cases:
++    result = strip_accents_unicode(input_str)
++    match = result == expected
++    print(f"  {expected}: {match}")
++    assert match, f"Test 2 failed for {input_str}"
++
++# Test 3: Already decomposed strings
++print("\nTest 3: Already decomposed strings (NFKD form)")
++for input_str, expected in test_cases:
++    decomposed = unicodedata.normalize('NFKD', input_str)
++    result = strip_accents_unicode(decomposed)
++    match = result == expected
++    print(f"  {expected} (NFKD): {match}")
++    assert match, f"Test 3 failed for {input_str}"
++
++# Test 4: Strings without accents
++print("\nTest 4: Strings without accents")
++no_accent_cases = ["hello", "world", "test", "123", ""]
++for input_str in no_accent_cases:
++    result = strip_accents_unicode(input_str)
++    match = result == input_str
++    print(f"  '{input_str}': {match}")
++    assert match, f"Test 4 failed for {input_str}"
++
++# Test 5: Mixed composed and decomposed in same string
++print("\nTest 5: Mixed composed and decomposed")
++mixed = chr(241) + chr(110) + chr(771)  # ñ (composed) + ñ (decomposed)
++result = strip_accents_unicode(mixed)
++match = result == 'nn'
++print(f"  Mixed string -> 'nn': {match}")
++assert match, "Test 5 failed"
++
++# Test 6: Multiple combining characters
++print("\nTest 6: Multiple combining characters")
++# e with acute and grave
++multi = chr(101) + chr(769) + chr(768)  # e + combining acute + combining grave
++result = strip_accents_unicode(multi)
++match = result == 'e'
++print(f"  Multiple combining -> 'e': {match}")
++assert match, "Test 6 failed"
++
++print("\n" + "=" * 60)
++print("All tests passed successfully!")
+diff --git a/debug_strip.py b/debug_strip.py
+new file mode 100644
+index 000000000..26f9826cf
+--- /dev/null
++++ b/debug_strip.py
+@@ -0,0 +1,20 @@
++from sklearn.feature_extraction.text import strip_accents_unicode
++import unicodedata
++import sys
++
++# Test with señor
++word1_accented = chr(115) + chr(101) + chr(241) + chr(111) + chr(114)  # señor composed
++word2_accented = unicodedata.normalize('NFKD', word1_accented)  # decomposed
++
++result1 = strip_accents_unicode(word1_accented)
++result2 = strip_accents_unicode(word2_accented)
++
++print("Testing strip_accents_unicode directly:")
++print("Composed form length:", len(word1_accented))
++print("After strip_accents_unicode:", result1)
++print()
++print("Decomposed form length:", len(word2_accented))
++print("After strip_accents_unicode:", result2)
++print()
++print("Are they equal after stripping?", result1 == result2)
++print("Both equal 'senor'?", result1 == "senor" and result2 == "senor")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..10aa3eca4
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,27 @@
++from sklearn.feature_extraction.text import strip_accents_unicode
++
++# This string contains one code point, "LATIN SMALL LETTER N WITH TILDE"
++s1 = chr(241)
++
++# This string contains two code points, "LATIN SMALL LETTER N" followed by "COMBINING TILDE"
++s2 = chr(110) + chr(771)
++
++# They are visually identical, as expected
++print("s1:", s1)  # => ñ
++print("s2:", s2)  # => ñ
++
++# The tilde is removed from s1, as expected
++print("strip_accents_unicode(s1):", strip_accents_unicode(s1))  # => n
++
++# But strip_accents_unicode returns s2 unchanged
++print("strip_accents_unicode(s2):", strip_accents_unicode(s2))
++print("strip_accents_unicode(s2) == s2:", strip_accents_unicode(s2) == s2)  # => True
++
++# Let's also check what form each string is in
++import unicodedata
++print("\nNormalization forms:")
++print("s1 is NFKD:", unicodedata.normalize('NFKD', s1) == s1)
++print("s2 is NFKD:", unicodedata.normalize('NFKD', s2) == s2)
++
++# Check if both produce the same result now
++print("\nBoth produce 'n':", strip_accents_unicode(s1) == strip_accents_unicode(s2) == 'n')
+diff --git a/sklearn/feature_extraction/text.py b/sklearn/feature_extraction/text.py
+index bb5a9d646..101fe4e74 100644
+--- a/sklearn/feature_extraction/text.py
++++ b/sklearn/feature_extraction/text.py
+@@ -130,10 +130,7 @@ def strip_accents_unicode(s):
+         ASCII equivalent.
+     """
+     normalized = unicodedata.normalize('NFKD', s)
+-    if normalized == s:
+-        return s
+-    else:
+-        return ''.join([c for c in normalized if not unicodedata.combining(c)])
++    return ''.join([c for c in normalized if not unicodedata.combining(c)])
+ 
+ 
+ def strip_accents_ascii(s):
+@@ -184,319 +181,6 @@ def _check_stop_list(stop):
+ class VectorizerMixin:
+     """Provides common code for text vectorizers (tokenization logic)."""
+ 
+-    _white_spaces = re.compile(r"\s\s+")
+-
+-    def decode(self, doc):
+-        """Decode the input into a string of unicode symbols
+-
+-        The decoding strategy depends on the vectorizer parameters.
+-
+-        Parameters
+-        ----------
+-        doc : string
+-            The string to decode
+-        """
+-        if self.input == 'filename':
+-            with open(doc, 'rb') as fh:
+-                doc = fh.read()
+-
+-        elif self.input == 'file':
+-            doc = doc.read()
+-
+-        if isinstance(doc, bytes):
+-            doc = doc.decode(self.encoding, self.decode_error)
+-
+-        if doc is np.nan:
+-            raise ValueError("np.nan is an invalid document, expected byte or "
+-                             "unicode string.")
+-
+-        return doc
+-
+-    def _word_ngrams(self, tokens, stop_words=None):
+-        """Turn tokens into a sequence of n-grams after stop words filtering"""
+-        # handle stop words
+-        if stop_words is not None:
+-            tokens = [w for w in tokens if w not in stop_words]
+-
+-        # handle token n-grams
+-        min_n, max_n = self.ngram_range
+-        if max_n != 1:
+-            original_tokens = tokens
+-            if min_n == 1:
+-                # no need to do any slicing for unigrams
+-                # just iterate through the original tokens
+-                tokens = list(original_tokens)
+-                min_n += 1
+-            else:
+-                tokens = []
+-
+-            n_original_tokens = len(original_tokens)
+-
+-            # bind method outside of loop to reduce overhead
+-            tokens_append = tokens.append
+-            space_join = " ".join
+-
+-            for n in range(min_n,
+-                           min(max_n + 1, n_original_tokens + 1)):
+-                for i in range(n_original_tokens - n + 1):
+-                    tokens_append(space_join(original_tokens[i: i + n]))
+-
+-        return tokens
+-
+-    def _char_ngrams(self, text_document):
+-        """Tokenize text_document into a sequence of character n-grams"""
+-        # normalize white spaces
+-        text_document = self._white_spaces.sub(" ", text_document)
+-
+-        text_len = len(text_document)
+-        min_n, max_n = self.ngram_range
+-        if min_n == 1:
+-            # no need to do any slicing for unigrams
+-            # iterate through the string
+-            ngrams = list(text_document)
+-            min_n += 1
+-        else:
+-            ngrams = []
+-
+-        # bind method outside of loop to reduce overhead
+-        ngrams_append = ngrams.append
+-
+-        for n in range(min_n, min(max_n + 1, text_len + 1)):
+-            for i in range(text_len - n + 1):
+-                ngrams_append(text_document[i: i + n])
+-        return ngrams
+-
+-    def _char_wb_ngrams(self, text_document):
+-        """Whitespace sensitive char-n-gram tokenization.
+-
+-        Tokenize text_document into a sequence of character n-grams
+-        operating only inside word boundaries. n-grams at the edges
+-        of words are padded with space."""
+-        # normalize white spaces
+-        text_document = self._white_spaces.sub(" ", text_document)
+-
+-        min_n, max_n = self.ngram_range
+-        ngrams = []
+-
+-        # bind method outside of loop to reduce overhead
+-        ngrams_append = ngrams.append
+-
+-        for w in text_document.split():
+-            w = ' ' + w + ' '
+-            w_len = len(w)
+-            for n in range(min_n, max_n + 1):
+-                offset = 0
+-                ngrams_append(w[offset:offset + n])
+-                while offset + n < w_len:
+-                    offset += 1
+-                    ngrams_append(w[offset:offset + n])
+-                if offset == 0:   # count a short word (w_len < n) only once
+-                    break
+-        return ngrams
+-
+-    def build_preprocessor(self):
+-        """Return a function to preprocess the text before tokenization"""
+-        if self.preprocessor is not None:
+-            return self.preprocessor
+-
+-        # accent stripping
+-        if not self.strip_accents:
+-            strip_accents = None
+-        elif callable(self.strip_accents):
+-            strip_accents = self.strip_accents
+-        elif self.strip_accents == 'ascii':
+-            strip_accents = strip_accents_ascii
+-        elif self.strip_accents == 'unicode':
+-            strip_accents = strip_accents_unicode
+-        else:
+-            raise ValueError('Invalid value for "strip_accents": %s' %
+-                             self.strip_accents)
+-
+-        return partial(
+-            _preprocess, accent_function=strip_accents, lower=self.lowercase
+-        )
+-
+-    def build_tokenizer(self):
+-        """Return a function that splits a string into a sequence of tokens"""
+-        if self.tokenizer is not None:
+-            return self.tokenizer
+-        token_pattern = re.compile(self.token_pattern)
+-        return token_pattern.findall
+-
+-    def get_stop_words(self):
+-        """Build or fetch the effective stop words list"""
+-        return _check_stop_list(self.stop_words)
+-
+-    def _check_stop_words_consistency(self, stop_words, preprocess, tokenize):
+-        """Check if stop words are consistent
+-
+-        Returns
+-        -------
+-        is_consistent : True if stop words are consistent with the preprocessor
+-                        and tokenizer, False if they are not, None if the check
+-                        was previously performed, "error" if it could not be
+-                        performed (e.g. because of the use of a custom
+-                        preprocessor / tokenizer)
+-        """
+-        if id(self.stop_words) == getattr(self, '_stop_words_id', None):
+-            # Stop words are were previously validated
+-            return None
+-
+-        # NB: stop_words is validated, unlike self.stop_words
+-        try:
+-            inconsistent = set()
+-            for w in stop_words or ():
+-                tokens = list(tokenize(preprocess(w)))
+-                for token in tokens:
+-                    if token not in stop_words:
+-                        inconsistent.add(token)
+-            self._stop_words_id = id(self.stop_words)
+-
+-            if inconsistent:
+-                warnings.warn('Your stop_words may be inconsistent with '
+-                              'your preprocessing. Tokenizing the stop '
+-                              'words generated tokens %r not in '
+-                              'stop_words.' % sorted(inconsistent))
+-            return not inconsistent
+-        except Exception:
+-            # Failed to check stop words consistency (e.g. because a custom
+-            # preprocessor or tokenizer was used)
+-            self._stop_words_id = id(self.stop_words)
+-            return 'error'
+-
+-    def _validate_custom_analyzer(self):
+-        # This is to check if the given custom analyzer expects file or a
+-        # filename instead of data.
+-        # Behavior changed in v0.21, function could be removed in v0.23
+-        import tempfile
+-        with tempfile.NamedTemporaryFile() as f:
+-            fname = f.name
+-        # now we're sure fname doesn't exist
+-
+-        msg = ("Since v0.21, vectorizers pass the data to the custom analyzer "
+-               "and not the file names or the file objects. This warning "
+-               "will be removed in v0.23.")
+-        try:
+-            self.analyzer(fname)
+-        except FileNotFoundError:
+-            warnings.warn(msg, ChangedBehaviorWarning)
+-        except AttributeError as e:
+-            if str(e) == "'str' object has no attribute 'read'":
+-                warnings.warn(msg, ChangedBehaviorWarning)
+-        except Exception:
+-            pass
+-
+-    def build_analyzer(self):
+-        """Return a callable that handles preprocessing, tokenization
+-
+-        and n-grams generation.
+-        """
+-
+-        if callable(self.analyzer):
+-            if self.input in ['file', 'filename']:
+-                self._validate_custom_analyzer()
+-            return partial(
+-                _analyze, analyzer=self.analyzer, decoder=self.decode
+-            )
+-
+-        preprocess = self.build_preprocessor()
+-
+-        if self.analyzer == 'char':
+-            return partial(_analyze, ngrams=self._char_ngrams,
+-                           preprocessor=preprocess, decoder=self.decode)
+-
+-        elif self.analyzer == 'char_wb':
+-
+-            return partial(_analyze, ngrams=self._char_wb_ngrams,
+-                           preprocessor=preprocess, decoder=self.decode)
+-
+-        elif self.analyzer == 'word':
+-            stop_words = self.get_stop_words()
+-            tokenize = self.build_tokenizer()
+-            self._check_stop_words_consistency(stop_words, preprocess,
+-                                               tokenize)
+-            return partial(_analyze, ngrams=self._word_ngrams,
+-                           tokenizer=tokenize, preprocessor=preprocess,
+-                           decoder=self.decode, stop_words=stop_words)
+-
+-        else:
+-            raise ValueError('%s is not a valid tokenization scheme/analyzer' %
+-                             self.analyzer)
+-
+-    def _validate_vocabulary(self):
+-        vocabulary = self.vocabulary
+-        if vocabulary is not None:
+-            if isinstance(vocabulary, set):
+-                vocabulary = sorted(vocabulary)
+-            if not isinstance(vocabulary, Mapping):
+-                vocab = {}
+-                for i, t in enumerate(vocabulary):
+-                    if vocab.setdefault(t, i) != i:
+-                        msg = "Duplicate term in vocabulary: %r" % t
+-                        raise ValueError(msg)
+-                vocabulary = vocab
+-            else:
+-                indices = set(vocabulary.values())
+-                if len(indices) != len(vocabulary):
+-                    raise ValueError("Vocabulary contains repeated indices.")
+-                for i in range(len(vocabulary)):
+-                    if i not in indices:
+-                        msg = ("Vocabulary of size %d doesn't contain index "
+-                               "%d." % (len(vocabulary), i))
+-                        raise ValueError(msg)
+-            if not vocabulary:
+-                raise ValueError("empty vocabulary passed to fit")
+-            self.fixed_vocabulary_ = True
+-            self.vocabulary_ = dict(vocabulary)
+-        else:
+-            self.fixed_vocabulary_ = False
+-
+-    def _check_vocabulary(self):
+-        """Check if vocabulary is empty or missing (not fitted)"""
+-        if not hasattr(self, 'vocabulary_'):
+-            self._validate_vocabulary()
+-            if not self.fixed_vocabulary_:
+-                raise NotFittedError("Vocabulary not fitted or provided")
+-
+-        if len(self.vocabulary_) == 0:
+-            raise ValueError("Vocabulary is empty")
+-
+-    def _validate_params(self):
+-        """Check validity of ngram_range parameter"""
+-        min_n, max_m = self.ngram_range
+-        if min_n > max_m:
+-            raise ValueError(
+-                "Invalid value for ngram_range=%s "
+-                "lower boundary larger than the upper boundary."
+-                % str(self.ngram_range))
+-
+-    def _warn_for_unused_params(self):
+-
+-        if self.tokenizer is not None and self.token_pattern is not None:
+-            warnings.warn("The parameter 'token_pattern' will not be used"
+-                          " since 'tokenizer' is not None'")
+-
+-        if self.preprocessor is not None and callable(self.analyzer):
+-            warnings.warn("The parameter 'preprocessor' will not be used"
+-                          " since 'analyzer' is callable'")
+-
+-        if (self.ngram_range != (1, 1) and self.ngram_range is not None
+-                and callable(self.analyzer)):
+-            warnings.warn("The parameter 'ngram_range' will not be used"
+-                          " since 'analyzer' is callable'")
+-        if self.analyzer != 'word' or callable(self.analyzer):
+-            if self.stop_words is not None:
+-                warnings.warn("The parameter 'stop_words' will not be used"
+-                              " since 'analyzer' != 'word'")
+-            if self.token_pattern is not None and \
+-               self.token_pattern != r"(?u)\b\w\w+\b":
+-                warnings.warn("The parameter 'token_pattern' will not be used"
+-                              " since 'analyzer' != 'word'")
+-            if self.tokenizer is not None:
+-                warnings.warn("The parameter 'tokenizer' will not be used"
+-                              " since 'analyzer' != 'word'")
+-
+-
+ class HashingVectorizer(TransformerMixin, VectorizerMixin, BaseEstimator):
+     """Convert a collection of text documents to a matrix of token occurrences
+ 
+diff --git a/test_countvectorizer.py b/test_countvectorizer.py
+new file mode 100644
+index 000000000..065753d9d
+--- /dev/null
++++ b/test_countvectorizer.py
+@@ -0,0 +1,53 @@
++from sklearn.feature_extraction.text import CountVectorizer
++import unicodedata
++
++print("Testing CountVectorizer with strip_accents='unicode'")
++print("=" * 50)
++
++# Test with composed form
++word1 = "senor"  # composed (using ASCII for simplicity in output)
++word1_accented = chr(115) + chr(101) + chr(241) + chr(111) + chr(114)  # señor composed
++# Test with decomposed form (NFKD)
++word2_accented = unicodedata.normalize('NFKD', word1_accented)  # decomposed
++
++vectorizer = CountVectorizer(strip_accents='unicode')
++
++# Test that both forms produce the same result
++docs1 = [word1_accented]
++docs2 = [word2_accented]
++
++X1 = vectorizer.fit_transform(docs1)
++vocab1 = vectorizer.vocabulary_
++
++vectorizer2 = CountVectorizer(strip_accents='unicode')
++X2 = vectorizer2.fit_transform(docs2)
++vocab2 = vectorizer2.vocabulary_
++
++print("Document 1 (composed form)")
++print("  Vocabulary:", vocab1)
++print()
++print("Document 2 (decomposed form)")
++print("  Vocabulary:", vocab2)
++print()
++print("Vocabularies are equal:", vocab1 == vocab2)
++print("Both contain 'senor':", 'senor' in vocab1 and 'senor' in vocab2)
++print()
++
++# Test with more complex examples
++cafe_composed = "cafe"
++cafe_accented = chr(99) + chr(97) + chr(102) + chr(233)  # café
++cafe_decomposed = unicodedata.normalize('NFKD', cafe_accented)
++
++docs = [cafe_accented, cafe_decomposed]
++
++vectorizer3 = CountVectorizer(strip_accents='unicode')
++X3 = vectorizer3.fit_transform(docs)
++vocab3 = vectorizer3.vocabulary_
++
++print("Documents: [cafe_accented_composed, cafe_accented_decomposed]")
++print("Vocabulary:", vocab3)
++print("Contains 'cafe':", 'cafe' in vocab3)
++print("Vocabulary size (should be 1):", len(vocab3))
++print()
++
++print("All CountVectorizer tests completed successfully!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..da7e221ec
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,25 @@
++from sklearn.feature_extraction.text import strip_accents_unicode
++
++# This string contains one code point, "LATIN SMALL LETTER N WITH TILDE"
++s1 = chr(241)
++
++# This string contains two code points, "LATIN SMALL LETTER N" followed by "COMBINING TILDE"
++s2 = chr(110) + chr(771)
++
++result1 = strip_accents_unicode(s1)
++result2 = strip_accents_unicode(s2)
++
++print("Test 1 - Composed form (single code point):")
++print("  Result:", result1)
++print("  Expected: n")
++print("  Match:", result1 == 'n')
++
++print("\nTest 2 - Decomposed form (NFKD, two code points):")
++print("  Result:", result2)
++print("  Expected: n")
++print("  Match:", result2 == 'n')
++
++print("\nTest 3 - Both produce same result:")
++print("  Match:", result1 == result2)
++
++print("\nAll tests passed!" if result1 == result2 == 'n' else "FAILED!")

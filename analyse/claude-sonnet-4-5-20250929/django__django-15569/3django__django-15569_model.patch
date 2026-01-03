@@ -1,0 +1,247 @@
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index 0caa165e15..6917820604 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -217,6 +217,7 @@ class RegisterLookupMixin:
+         if lookup_name is None:
+             lookup_name = lookup.lookup_name
+         del cls.class_lookups[lookup_name]
++        cls._clear_cached_lookups()
+ 
+ 
+ def select_related_descend(field, restricted, requested, load_fields, reverse=False):
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..1e6dc87565
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,72 @@
++"""Comprehensive test for lookup cache clearing"""
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++    )
++    django.setup()
++
++from django.db.models import Lookup, CharField, IntegerField
++
++class CustomLookup1(Lookup):
++    lookup_name = 'custom1'
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        return '%s = %s' % (lhs, rhs), lhs_params + rhs_params
++
++class CustomLookup2(Lookup):
++    lookup_name = 'custom2'
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        return '%s = %s' % (lhs, rhs), lhs_params + rhs_params
++
++print("Test 1: Single register and unregister")
++CharField.register_lookup(CustomLookup1)
++assert 'custom1' in CharField.get_lookups(), "Lookup should be registered"
++CharField._unregister_lookup(CustomLookup1)
++assert 'custom1' not in CharField.get_lookups(), "Lookup should be unregistered and cache cleared"
++print("✓ Test 1 passed")
++
++print("\nTest 2: Multiple lookups")
++CharField.register_lookup(CustomLookup1)
++CharField.register_lookup(CustomLookup2)
++assert 'custom1' in CharField.get_lookups(), "Lookup1 should be registered"
++assert 'custom2' in CharField.get_lookups(), "Lookup2 should be registered"
++CharField._unregister_lookup(CustomLookup1)
++assert 'custom1' not in CharField.get_lookups(), "Lookup1 should be unregistered"
++assert 'custom2' in CharField.get_lookups(), "Lookup2 should still be registered"
++CharField._unregister_lookup(CustomLookup2)
++assert 'custom2' not in CharField.get_lookups(), "Lookup2 should be unregistered"
++print("✓ Test 2 passed")
++
++print("\nTest 3: Register, unregister, re-register")
++CharField.register_lookup(CustomLookup1)
++assert 'custom1' in CharField.get_lookups(), "Lookup should be registered"
++CharField._unregister_lookup(CustomLookup1)
++assert 'custom1' not in CharField.get_lookups(), "Lookup should be unregistered"
++CharField.register_lookup(CustomLookup1)
++assert 'custom1' in CharField.get_lookups(), "Lookup should be re-registered"
++CharField._unregister_lookup(CustomLookup1)
++print("✓ Test 3 passed")
++
++print("\nTest 4: Different field types")
++IntegerField.register_lookup(CustomLookup1)
++assert 'custom1' in IntegerField.get_lookups(), "Lookup should be registered on IntegerField"
++IntegerField._unregister_lookup(CustomLookup1)
++assert 'custom1' not in IntegerField.get_lookups(), "Lookup should be unregistered from IntegerField"
++print("✓ Test 4 passed")
++
++print("\n✅ All tests passed! Cache clearing works correctly.")
+diff --git a/test_final_verification.py b/test_final_verification.py
+new file mode 100644
+index 0000000000..01a6d64f22
+--- /dev/null
++++ b/test_final_verification.py
+@@ -0,0 +1,58 @@
++"""Final verification that the bug is fixed"""
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++    )
++    django.setup()
++
++from django.db.models import Lookup, CharField
++
++class TestLookup(Lookup):
++    lookup_name = 'testlookup'
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        return '%s = %s' % (lhs, rhs), lhs_params + rhs_params
++
++print("=" * 60)
++print("VERIFICATION: Lookup cache is cleared on unregister")
++print("=" * 60)
++
++# Step 1: Register lookup
++print("\n1. Registering 'testlookup' on CharField...")
++CharField.register_lookup(TestLookup)
++lookups = CharField.get_lookups()
++print(f"   'testlookup' in lookups: {('testlookup' in lookups)}")
++assert 'testlookup' in lookups, "Lookup should be registered"
++
++# Step 2: Unregister lookup
++print("\n2. Unregistering 'testlookup' from CharField...")
++CharField._unregister_lookup(TestLookup)
++
++# Step 3: Verify cache was cleared
++print("\n3. Checking if cache was cleared...")
++lookups_after = CharField.get_lookups()
++print(f"   'testlookup' in lookups: {('testlookup' in lookups_after)}")
++
++if 'testlookup' in lookups_after:
++    print("\n❌ FAILED: Cache was NOT cleared!")
++    print("   The lookup still appears in get_lookups() after unregister.")
++    exit(1)
++else:
++    print("\n✅ SUCCESS: Cache was properly cleared!")
++    print("   The lookup no longer appears in get_lookups() after unregister.")
++    print("\n" + "=" * 60)
++    print("The fix is working correctly!")
++    print("=" * 60)
+diff --git a/test_pr_fix.py b/test_pr_fix.py
+new file mode 100644
+index 0000000000..25033ead8a
+--- /dev/null
++++ b/test_pr_fix.py
+@@ -0,0 +1,87 @@
++"""
++Test to verify the PR fix: RegisterLookupMixin._unregister_lookup() should clear the lookup cache.
++
++This test demonstrates that:
++1. Before the fix: The cache was NOT cleared when unregistering a lookup
++2. After the fix: The cache IS properly cleared when unregistering a lookup
++"""
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++    )
++    django.setup()
++
++from django.db.models import Lookup, CharField
++
++class TestLookup(Lookup):
++    lookup_name = 'testlookup'
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        return '%s = %s' % (lhs, rhs), lhs_params + rhs_params
++
++print("=" * 70)
++print("PR Fix Verification: _unregister_lookup() clears the lookup cache")
++print("=" * 70)
++
++# Test 1: Verify register_lookup clears cache
++print("\n[Test 1] Verify register_lookup clears cache")
++print("-" * 70)
++CharField.register_lookup(TestLookup)
++lookups = CharField.get_lookups()
++print(f"✓ After register_lookup: 'testlookup' in get_lookups() = {('testlookup' in lookups)}")
++assert 'testlookup' in lookups, "Lookup should be registered"
++CharField._unregister_lookup(TestLookup)
++
++# Test 2: Verify _unregister_lookup clears cache (THE FIX)
++print("\n[Test 2] Verify _unregister_lookup clears cache (THE FIX)")
++print("-" * 70)
++CharField.register_lookup(TestLookup)
++print(f"Step 1: Registered 'testlookup'")
++lookups_before = CharField.get_lookups()
++print(f"        'testlookup' in get_lookups() = {('testlookup' in lookups_before)}")
++
++CharField._unregister_lookup(TestLookup)
++print(f"Step 2: Unregistered 'testlookup'")
++
++lookups_after = CharField.get_lookups()
++print(f"Step 3: Check cache after unregister")
++print(f"        'testlookup' in get_lookups() = {('testlookup' in lookups_after)}")
++
++if 'testlookup' in lookups_after:
++    print("\n❌ FAILED: Cache was NOT cleared after _unregister_lookup()")
++    print("   This is the bug described in the PR.")
++    exit(1)
++else:
++    print("\n✅ SUCCESS: Cache was properly cleared after _unregister_lookup()")
++    print("   The fix is working correctly!")
++
++# Test 3: Verify consistency between register and unregister
++print("\n[Test 3] Verify consistency between register and unregister")
++print("-" * 70)
++print("Both register_lookup and _unregister_lookup should clear the cache")
++print("to maintain consistency.")
++
++CharField.register_lookup(TestLookup)
++assert 'testlookup' in CharField.get_lookups()
++print("✓ register_lookup: Lookup registered and cache cleared")
++
++CharField._unregister_lookup(TestLookup)
++assert 'testlookup' not in CharField.get_lookups()
++print("✓ _unregister_lookup: Lookup unregistered and cache cleared")
++
++print("\n" + "=" * 70)
++print("All tests passed! The PR fix is working correctly.")
++print("=" * 70)

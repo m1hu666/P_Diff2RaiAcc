@@ -1,0 +1,426 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index 686e75c979..ecd4d67e17 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -496,6 +496,9 @@ class SQLCompiler:
+         refcounts_before = self.query.alias_refcount.copy()
+         try:
+             extra_select, order_by, group_by = self.pre_sql_setup()
++            # Check if the query is empty before processing combinator.
++            if self.query.is_empty():
++                raise EmptyResultSet
+             for_update_part = None
+             # Is a LIMIT/OFFSET clause needed?
+             with_limit_offset = with_limits and (self.query.high_mark is not None or self.query.low_mark)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..25ca4e9955
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,86 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++django.setup()
++
++from django.db import models, connection
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    try:
++        schema_editor.create_model(TestModel)
++    except:
++        pass  # Table might already exist
++
++# Clear existing data and insert test data
++TestModel.objects.all().delete()
++TestModel.objects.create(name='test1')
++TestModel.objects.create(name='test2')
++TestModel.objects.create(name='test3')
++TestModel.objects.create(name='test4')
++TestModel.objects.create(name='test5')
++
++print("Testing edge cases for QuerySet.none() on combined queries...")
++
++# Test 1: Regular queryset operations still work
++print("\n=== Test 1: Regular queryset operations ===")
++qs = TestModel.objects.all()
++print(f"all() count: {qs.count()}")
++print(f"all().none() count: {qs.none().count()}")
++print(f"filter(pk=1) count: {TestModel.objects.filter(pk=1).count()}")
++print(f"filter(pk=1).none() count: {TestModel.objects.filter(pk=1).none().count()}")
++
++# Test 2: Union with none()
++print("\n=== Test 2: Union with none() ===")
++qs_union = TestModel.objects.filter(pk__lt=3).union(TestModel.objects.filter(pk__gt=3))
++print(f"union count: {qs_union.count()}")
++print(f"union.none() count: {qs_union.none().count()}")
++print(f"union.none() list: {list(qs_union.none())}")
++
++# Test 3: Intersection with none()
++print("\n=== Test 3: Intersection with none() ===")
++qs_intersection = TestModel.objects.filter(pk__lt=4).intersection(TestModel.objects.filter(pk__gt=1))
++print(f"intersection count: {qs_intersection.count()}")
++print(f"intersection.none() count: {qs_intersection.none().count()}")
++print(f"intersection.none() list: {list(qs_intersection.none())}")
++
++# Test 4: Difference with none()
++print("\n=== Test 4: Difference with none() ===")
++qs_difference = TestModel.objects.filter(pk__lt=5).difference(TestModel.objects.filter(pk__gt=3))
++print(f"difference count: {qs_difference.count()}")
++print(f"difference.none() count: {qs_difference.none().count()}")
++print(f"difference.none() list: {list(qs_difference.none())}")
++
++# Test 5: OR combined query with none()
++print("\n=== Test 5: OR combined query with none() ===")
++qs_or = TestModel.objects.filter(pk__lt=3) | TestModel.objects.filter(pk__gt=3)
++print(f"OR count: {qs_or.count()}")
++print(f"OR.none() count: {qs_or.none().count()}")
++print(f"OR.none() list: {list(qs_or.none())}")
++
++# Test 6: Chained operations after none()
++print("\n=== Test 6: Chained operations after none() ===")
++qs_union_none = TestModel.objects.filter(pk__lt=3).union(TestModel.objects.filter(pk__gt=3)).none()
++print(f"union.none().count(): {qs_union_none.count()}")
++print(f"union.none().exists(): {qs_union_none.exists()}")
++
++# Test 7: Values and values_list on none()
++print("\n=== Test 7: Values and values_list on none() ===")
++qs_union = TestModel.objects.filter(pk__lt=3).union(TestModel.objects.filter(pk__gt=3))
++print(f"union.none().values('name'): {list(qs_union.none().values('name'))}")
++print(f"union.none().values_list('name', flat=True): {list(qs_union.none().values_list('name', flat=True))}")
++
++# Test 8: Empty union (all subqueries are empty)
++print("\n=== Test 8: Empty union ===")
++qs_empty_union = TestModel.objects.none().union(TestModel.objects.none())
++print(f"empty_union count: {qs_empty_union.count()}")
++print(f"empty_union list: {list(qs_empty_union)}")
++
++print("\n=== All tests passed! ===")
+diff --git a/test_final.py b/test_final.py
+new file mode 100644
+index 0000000000..0e22a52403
+--- /dev/null
++++ b/test_final.py
+@@ -0,0 +1,85 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test settings
++settings_content = """
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test-secret-key'
++USE_TZ = True
++"""
++
++with open('/testbed/test_settings.py', 'w') as f:
++    f.write(settings_content)
++
++django.setup()
++
++from django.db import models, connection
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Insert test data
++TestModel.objects.create(name='test1')
++TestModel.objects.create(name='test2')
++TestModel.objects.create(name='test3')
++TestModel.objects.create(name='test4')
++TestModel.objects.create(name='test5')
++
++print("=== Testing QuerySet.none() on combined queries ===\n")
++
++# Test 1: Regular queryset none()
++print("Test 1: Regular queryset")
++qs = TestModel.objects.all()
++print(f"  all().count() = {qs.count()}")
++print(f"  all().none().count() = {qs.none().count()}")
++assert qs.none().count() == 0, "Regular none() should return 0"
++
++# Test 2: OR combined query with none()
++print("\nTest 2: OR combined query")
++qs_or = TestModel.objects.filter(pk__lt=2) | TestModel.objects.filter(pk__gt=4)
++print(f"  OR.count() = {qs_or.count()}")
++print(f"  OR.none().count() = {qs_or.none().count()}")
++assert qs_or.none().count() == 0, "OR.none() should return 0"
++
++# Test 3: Union combined query with none()
++print("\nTest 3: Union combined query")
++qs_union = TestModel.objects.filter(pk__lt=2).union(TestModel.objects.filter(pk__gt=4))
++print(f"  union.count() = {qs_union.count()}")
++print(f"  union.none().count() = {qs_union.none().count()}")
++assert qs_union.none().count() == 0, "Union.none() should return 0"
++
++# Test 4: Intersection combined query with none()
++print("\nTest 4: Intersection combined query")
++qs_intersection = TestModel.objects.filter(pk__lt=4).intersection(TestModel.objects.filter(pk__gt=1))
++print(f"  intersection.count() = {qs_intersection.count()}")
++print(f"  intersection.none().count() = {qs_intersection.none().count()}")
++assert qs_intersection.none().count() == 0, "Intersection.none() should return 0"
++
++# Test 5: Difference combined query with none()
++print("\nTest 5: Difference combined query")
++qs_difference = TestModel.objects.filter(pk__lt=5).difference(TestModel.objects.filter(pk__gt=3))
++print(f"  difference.count() = {qs_difference.count()}")
++print(f"  difference.none().count() = {qs_difference.none().count()}")
++assert qs_difference.none().count() == 0, "Difference.none() should return 0"
++
++print("\n=== All tests passed! ===")
++print("\nThe fix successfully makes QuerySet.none() work correctly on combined queries.")
++print("Before the fix, union/intersection/difference.none() would return all results.")
++print("After the fix, they correctly return 0 results.")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..2d47fc7a4e
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,85 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create a minimal settings file
++import sys
++sys.path.insert(0, '/testbed')
++
++# Create test settings
++settings_content = """
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test-secret-key'
++USE_TZ = True
++"""
++
++with open('/testbed/test_settings.py', 'w') as f:
++    f.write(settings_content)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Q
++
++# Create a simple model for testing
++from django.db import models
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Insert some test data
++TestModel.objects.create(name='test1')
++TestModel.objects.create(name='test2')
++TestModel.objects.create(name='test3')
++
++print("Testing QuerySet.none() on combined queries...")
++
++# Test 1: Regular queryset none()
++qs1 = TestModel.objects.all()
++print(f"Regular queryset count: {qs1.count()}")
++print(f"Regular queryset.none() count: {qs1.none().count()}")
++
++# Test 2: Combined queryset with | (OR)
++qs_or = TestModel.objects.filter(pk__lt=2) | TestModel.objects.filter(pk__gt=2)
++print(f"\nOR combined queryset count: {qs_or.count()}")
++print(f"OR combined queryset.none() count: {qs_or.none().count()}")
++
++# Test 3: Combined queryset with union()
++qs_union = TestModel.objects.filter(pk__lt=2).union(TestModel.objects.filter(pk__gt=2))
++print(f"\nUnion combined queryset count: {qs_union.count()}")
++print(f"Union combined queryset.none() count: {qs_union.none().count()}")
++
++# Test 4: Check the SQL generated
++print("\n--- SQL Queries ---")
++from django.db import reset_queries
++from django.conf import settings
++settings.DEBUG = True
++
++reset_queries()
++list(qs_union.none())
++print(f"Union.none() SQL: {connection.queries[-1]['sql'] if connection.queries else 'No query executed'}")
++
++reset_queries()
++list(qs_or.none())
++print(f"OR.none() SQL: {connection.queries[-1]['sql'] if connection.queries else 'No query executed'}")
++
++print("\n--- Expected behavior ---")
++print("Both none() calls should return 0 results")
++print(f"Union.none() returned: {qs_union.none().count()} (should be 0)")
++print(f"OR.none() returned: {qs_or.none().count()} (should be 0)")
+diff --git a/test_pr_scenario.py b/test_pr_scenario.py
+new file mode 100644
+index 0000000000..87a092d2ad
+--- /dev/null
++++ b/test_pr_scenario.py
+@@ -0,0 +1,113 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test settings
++settings_content = """
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': '/tmp/test_pr2.db',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test-secret-key'
++USE_TZ = True
++"""
++
++with open('/testbed/test_settings.py', 'w') as f:
++    f.write(settings_content)
++
++# Remove old database
++import subprocess
++subprocess.run(['rm', '-f', '/tmp/test_pr2.db'], check=False)
++
++django.setup()
++
++from django.db import models, connection
++from django import forms
++
++# Create models as described in the PR
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    publications = models.ManyToManyField(to=Publication, blank=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Publication)
++    schema_editor.create_model(Article)
++
++# Insert test data
++pub1 = Publication.objects.create(name='Publication 1')
++pub2 = Publication.objects.create(name='Publication 2')
++pub3 = Publication.objects.create(name='Publication 3')
++pub4 = Publication.objects.create(name='Publication 4')
++pub5 = Publication.objects.create(name='Publication 5')
++pub6 = Publication.objects.create(name='Publication 6')
++pub7 = Publication.objects.create(name='Publication 7')
++
++print("Created publications with IDs:", [p.id for p in Publication.objects.all()])
++
++# Test the scenario from the PR description
++print("\n=== Testing OR query (should work correctly) ===")
++or_queryset = Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5)
++print(f"OR queryset: {list(or_queryset.values_list('id', flat=True))}")
++print(f"OR queryset.none(): {list(or_queryset.none().values_list('id', flat=True))}")
++
++print("\n=== Testing union query (was broken, should now be fixed) ===")
++union_queryset = Publication.objects.filter(id__lt=2).union(
++    Publication.objects.filter(id__gt=5)
++)
++print(f"Union queryset: {list(union_queryset.values_list('id', flat=True))}")
++print(f"Union queryset.none(): {list(union_queryset.none().values_list('id', flat=True))}")
++
++# Test with ModelMultipleChoiceField
++class ArticleFormWithOR(forms.ModelForm):
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5),
++        required=False,
++    )
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++class ArticleFormWithUnion(forms.ModelForm):
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2).union(
++            Publication.objects.filter(id__gt=5)
++        ),
++        required=False,
++    )
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++print("\n=== Testing ModelMultipleChoiceField with OR ===")
++form_or = ArticleFormWithOR(data={'publications': []})
++print(f"Form is valid: {form_or.is_valid()}")
++if form_or.is_valid():
++    article_or = form_or.save()
++    print(f"Publications added (should be 0): {article_or.publications.count()}")
++    article_or.delete()
++
++print("\n=== Testing ModelMultipleChoiceField with union ===")
++form_union = ArticleFormWithUnion(data={'publications': []})
++print(f"Form is valid: {form_union.is_valid()}")
++if form_union.is_valid():
++    article_union = form_union.save()
++    print(f"Publications added (should be 0): {article_union.publications.count()}")
++    article_union.delete()
++
++print("\n=== Test completed successfully! ===")
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..6953e3b5bc
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,13 @@
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test-secret-key'
++USE_TZ = True

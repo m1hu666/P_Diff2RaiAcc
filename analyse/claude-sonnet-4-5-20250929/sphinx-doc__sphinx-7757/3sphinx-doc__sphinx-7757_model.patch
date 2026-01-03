@@ -1,0 +1,761 @@
+diff --git a/FIX_SUMMARY.md b/FIX_SUMMARY.md
+new file mode 100644
+index 000000000..3d81e4348
+--- /dev/null
++++ b/FIX_SUMMARY.md
+@@ -0,0 +1,28 @@
++# Fix for Positional-Only Argument Default Values Issue
++
++## Problem
++The default values for positional-only arguments (PEP 570) were not being displayed in Sphinx documentation. For example, `.. py:function:: foo(a, b=0, /, c=1)` would show `foo(a, b, /, c=1)` instead of `foo(a, b=0, /, c=1)`.
++
++## Root Cause
++The issue was in the `signature_from_str` function in `sphinx/util/inspect.py`. When parsing function signatures, the function was not correctly handling default values for positional-only parameters.
++
++In Python's AST, default values for both positional-only and regular positional parameters are stored together in `args.defaults`, and they apply to the rightmost parameters. The original code only applied defaults to regular positional parameters (`args.args`), ignoring positional-only parameters (`args.posonlyargs`).
++
++## Solution
++Modified the `signature_from_str` function to:
++1. Calculate the total number of positional parameters (positional-only + regular)
++2. Determine how many parameters have defaults (from the right)
++3. Apply defaults correctly to both positional-only and regular parameters based on their position
++
++## Changes Made
++- File: `sphinx/util/inspect.py`
++- Function: `signature_from_str` (lines 514-560)
++- The fix properly distributes default values across positional-only and regular parameters
++
++## Testing
++- All existing tests pass
++- Verified with the exact example from the PR: `foo(a, b=0, /, c=1)` now correctly displays as `foo(a, b=0, /, c=1)`
++- Tested multiple edge cases including:
++  - All positional-only with defaults: `(a=1, b=2, /)`
++  - Mixed defaults: `(a, b=0, /, c=1)`
++  - Only positional-only with defaults: `(a, b=0, /)`
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index 15f0d66e2..7f3284c45 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -521,16 +521,33 @@ def signature_from_str(signature: str) -> inspect.Signature:
+     params = []
+ 
+     if hasattr(args, "posonlyargs"):
+-        for arg in args.posonlyargs:  # type: ignore
+-            annotation = ast_unparse(arg.annotation) or Parameter.empty
+-            params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
+-                                    annotation=annotation))
++        posonlyargs = args.posonlyargs  # type: ignore
++    else:
++        posonlyargs = []  # type: ignore
+ 
+-    for i, arg in enumerate(args.args):
+-        if len(args.args) - i <= len(args.defaults):
+-            default = ast_unparse(args.defaults[-len(args.args) + i])
++    # Defaults are shared across positional-only and positional-or-keyword parameters
++    # They apply to the rightmost parameters
++    all_positional_params = len(posonlyargs) + len(args.args)
++    num_defaults = len(args.defaults)
++    num_without_defaults = all_positional_params - num_defaults
++
++    # Process positional-only parameters
++    for i, arg in enumerate(posonlyargs):
++        if i < num_without_defaults:
++            default = Parameter.empty
+         else:
++            default = ast_unparse(args.defaults[i - num_without_defaults])
++
++        annotation = ast_unparse(arg.annotation) or Parameter.empty
++        params.append(Parameter(arg.arg, Parameter.POSITIONAL_ONLY,
++                                default=default, annotation=annotation))
++
++    for i, arg in enumerate(args.args):
++        param_index = len(posonlyargs) + i
++        if param_index < num_without_defaults:
+             default = Parameter.empty
++        else:
++            default = ast_unparse(args.defaults[param_index - num_without_defaults])
+ 
+         annotation = ast_unparse(arg.annotation) or Parameter.empty
+         params.append(Parameter(arg.arg, Parameter.POSITIONAL_OR_KEYWORD,
+diff --git a/test_ast.py b/test_ast.py
+new file mode 100644
+index 000000000..e071d190a
+--- /dev/null
++++ b/test_ast.py
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python3
++import ast
++
++# Test the AST parsing
++signature = "(a, b=0, /, c=1)"
++module = ast.parse('def func' + signature + ': pass')
++definition = module.body[0]
++
++args = definition.args
++
++print("posonlyargs:", [arg.arg for arg in args.posonlyargs])
++print("args:", [arg.arg for arg in args.args])
++print("defaults:", args.defaults)
++print("Number of defaults:", len(args.defaults))
++
++# Let's see the AST dump
++print("\nAST dump:")
++print(ast.dump(definition))
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..603bdd5af
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,85 @@
++#!/usr/bin/env python3
++"""Comprehensive test for positional-only argument default values."""
++
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.util.inspect import signature_from_str
++from inspect import Parameter
++
++# Test cases for positional-only arguments with defaults
++test_cases = [
++    # (signature, expected_params)
++    ("(a, b=0, /, c=1)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '0'),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }),
++    ("(a, b=0, /)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_ONLY, '0'),
++    }),
++    ("(a=1, b=2, /)", {
++        'a': (Parameter.POSITIONAL_ONLY, '1'),
++        'b': (Parameter.POSITIONAL_ONLY, '2'),
++    }),
++    ("(a, /, b=1)", {
++        'a': (Parameter.POSITIONAL_ONLY, Parameter.empty),
++        'b': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++    }),
++    ("(a=1, /, b=2, c=3)", {
++        'a': (Parameter.POSITIONAL_ONLY, '1'),
++        'b': (Parameter.POSITIONAL_OR_KEYWORD, '2'),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '3'),
++    }),
++    ("(a, b, c=1, d=2)", {
++        'a': (Parameter.POSITIONAL_OR_KEYWORD, Parameter.empty),
++        'b': (Parameter.POSITIONAL_OR_KEYWORD, Parameter.empty),
++        'c': (Parameter.POSITIONAL_OR_KEYWORD, '1'),
++        'd': (Parameter.POSITIONAL_OR_KEYWORD, '2'),
++    }),
++]
++
++print("Testing positional-only argument default values...")
++print("="*70)
++
++all_passed = True
++for signature, expected in test_cases:
++    print(f"\nTesting: {signature}")
++    try:
++        sig = signature_from_str(signature)
++        passed = True
++        
++        for param_name, (expected_kind, expected_default) in expected.items():
++            param = sig.parameters[param_name]
++            
++            # Check kind
++            if param.kind != expected_kind:
++                print(f"  ✗ {param_name}: kind mismatch")
++                print(f"    Expected: {expected_kind}")
++                print(f"    Got: {param.kind}")
++                passed = False
++                all_passed = False
++            
++            # Check default
++            if param.default != expected_default:
++                print(f"  ✗ {param_name}: default mismatch")
++                print(f"    Expected: {expected_default}")
++                print(f"    Got: {param.default}")
++                passed = False
++                all_passed = False
++        
++        if passed:
++            print(f"  ✓ All parameters correct")
++            
++    except Exception as e:
++        print(f"  ✗ Exception: {e}")
++        import traceback
++        traceback.print_exc()
++        all_passed = False
++
++print("\n" + "="*70)
++if all_passed:
++    print("✓ All tests passed!")
++else:
++    print("✗ Some tests failed!")
+diff --git a/test_defaults.py b/test_defaults.py
+new file mode 100644
+index 000000000..5323732d6
+--- /dev/null
++++ b/test_defaults.py
+@@ -0,0 +1,41 @@
++#!/usr/bin/env python3
++import ast
++
++test_cases = [
++    "(a, b=0, /, c=1)",
++    "(a, b=0, /)",
++    "(a, /, b=1)",
++    "(a=1, b=2, /)",
++    "(a, b, c=1, d=2)",
++]
++
++for sig in test_cases:
++    print(f"\nSignature: {sig}")
++    module = ast.parse('def func' + sig + ': pass')
++    definition = module.body[0]
++    args = definition.args
++    
++    posonlyargs = [arg.arg for arg in args.posonlyargs] if hasattr(args, 'posonlyargs') else []
++    regular_args = [arg.arg for arg in args.args]
++    
++    print(f"  posonlyargs: {posonlyargs}")
++    print(f"  args: {regular_args}")
++    print(f"  defaults: {[d.value if hasattr(d, 'value') else d for d in args.defaults]}")
++    print(f"  Total params: {len(posonlyargs) + len(regular_args)}")
++    print(f"  Total defaults: {len(args.defaults)}")
++    
++    # The defaults apply to the rightmost parameters
++    total_params = len(posonlyargs) + len(regular_args)
++    num_defaults = len(args.defaults)
++    num_without_defaults = total_params - num_defaults
++    
++    print(f"  Params without defaults: {num_without_defaults}")
++    print(f"  Distribution:")
++    
++    all_params = posonlyargs + regular_args
++    for i, param in enumerate(all_params):
++        if i < num_without_defaults:
++            print(f"    {param}: no default")
++        else:
++            default_idx = i - num_without_defaults
++            print(f"    {param}: default = {args.defaults[default_idx].value}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..360bad770
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,34 @@
++#!/usr/bin/env python3
++"""Test edge cases for positional-only argument default values."""
++
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.domains.python import _parse_arglist
++
++test_cases = [
++    "a, b=0, /, c=1",           # Original issue
++    "a, b=0, /",                # Only positional-only with default
++    "a, /, b=1",                # Positional-only without default, regular with default
++    "a=1, b=2, /",              # All positional-only with defaults
++    "a, b, c=1, d=2",           # No positional-only
++    "a=1, /, b=2, c=3",         # Positional-only with default, regulars with defaults
++    "a, b=1, /, c, d=2",        # Mixed defaults
++    "/",                        # Just separator (edge case)
++    "a, /",                     # Single positional-only without default
++    "a=1, /",                   # Single positional-only with default
++]
++
++for arglist in test_cases:
++    print(f"\n{'='*60}")
++    print(f"Testing: {arglist}")
++    print('='*60)
++    try:
++        result = _parse_arglist(arglist)
++        print("Success!")
++        for i, child in enumerate(result.children):
++            print(f"  Param {i}: {child.astext()}")
++    except Exception as e:
++        print(f"ERROR: {e}")
++        import traceback
++        traceback.print_exc()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..f6e9c5834
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,32 @@
++#!/usr/bin/env python3
++"""Test script to reproduce the positional-only argument default value issue."""
++
++import sys
++import os
++
++# Add the sphinx directory to the path
++sys.path.insert(0, '/testbed')
++
++from sphinx.domains.python import _parse_arglist
++
++# Test case from the PR description
++arglist = "a, b=0, /, c=1"
++result = _parse_arglist(arglist)
++
++print("Testing arglist:", arglist)
++print("\nResult structure:")
++print(result)
++print("\nChildren:")
++for i, child in enumerate(result.children):
++    print(f"  {i}: {child}")
++    if hasattr(child, 'children'):
++        for j, subchild in enumerate(child.children):
++            print(f"    {j}: {subchild}")
++
++# Let's also test the signature_from_str function
++from sphinx.util.inspect import signature_from_str
++
++sig = signature_from_str('(%s)' % arglist)
++print("\n\nSignature parameters:")
++for name, param in sig.parameters.items():
++    print(f"  {name}: kind={param.kind}, default={param.default}, annotation={param.annotation}")
+diff --git a/test_pr_issue.py b/test_pr_issue.py
+new file mode 100644
+index 000000000..d8529fdc3
+--- /dev/null
++++ b/test_pr_issue.py
+@@ -0,0 +1,86 @@
++#!/usr/bin/env python3
++"""Test that reproduces and verifies the fix for the PR issue."""
++
++import sys
++import os
++import tempfile
++import shutil
++
++sys.path.insert(0, '/testbed')
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++
++try:
++    # Create a minimal Sphinx project
++    os.makedirs(os.path.join(test_dir, '_build'))
++    
++    # Create conf.py
++    with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++        f.write("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the exact test case from the PR
++    with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++        f.write("""
++Test Document
++=============
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   Test function from the PR description.
++""")
++    
++    # Build the documentation
++    from sphinx.application import Sphinx
++    
++    app = Sphinx(
++        srcdir=test_dir,
++        confdir=test_dir,
++        outdir=os.path.join(test_dir, '_build', 'html'),
++        doctreedir=os.path.join(test_dir, '_build', 'doctrees'),
++        buildername='html',
++        freshenv=True,
++        warningiserror=False,
++    )
++    
++    app.build()
++    
++    # Read the generated HTML
++    html_file = os.path.join(test_dir, '_build', 'html', 'index.html')
++    with open(html_file, 'r') as f:
++        html_content = f.read()
++    
++    # Extract the function signature
++    import re
++    match = re.search(r'<dt id="foo">(.*?)</dt>', html_content, re.DOTALL)
++    
++    if match:
++        sig_html = match.group(1)
++        print("Generated HTML signature:")
++        print(sig_html)
++        print("\n" + "="*70)
++        
++        # Check for the presence of default values
++        has_b_default = 'b' in sig_html and '=0' in sig_html
++        has_c_default = 'c' in sig_html and '=1' in sig_html
++        has_separator = '/' in sig_html
++        
++        print("\nVerification:")
++        print(f"  Parameter 'b' with default '0': {'✓ FOUND' if has_b_default else '✗ MISSING'}")
++        print(f"  Parameter 'c' with default '1': {'✓ FOUND' if has_c_default else '✗ MISSING'}")
++        print(f"  Positional-only separator '/': {'✓ FOUND' if has_separator else '✗ MISSING'}")
++        
++        if has_b_default and has_c_default and has_separator:
++            print("\n✓ SUCCESS: The issue is fixed!")
++            print("  Default values for positional-only arguments are now displayed correctly.")
++        else:
++            print("\n✗ FAILURE: The issue is not fixed.")
++    else:
++        print("Could not find function signature in HTML")
++    
++finally:
++    # Clean up
++    shutil.rmtree(test_dir)
+diff --git a/test_pr_issue_final.py b/test_pr_issue_final.py
+new file mode 100644
+index 000000000..9d8eccd28
+--- /dev/null
++++ b/test_pr_issue_final.py
+@@ -0,0 +1,87 @@
++#!/usr/bin/env python3
++"""Test that reproduces and verifies the fix for the PR issue."""
++
++import sys
++import os
++import tempfile
++import shutil
++
++sys.path.insert(0, '/testbed')
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++
++try:
++    # Create a minimal Sphinx project
++    os.makedirs(os.path.join(test_dir, '_build'))
++    
++    # Create conf.py
++    with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++        f.write("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the exact test case from the PR
++    with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++        f.write("""
++Test Document
++=============
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   Test function from the PR description.
++""")
++    
++    # Build the documentation
++    from sphinx.application import Sphinx
++    
++    app = Sphinx(
++        srcdir=test_dir,
++        confdir=test_dir,
++        outdir=os.path.join(test_dir, '_build', 'html'),
++        doctreedir=os.path.join(test_dir, '_build', 'doctrees'),
++        buildername='html',
++        freshenv=True,
++        warningiserror=False,
++    )
++    
++    app.build()
++    
++    # Read the generated HTML
++    html_file = os.path.join(test_dir, '_build', 'html', 'index.html')
++    with open(html_file, 'r') as f:
++        html_content = f.read()
++    
++    # Extract the function signature
++    import re
++    match = re.search(r'<dt id="foo">(.*?)</dt>', html_content, re.DOTALL)
++    
++    if match:
++        sig_html = match.group(1)
++        print("Generated HTML signature:")
++        print(sig_html)
++        print("\n" + "="*70)
++        
++        # Check for the presence of default values by looking for the pattern
++        # <span class="n">b</span><span class="o">=</span><span class="default_value">0</span>
++        has_b_default = bool(re.search(r'<span class="n">b</span>.*?<span class="default_value">0</span>', sig_html, re.DOTALL))
++        has_c_default = bool(re.search(r'<span class="n">c</span>.*?<span class="default_value">1</span>', sig_html, re.DOTALL))
++        has_separator = '/' in sig_html
++        
++        print("\nVerification:")
++        print(f"  Parameter 'b' with default '0': {'✓ FOUND' if has_b_default else '✗ MISSING'}")
++        print(f"  Parameter 'c' with default '1': {'✓ FOUND' if has_c_default else '✗ MISSING'}")
++        print(f"  Positional-only separator '/': {'✓ FOUND' if has_separator else '✗ MISSING'}")
++        
++        if has_b_default and has_c_default and has_separator:
++            print("\n✓ SUCCESS: The issue is fixed!")
++            print("  Default values for positional-only arguments are now displayed correctly.")
++        else:
++            print("\n✗ FAILURE: The issue is not fixed.")
++    else:
++        print("Could not find function signature in HTML")
++    
++finally:
++    # Clean up
++    shutil.rmtree(test_dir)
+diff --git a/test_sphinx_doc.py b/test_sphinx_doc.py
+new file mode 100644
+index 000000000..d18bf492d
+--- /dev/null
++++ b/test_sphinx_doc.py
+@@ -0,0 +1,98 @@
++#!/usr/bin/env python3
++"""Test the fix with a real Sphinx document."""
++
++import sys
++import os
++import tempfile
++import shutil
++
++sys.path.insert(0, '/testbed')
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++try:
++    # Create a minimal Sphinx project
++    os.makedirs(os.path.join(test_dir, '_build'))
++    
++    # Create conf.py
++    with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++        f.write("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the test case from the PR
++    with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++        f.write("""
++Test Document
++=============
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   Test function with positional-only arguments.
++
++.. py:function:: bar(x=1, y=2, /)
++
++   All positional-only with defaults.
++
++.. py:function:: baz(a, /, b=1)
++
++   Mixed positional-only and regular.
++""")
++    
++    # Build the documentation
++    from sphinx.application import Sphinx
++    
++    app = Sphinx(
++        srcdir=test_dir,
++        confdir=test_dir,
++        outdir=os.path.join(test_dir, '_build', 'html'),
++        doctreedir=os.path.join(test_dir, '_build', 'doctrees'),
++        buildername='html',
++        freshenv=True,
++        warningiserror=False,
++    )
++    
++    app.build()
++    
++    # Read the generated HTML
++    html_file = os.path.join(test_dir, '_build', 'html', 'index.html')
++    with open(html_file, 'r') as f:
++        html_content = f.read()
++    
++    # Check if the default values are present in the HTML
++    print("\nChecking generated HTML for default values...")
++    
++    checks = [
++        ('b=0', 'foo function parameter b with default 0'),
++        ('c=1', 'foo function parameter c with default 1'),
++        ('x=1', 'bar function parameter x with default 1'),
++        ('y=2', 'bar function parameter y with default 2'),
++        ('b=1', 'baz function parameter b with default 1'),
++    ]
++    
++    all_passed = True
++    for check_str, description in checks:
++        if check_str in html_content:
++            print(f"✓ Found: {description}")
++        else:
++            print(f"✗ Missing: {description}")
++            all_passed = False
++    
++    if all_passed:
++        print("\n✓ All checks passed!")
++    else:
++        print("\n✗ Some checks failed!")
++        print("\nRelevant HTML snippet:")
++        # Find and print the function signatures
++        import re
++        sigs = re.findall(r'<dt[^>]*>.*?</dt>', html_content, re.DOTALL)
++        for sig in sigs[:3]:  # Print first 3 signatures
++            print(sig[:200])
++    
++finally:
++    # Clean up
++    shutil.rmtree(test_dir)
++    print(f"\nCleaned up test directory")
+diff --git a/test_sphinx_doc2.py b/test_sphinx_doc2.py
+new file mode 100644
+index 000000000..1be4a7d40
+--- /dev/null
++++ b/test_sphinx_doc2.py
+@@ -0,0 +1,83 @@
++#!/usr/bin/env python3
++"""Test the fix with a real Sphinx document."""
++
++import sys
++import os
++import tempfile
++import shutil
++
++sys.path.insert(0, '/testbed')
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++try:
++    # Create a minimal Sphinx project
++    os.makedirs(os.path.join(test_dir, '_build'))
++    
++    # Create conf.py
++    with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++        f.write("""
++project = 'Test'
++extensions = []
++""")
++    
++    # Create index.rst with the test case from the PR
++    with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++        f.write("""
++Test Document
++=============
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   Test function with positional-only arguments.
++""")
++    
++    # Build the documentation
++    from sphinx.application import Sphinx
++    
++    app = Sphinx(
++        srcdir=test_dir,
++        confdir=test_dir,
++        outdir=os.path.join(test_dir, '_build', 'html'),
++        doctreedir=os.path.join(test_dir, '_build', 'doctrees'),
++        buildername='html',
++        freshenv=True,
++        warningiserror=False,
++    )
++    
++    app.build()
++    
++    # Read the generated HTML
++    html_file = os.path.join(test_dir, '_build', 'html', 'index.html')
++    with open(html_file, 'r') as f:
++        html_content = f.read()
++    
++    # Find the function signature in HTML
++    import re
++    # Look for the dt element containing the function signature
++    match = re.search(r'<dt id="foo">.*?</dt>', html_content, re.DOTALL)
++    if match:
++        sig_html = match.group(0)
++        print("Function signature HTML:")
++        print(sig_html)
++        print("\n")
++        
++        # Check for the default values
++        if 'b' in sig_html and '=0' in sig_html:
++            print("✓ Found b=0 in signature")
++        else:
++            print("✗ Missing b=0 in signature")
++            
++        if 'c' in sig_html and '=1' in sig_html:
++            print("✓ Found c=1 in signature")
++        else:
++            print("✗ Missing c=1 in signature")
++    else:
++        print("Could not find function signature in HTML")
++    
++finally:
++    # Clean up
++    shutil.rmtree(test_dir)
++    print(f"\nCleaned up test directory")
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 000000000..38b05dd7d
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python3
++"""Verify the fix is working correctly."""
++
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.domains.python import _parse_arglist
++
++# Test the original issue
++arglist = "a, b=0, /, c=1"
++result = _parse_arglist(arglist)
++
++print("Testing:", arglist)
++print("\nParsed parameters:")
++for i, child in enumerate(result.children):
++    text = child.astext()
++    print(f"  {i}: {text}")
++
++# Verify the fix
++expected = ['a', 'b=0', '/', 'c=1']
++actual = [child.astext() for child in result.children]
++
++if actual == expected:
++    print("\n✓ SUCCESS: Default values are correctly preserved!")
++    print(f"  Expected: {expected}")
++    print(f"  Actual:   {actual}")
++else:
++    print("\n✗ FAILURE: Output doesn't match expected")
++    print(f"  Expected: {expected}")
++    print(f"  Actual:   {actual}")
++
++# Test a few more cases
++print("\n" + "="*60)
++print("Additional test cases:")
++print("="*60)
++
++test_cases = [
++    ("a, b=0, /", ['a', 'b=0', '/']),
++    ("a=1, b=2, /", ['a=1', 'b=2', '/']),
++    ("a, /, b=1", ['a', '/', 'b=1']),
++]
++
++all_passed = True
++for arglist, expected in test_cases:
++    result = _parse_arglist(arglist)
++    actual = [child.astext() for child in result.children]
++    passed = actual == expected
++    all_passed = all_passed and passed
++    status = "✓" if passed else "✗"
++    print(f"{status} {arglist}")
++    if not passed:
++        print(f"    Expected: {expected}")
++        print(f"    Actual:   {actual}")
++
++if all_passed:
++    print("\n✓ All tests passed!")
++else:
++    print("\n✗ Some tests failed!")

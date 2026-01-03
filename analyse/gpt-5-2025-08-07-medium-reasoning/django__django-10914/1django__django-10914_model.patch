@@ -1,0 +1,71 @@
+diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py
+index acee9887d2..bdeec80610 100644
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -304,7 +304,7 @@ FILE_UPLOAD_TEMP_DIR = None
+ 
+ # The numeric mode to set newly-uploaded files to. The value should be a mode
+ # you'd pass directly to os.chmod; see https://docs.python.org/library/os.html#files-and-directories.
+-FILE_UPLOAD_PERMISSIONS = None
++FILE_UPLOAD_PERMISSIONS = 0o644
+ 
+ # The numeric mode to assign to newly-created directories, when uploading files.
+ # The value should be a mode as you'd pass to os.chmod;
+diff --git a/verify_upload_permissions.py b/verify_upload_permissions.py
+new file mode 100644
+index 0000000000..f5c68cf4da
+--- /dev/null
++++ b/verify_upload_permissions.py
+@@ -0,0 +1,52 @@
++import os, shutil, stat, sys
++from django.conf import settings
++from django.core.files.storage import FileSystemStorage
++from django.core.files.uploadedfile import TemporaryUploadedFile, SimpleUploadedFile
++
++# Prepare temp media root
++tmp_root = os.path.abspath("tmp_media")
++os.makedirs(tmp_root, exist_ok=True)
++
++# Configure minimal settings; rely on global default FILE_UPLOAD_PERMISSIONS
++if not settings.configured:
++    settings.configure(
++        DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++        MEDIA_ROOT=tmp_root,
++        MEDIA_URL='/media/',
++        FILE_UPLOAD_TEMP_DIR=tmp_root,
++    )
++
++print("Default FILE_UPLOAD_PERMISSIONS:", settings.FILE_UPLOAD_PERMISSIONS)
++
++storage = FileSystemStorage(location=tmp_root, base_url='/media/')
++
++# Case 1: TemporaryUploadedFile (will be moved)
++tup = TemporaryUploadedFile('temp_case.txt', 'text/plain', 0, 'utf-8')
++# Write some content into the temp file
++tup.file.write(b'hello from temp')
++tup.file.flush()
++
++saved_name_temp = storage.save('saved_from_temp.txt', tup)
++saved_path_temp = storage.path(saved_name_temp)
++mode_temp = stat.S_IMODE(os.stat(saved_path_temp).st_mode)
++print("Saved-from-temp file mode:", oct(mode_temp))
++
++# Case 2: InMemory / SimpleUploadedFile (will be streamed)
++siu = SimpleUploadedFile('mem_case.txt', b'hello from mem', content_type='text/plain')
++saved_name_mem = storage.save('saved_from_mem.txt', siu)
++saved_path_mem = storage.path(saved_name_mem)
++mode_mem = stat.S_IMODE(os.stat(saved_path_mem).st_mode)
++print("Saved-from-mem file mode:", oct(mode_mem))
++
++# Validate both are 0o644
++expected = 0o644
++ok = (mode_temp == expected) and (mode_mem == expected)
++print("Validation:", ok)
++
++# Cleanup
++try:
++    shutil.rmtree(tmp_root)
++except Exception as e:
++    print("Cleanup warning:", e, file=sys.stderr)
++
++sys.exit(0 if ok else 1)

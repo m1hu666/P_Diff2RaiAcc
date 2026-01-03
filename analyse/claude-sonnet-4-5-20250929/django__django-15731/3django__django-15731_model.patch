@@ -1,0 +1,716 @@
+diff --git a/django/db/models/manager.py b/django/db/models/manager.py
+index e37e56cd17..426c9c1092 100644
+--- a/django/db/models/manager.py
++++ b/django/db/models/manager.py
+@@ -1,4 +1,5 @@
+ import copy
++import functools
+ import inspect
+ from importlib import import_module
+ 
+@@ -81,11 +82,10 @@ class BaseManager:
+     @classmethod
+     def _get_queryset_methods(cls, queryset_class):
+         def create_method(name, method):
++            @functools.wraps(method)
+             def manager_method(self, *args, **kwargs):
+                 return getattr(self.get_queryset(), name)(*args, **kwargs)
+ 
+-            manager_method.__name__ = method.__name__
+-            manager_method.__doc__ = method.__doc__
+             return manager_method
+ 
+         new_methods = {}
+diff --git a/final_comprehensive_test.py b/final_comprehensive_test.py
+new file mode 100644
+index 0000000000..d88cf862ec
+--- /dev/null
++++ b/final_comprehensive_test.py
+@@ -0,0 +1,131 @@
++"""
++Final comprehensive test to verify the fix works correctly.
++"""
++
++import inspect
++import sys
++import os
++
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models
++
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++print("=" * 80)
++print("FINAL COMPREHENSIVE TEST")
++print("=" * 80)
++
++# Test the exact issue from the PR description
++print("\n1. PR Description Test Case:")
++print("-" * 80)
++print("Code: inspect.signature(Person.objects.bulk_create)")
++sig = inspect.signature(Person.objects.bulk_create)
++print(f"Result: {sig}")
++print(f"Expected: (objs, batch_size=None, ignore_conflicts=False, ...)")
++
++# Check if it's NOT the broken signature
++if str(sig) == "(*args, **kwargs)":
++    print("✗ FAIL: Still showing broken signature")
++    sys.exit(1)
++else:
++    print("✓ PASS: Showing correct signature")
++
++# Test that functools.wraps is being used
++print("\n2. Verify functools.wraps is being used:")
++print("-" * 80)
++if hasattr(Person.objects.bulk_create, '__wrapped__'):
++    print("✓ PASS: __wrapped__ attribute exists (functools.wraps is used)")
++else:
++    print("✗ FAIL: __wrapped__ attribute missing")
++    sys.exit(1)
++
++# Test multiple attributes are preserved
++print("\n3. Verify all metadata is preserved:")
++print("-" * 80)
++attrs_to_check = ['__name__', '__doc__', '__module__', '__qualname__']
++for attr in attrs_to_check:
++    if hasattr(Person.objects.bulk_create, attr):
++        value = getattr(Person.objects.bulk_create, attr)
++        print(f"✓ {attr}: {repr(value)[:60]}...")
++    else:
++        print(f"✗ {attr}: Missing")
++
++# Test that the method still works correctly
++print("\n4. Verify method functionality is preserved:")
++print("-" * 80)
++try:
++    # We can't actually call bulk_create without a database setup,
++    # but we can verify the method is callable
++    if callable(Person.objects.bulk_create):
++        print("✓ PASS: Method is callable")
++    else:
++        print("✗ FAIL: Method is not callable")
++        sys.exit(1)
++except Exception as e:
++    print(f"✗ FAIL: Error checking method: {e}")
++    sys.exit(1)
++
++# Test various QuerySet methods
++print("\n5. Test various QuerySet methods:")
++print("-" * 80)
++test_methods = [
++    'bulk_create',
++    'bulk_update', 
++    'create',
++    'get_or_create',
++    'update_or_create',
++    'filter',
++    'exclude',
++    'all',
++    'count',
++]
++
++all_passed = True
++for method_name in test_methods:
++    if hasattr(Person.objects, method_name):
++        method = getattr(Person.objects, method_name)
++        sig = inspect.signature(method)
++        # Just verify we can get a signature
++        print(f"✓ {method_name}: {sig}")
++    else:
++        print(f"✗ {method_name}: Method not found")
++        all_passed = False
++
++if not all_passed:
++    sys.exit(1)
++
++print("\n" + "=" * 80)
++print("ALL TESTS PASSED! ✓")
++print("\nSummary:")
++print("- inspect.signature() now returns correct signatures")
++print("- functools.wraps properly copies all metadata")
++print("- IPython/Jupyter will show correct documentation")
++print("- All QuerySet methods work correctly")
++print("=" * 80)
+diff --git a/final_verification.py b/final_verification.py
+new file mode 100644
+index 0000000000..56d5881fba
+--- /dev/null
++++ b/final_verification.py
+@@ -0,0 +1,137 @@
++"""
++Final verification that the fix resolves the issue described in the PR.
++
++The PR states:
++- inspect.signature() returns incorrect signature on manager methods
++- IPython and Jupyter use inspect.signature to show documentation
++- The issue was that only __name__ and __doc__ were copied, not complete metadata
++- The fix is to use functools.wraps instead of manually assigning name and docstring
++"""
++
++import inspect
++import sys
++import os
++
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models
++from django.db.models.query import QuerySet
++
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++print("=" * 80)
++print("VERIFICATION OF FIX FOR: inspect.signature() on manager methods")
++print("=" * 80)
++
++# Test the exact example from the PR description
++print("\n1. Testing the exact example from PR description:")
++print("-" * 80)
++sig = inspect.signature(Person.objects.bulk_create)
++print(f"inspect.signature(Person.objects.bulk_create)")
++print(f"Result: {sig}")
++
++# Get the expected signature from QuerySet
++expected_sig = inspect.signature(QuerySet.bulk_create)
++print(f"\nExpected (from QuerySet.bulk_create): {expected_sig}")
++
++# Compare parameters (excluding 'self' for manager method)
++manager_params = list(sig.parameters.keys())
++queryset_params = list(expected_sig.parameters.keys())[1:]  # Skip 'self'
++
++if manager_params == queryset_params:
++    print("✓ PASS: Signatures match (excluding 'self')")
++else:
++    print(f"✗ FAIL: Signatures don't match")
++    print(f"  Manager params: {manager_params}")
++    print(f"  QuerySet params: {queryset_params}")
++
++# Test that metadata is properly copied
++print("\n2. Testing that all metadata is properly copied:")
++print("-" * 80)
++
++# Check __name__
++print(f"__name__: {Person.objects.bulk_create.__name__}")
++assert Person.objects.bulk_create.__name__ == 'bulk_create', "✗ FAIL: __name__ not preserved"
++print("✓ PASS: __name__ is preserved")
++
++# Check __doc__
++print(f"\n__doc__ (first 80 chars): {Person.objects.bulk_create.__doc__[:80]}...")
++assert Person.objects.bulk_create.__doc__ is not None, "✗ FAIL: __doc__ not preserved"
++print("✓ PASS: __doc__ is preserved")
++
++# Check __wrapped__ (added by functools.wraps)
++if hasattr(Person.objects.bulk_create, '__wrapped__'):
++    print(f"\n__wrapped__: {Person.objects.bulk_create.__wrapped__}")
++    print("✓ PASS: __wrapped__ attribute exists (functools.wraps is being used)")
++else:
++    print("\n✗ FAIL: __wrapped__ attribute missing (functools.wraps may not be used)")
++
++# Check __annotations__ if present
++queryset_method = QuerySet.bulk_create
++if hasattr(queryset_method, '__annotations__'):
++    print(f"\n__annotations__: {Person.objects.bulk_create.__annotations__}")
++    print("✓ PASS: __annotations__ is preserved")
++
++print("\n3. Testing multiple manager methods:")
++print("-" * 80)
++
++test_methods = [
++    ('bulk_create', ['objs', 'batch_size', 'ignore_conflicts', 'update_conflicts', 'update_fields', 'unique_fields']),
++    ('bulk_update', ['objs', 'fields', 'batch_size']),
++    ('create', ['kwargs']),
++    ('get_or_create', ['defaults', 'kwargs']),
++]
++
++all_passed = True
++for method_name, expected_params in test_methods:
++    manager_method = getattr(Person.objects, method_name)
++    sig = inspect.signature(manager_method)
++    params = list(sig.parameters.keys())
++    
++    # Check if all expected params are present
++    params_match = all(param in params for param in expected_params)
++    
++    status = "✓ PASS" if params_match else "✗ FAIL"
++    print(f"{status}: {method_name} - {sig}")
++    
++    if not params_match:
++        all_passed = False
++        print(f"  Expected params: {expected_params}")
++        print(f"  Actual params: {params}")
++
++print("\n" + "=" * 80)
++if all_passed:
++    print("ALL TESTS PASSED! ✓")
++    print("\nThe fix successfully resolves the issue:")
++    print("- inspect.signature() now returns correct signatures for manager methods")
++    print("- functools.wraps properly copies all metadata including __signature__")
++    print("- IPython/Jupyter will now show correct documentation")
++else:
++    print("SOME TESTS FAILED! ✗")
++print("=" * 80)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6a52c427b0
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import inspect
++import sys
++import os
++
++# Add Django to path
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++# Configure Django settings if not already configured
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models
++
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++print("Testing inspect.signature on Person.objects.bulk_create:")
++sig = inspect.signature(Person.objects.bulk_create)
++print(f"Actual signature: {sig}")
++print(f"Expected signature should include: (objs, batch_size=None, ignore_conflicts=False)")
++
++# Let's also check the actual QuerySet method signature
++from django.db.models.query import QuerySet
++print("\nActual QuerySet.bulk_create signature:")
++qs_sig = inspect.signature(QuerySet.bulk_create)
++print(f"QuerySet signature: {qs_sig}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..277085d2da
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,120 @@
++"""
++Test edge cases to ensure the fix works properly with custom managers and querysets.
++"""
++
++import inspect
++import sys
++import os
++
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models
++from django.db.models import QuerySet, Manager
++
++# Test 1: Custom QuerySet with custom method
++class CustomQuerySet(QuerySet):
++    def custom_method(self, param1, param2=None, *args, **kwargs):
++        """Custom method with various parameter types."""
++        return self.filter(name=param1)
++
++class CustomManager(Manager.from_queryset(CustomQuerySet)):
++    pass
++
++class TestModel1(models.Model):
++    name = models.CharField(max_length=100)
++    objects = CustomManager()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test 2: Manager created with as_manager()
++class AnotherQuerySet(QuerySet):
++    def special_filter(self, value, flag=True):
++        """Special filter method."""
++        return self.filter(name=value)
++
++class TestModel2(models.Model):
++    name = models.CharField(max_length=100)
++    objects = AnotherQuerySet.as_manager()
++    
++    class Meta:
++        app_label = 'test_app'
++
++print("=" * 80)
++print("TESTING EDGE CASES")
++print("=" * 80)
++
++# Test custom method signature
++print("\n1. Custom QuerySet method signature:")
++print("-" * 80)
++sig = inspect.signature(TestModel1.objects.custom_method)
++print(f"TestModel1.objects.custom_method: {sig}")
++
++# Verify parameters
++params = list(sig.parameters.keys())
++expected_params = ['param1', 'param2', 'args', 'kwargs']
++if params == expected_params:
++    print("✓ PASS: Custom method signature is correct")
++else:
++    print(f"✗ FAIL: Expected {expected_params}, got {params}")
++
++# Test docstring
++if TestModel1.objects.custom_method.__doc__ == "Custom method with various parameter types.":
++    print("✓ PASS: Custom method docstring is preserved")
++else:
++    print("✗ FAIL: Docstring not preserved correctly")
++
++# Test as_manager() created manager
++print("\n2. as_manager() created manager method signature:")
++print("-" * 80)
++sig = inspect.signature(TestModel2.objects.special_filter)
++print(f"TestModel2.objects.special_filter: {sig}")
++
++params = list(sig.parameters.keys())
++expected_params = ['value', 'flag']
++if params == expected_params:
++    print("✓ PASS: as_manager() method signature is correct")
++else:
++    print(f"✗ FAIL: Expected {expected_params}, got {params}")
++
++# Test docstring
++if TestModel2.objects.special_filter.__doc__ == "Special filter method.":
++    print("✓ PASS: as_manager() method docstring is preserved")
++else:
++    print("✗ FAIL: Docstring not preserved correctly")
++
++# Test standard QuerySet methods still work
++print("\n3. Standard QuerySet methods:")
++print("-" * 80)
++for method_name in ['filter', 'exclude', 'all', 'count']:
++    if hasattr(TestModel1.objects, method_name):
++        method = getattr(TestModel1.objects, method_name)
++        sig = inspect.signature(method)
++        print(f"{method_name}: {sig}")
++        print(f"  ✓ Method exists and has signature")
++
++print("\n" + "=" * 80)
++print("ALL EDGE CASE TESTS COMPLETED SUCCESSFULLY!")
++print("=" * 80)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..20db792b67
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,93 @@
++import inspect
++import sys
++import os
++
++# Add Django to path
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++# Configure Django settings if not already configured
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models
++
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test multiple methods
++test_methods = [
++    'bulk_create',
++    'bulk_update',
++    'create',
++    'get_or_create',
++    'update_or_create',
++    'filter',
++    'exclude',
++]
++
++print("Testing inspect.signature on various manager methods:")
++print("=" * 80)
++
++for method_name in test_methods:
++    if hasattr(Person.objects, method_name):
++        manager_method = getattr(Person.objects, method_name)
++        sig = inspect.signature(manager_method)
++        print(f"\n{method_name}:")
++        print(f"  Signature: {sig}")
++        
++        # Check that it's not the generic (*args, **kwargs)
++        params = list(sig.parameters.keys())
++        if params == ['args', 'kwargs'] or (len(params) == 2 and 'args' in params and 'kwargs' in params):
++            print(f"  ❌ FAILED: Still showing generic signature")
++        else:
++            print(f"  ✓ PASSED: Showing proper signature")
++    else:
++        print(f"\n{method_name}: Method not found")
++
++# Test that __doc__ is also preserved
++print("\n" + "=" * 80)
++print("\nTesting that docstrings are preserved:")
++print("=" * 80)
++
++if Person.objects.bulk_create.__doc__:
++    print(f"\nbulk_create docstring (first 100 chars):")
++    print(f"  {Person.objects.bulk_create.__doc__[:100]}...")
++    print("  ✓ PASSED: Docstring is preserved")
++else:
++    print("  ❌ FAILED: Docstring is missing")
++
++# Test that __name__ is preserved
++print("\n" + "=" * 80)
++print("\nTesting that __name__ is preserved:")
++print("=" * 80)
++print(f"\nbulk_create __name__: {Person.objects.bulk_create.__name__}")
++if Person.objects.bulk_create.__name__ == 'bulk_create':
++    print("  ✓ PASSED: __name__ is preserved")
++else:
++    print("  ❌ FAILED: __name__ is not correct")
++
++print("\n" + "=" * 80)
++print("All tests completed!")
++print("=" * 80)
+diff --git a/test_ipython_simulation.py b/test_ipython_simulation.py
+new file mode 100644
+index 0000000000..3749ee0eaa
+--- /dev/null
++++ b/test_ipython_simulation.py
+@@ -0,0 +1,83 @@
++"""
++Simulate what IPython/Jupyter does when using the ? command.
++They use inspect.signature() to display function signatures.
++"""
++
++import inspect
++import sys
++import os
++
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models
++
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++def simulate_ipython_help(obj):
++    """
++    Simulate what IPython does when you type obj?
++    It shows the signature and docstring.
++    """
++    try:
++        sig = inspect.signature(obj)
++        name = obj.__name__ if hasattr(obj, '__name__') else str(obj)
++        doc = obj.__doc__ if hasattr(obj, '__doc__') else "No documentation"
++        
++        print(f"Signature: {name}{sig}")
++        print(f"Docstring: {doc[:200]}..." if len(doc) > 200 else f"Docstring: {doc}")
++        return True
++    except Exception as e:
++        print(f"Error getting signature: {e}")
++        return False
++
++print("=" * 80)
++print("SIMULATING IPython/Jupyter ? COMMAND")
++print("=" * 80)
++
++print("\nBefore the fix, this would show:")
++print("  Person.objects.bulk_create(*args, **kwargs)")
++print("\nAfter the fix, this shows:")
++print("-" * 80)
++
++success = simulate_ipython_help(Person.objects.bulk_create)
++
++if success:
++    print("\n✓ SUCCESS: IPython/Jupyter will now show the correct signature!")
++else:
++    print("\n✗ FAILURE: Could not get signature")
++
++print("\n" + "=" * 80)
++print("Testing a few more methods:")
++print("=" * 80)
++
++for method_name in ['create', 'get_or_create', 'update_or_create', 'bulk_update']:
++    print(f"\n{method_name}:")
++    print("-" * 40)
++    method = getattr(Person.objects, method_name)
++    simulate_ipython_help(method)
+diff --git a/verify_filter_signature.py b/verify_filter_signature.py
+new file mode 100644
+index 0000000000..9540704798
+--- /dev/null
++++ b/verify_filter_signature.py
+@@ -0,0 +1,39 @@
++import inspect
++import sys
++import os
++
++sys.path.insert(0, '/testbed')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db.models.query import QuerySet
++
++print("Checking actual QuerySet method signatures:")
++print("=" * 80)
++
++for method_name in ['filter', 'exclude', 'bulk_create', 'create']:
++    if hasattr(QuerySet, method_name):
++        method = getattr(QuerySet, method_name)
++        sig = inspect.signature(method)
++        print(f"\nQuerySet.{method_name}:")
++        print(f"  Signature: {sig}")

@@ -1,0 +1,66 @@
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc..31793673b 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -139,10 +139,38 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
+-    if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
+-    else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++    try:
++        if inclusive:
++            return LooseVersion(have_version) >= LooseVersion(version)
++        else:
++            return LooseVersion(have_version) > LooseVersion(version)
++    except TypeError:
++        # This can happen in Python 3 if the versions have different numbers
++        # of components and the components at the mismatching index are of
++        # different types (one int and one str). In this case we assume
++        # that the integer component is greater than the string component.
++        # This is consistent with the behavior of LooseVersion in Python 2.
++        v1 = LooseVersion(have_version)
++        v2 = LooseVersion(version)
++        for c1, c2 in zip(v1.version, v2.version):
++            if c1 == c2:
++                continue
++            try:
++                if c1 > c2:
++                    return True
++                if c1 < c2:
++                    return False
++            except TypeError:
++                if isinstance(c1, int) and isinstance(c2, str):
++                    return True
++                if isinstance(c1, str) and isinstance(c2, int):
++                    return False
++        diff = len(v1.version) - len(v2.version)
++        if diff > 0:
++            return True
++        if diff < 0:
++            return False
++        return inclusive
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+diff --git a/astropy/utils/tests/test_introspection.py b/astropy/utils/tests/test_introspection.py
+index d8262d458..cf1e4fb84 100644
+--- a/astropy/utils/tests/test_introspection.py
++++ b/astropy/utils/tests/test_introspection.py
+@@ -73,3 +73,14 @@ def test_minversion():
+         assert minversion(test_module, version)
+     for version in bad_versions:
+         assert not minversion(test_module, version)
++
++
++def test_minversion_mixed_types():
++    from types import ModuleType
++    test_module = ModuleType(str('test_module'))
++    test_module.__version__ = '1.14.3'
++    assert minversion(test_module, '1.14dev')
++    assert not minversion(test_module, '1.14.4')
++    # Check that we didn't break existing behavior
++    test_module.__version__ = '1.14'
++    assert not minversion(test_module, '1.14dev')
