@@ -1,39 +1,76 @@
 # P_Diff2RaiAcc
 
-This repository is used to analyze and visualize different models' results and trajectories on SWE-bench Verified.
+This repository is designed for analyzing and comparing the results, trajectories, and patches of different large language models on the SWE-bench Verified dataset.
 
-Below is a brief guide for two commonly used scripts: `data/scripts/inspector.py` and `data/scripts/datavis.py`.
+It provides a suite of tools to inspect terminal trajectories, visualize data, aggregate multi-round results, and calculate token usage statistics.
 
 ## Environment Setup
 
-It is recommended to use a virtual environment and install project dependencies:
+It is recommended to use a virtual environment. Install the required dependencies from the root directory of the repository:
 
 ```bash
 cd P_Diff2RaiAcc
 pip install -r requirements.txt
 ```
 
-## 1. Terminal Trajectory Inspector: `inspector.py`
+## Directory Structure
 
-Script path: `data/scripts/inspector.py`
-
-Purpose: browse a single `.traj.json` trajectory file step-by-step in the terminal, displaying one message at a time with simple color highlighting.
-
-### Arguments
-
-- `--m`: model name, corresponding to the directory name under `data/traj/{model}/...`.
-- `--r`: round index, starting from 1, corresponding to `round{r}`.
-- `--i`: instance ID / example name (file prefix), e.g. `astropy__astropy-7671`.
-- positional `path` (optional): if `--m/--r/--i` are not used, you can pass a directory or a specific `.traj.json` file. The script will search for the first matching `.traj.json` in that directory.
-
-When `--m/--r/--i` are provided, the script constructs the trajectory path as:
+An overview of the expected project hierarchy:
 
 ```text
-data/traj/{m}/round{r}/{i}/{i}.traj.json
+P_Diff2RaiAcc/
+├─ README.md
+├─ LICENSE
+├─ requirements.txt
+├─ .gitignore
+├─ data/
+│  ├─ scripts/
+│  │  ├─ inspector.py
+│  │  ├─ datavis.py
+│  │  ├─ cal.py
+│  │  ├─ collectid.py
+│  │  ├─ label_add.py
+│  │  └─ res_cmp.py
+│  ├─ data/
+│  │  └─ verified/
+│  │     ├─ claude-sonnet-4-5-20250929/
+│  │     ├─ gemini-3-pro-preview/
+│  │     ├─ gpt-5-2025-08-07-medium-reasoning/
+│  │     └─ instance_id_list.json
+│  └─ traj/
+│     ├─ claude-sonnet-4-5-20250929/
+│     ├─ gemini-3-pro-preview/
+│     └─ gpt-5-2025-08-07-medium-reasoning/
+├─ analyse/
+│  ├─ claude-sonnet-4-5-20250929/
+│  ├─ gemini-3-pro-preview/
+│  ├─ gpt-5-2025-08-07-medium-reasoning/
+│  └─ result/
+│     ├─ summary.txt
+│     └─ token_usage_stats.txt
+├─ trial/
+└─ venv/
 ```
 
-### Example: specify trajectory via model / round / instance ID
+> **Note:** The `analyse/{model}/{instance_id}/` directory stores exported patches and text metadata for each sample, while `analyse/result/` stores aggregated statistics.
 
+---
+
+## Core Scripts & Usage
+
+### 1. Terminal Trajectory Inspector (`inspector.py`)
+**Path:** `data/scripts/inspector.py`
+**Purpose:** A terminal-based step-by-step viewer for `.traj.json` files, using color-coded outputs to distinguish between different roles (System, User, Assistant).
+
+**Arguments:**
+* `path` (optional, defaults to `.`): Can be a directory (finds the first `.traj.json`) or a specific file path.
+* `--m`: Model name (e.g., `gpt-5-2025-08-07-medium-reasoning`).
+* `--r`: Round number (starting from 1).
+* `--i`: Instance ID (e.g., `astropy__astropy-7671`).
+
+*Note: If using `--m`, `--r`, and `--i`, all three must be provided simultaneously to construct the path automatically.*
+
+**Example Usage:**
 ```bash
 python data/scripts/inspector.py \
   --m gpt-5-2025-08-07-medium-reasoning \
@@ -41,85 +78,65 @@ python data/scripts/inspector.py \
   --i astropy__astropy-7671
 ```
 
-### Interaction
+**Interactive Commands:**
+* `l` or `Enter`: Next step
+* `h`: Previous step
+* `[number]`: Jump to a specific step (e.g., `10`)
+* `q`: Quit
 
-After starting the script, the terminal shows the current step content and a command prompt at the bottom:
+### 2. Result Comparer (`res_cmp.py`)
+**Path:** `data/scripts/res_cmp.py`
+**Purpose:** Aggregates 3-round results across multiple models and outputs a summarized table. It maps boolean success labels to visual marks (`√`, `×`, `?`) and fetches difficulty metadata from HuggingFace.
+**Output:** `analyse/result/summary.txt`
 
-- `l` or Enter: next step
-- `h`: previous step
-- a number (e.g. `10`): jump to that step
-- `q`: quit
+**Arguments:**
+* `--models` / `-m` (required): A space-separated list of model names to compare.
 
-Each message shows its `role` (system / user / assistant �� mini-swe-agent) with different colors for quick visual distinction when reading trajectories.
-
-## 2. Patch Visualization Tool: `datavis.py`
-
-Script path: `data/scripts/datavis.py`
-
-Purpose: load the gold patch and model-generated patch for a given instance from the verified results JSON and open a desktop GUI window to compare them side by side, with copy/save support.
-
-### Input File Layout
-
-`datavis.py` reads result files from:
-
-```text
-data/data/verified/{model.replace('/', '_')}/round{r}.json
-```
-
-For example:
-
-- model: `gpt-5-2025-08-07-medium-reasoning`
-- round: `1`
-
-The result file will be:
-
-```text
-data/data/verified/gpt-5-2025-08-07-medium-reasoning/round1.json
-```
-
-The JSON should use `instance_id` as keys, each storing the model's result for that instance.
-
-### Arguments
-
-- `--m`: model name (must match the directory name of the result file).
-- `--r`: round index.
-- `--i`: instance ID (same as `instance_id` in SWE-bench Verified).
-- `--key`: optional, multi-value argument. Print selected fields from both the result JSON and SWE-bench Verified for comparison.
-- `--v`: if set, open a GUI window to visualize gold patch vs model patch, with copy/save support.
-
-### Example: only print selected fields
-
+**Example Usage:**
 ```bash
-python data/scripts/datavis.py \
-  --m gpt-5-2025-08-07-medium-reasoning \
-  --r 1 \
-  --i astropy__astropy-7671 \
-  --key model_patch patch
+python data/scripts/res_cmp.py -m claude-sonnet-4-5-20250929 gpt-5-2025-08-07-medium-reasoning gemini-3-pro-preview
 ```
 
-### Example: open GUI to compare patches
+### 3. Token Usage Calculator (`cal.py`)
+**Path:** `data/scripts/cal.py`
+**Purpose:** Reads the `summary.txt` generated by `res_cmp.py` and parses the corresponding trajectory files to calculate the average Prompt Tokens, Completion Tokens, and Total Tokens for both successful and failed runs across predefined models.
+**Output:** `analyse/result/token_usage_stats.txt`
 
+**Example Usage:**
 ```bash
-python data/scripts/datavis.py \
-  --m "gpt-5-2025-08-07-medium-reasoning" \
-  --r 1 \
-  --i "astropy__astropy-7671" \
-  --v
+python data/scripts/cal.py
+```
+*(No arguments required. Ensure `analyse/result/summary.txt` exists before running).*
+
+### 4. Batch Patch Exporter (`datavis.py`)
+**Path:** `data/scripts/datavis.py`
+**Purpose:** A batch processing script that reads local verified results and fetches data from the `princeton-nlp/SWE-bench_Verified` HuggingFace dataset. It exports the gold patch, per-round model patches, problem statements, and hints for specified instances.
+**Output:** Files are saved to `analyse/{model}/{instance_id}/`.
+
+**Important Constraints:**
+* This script currently has **hardcoded** models and expects a specific ID list at an absolute path: `/home/m1hu/P_Diff2RaiAcc/id.txt`. If this file is missing, the script will exit.
+* It does not take command-line arguments.
+
+**Example Usage:**
+```bash
+python data/scripts/datavis.py
 ```
 
-After running:
+### 5. Label Appender (`label_add.py`)
+**Path:** `data/scripts/label_add.py`
+**Purpose:** Reads a SWE-bench CLI report JSON and cross-references `resolved_ids` and `unresolved_ids` to inject boolean `"label": True/False` values into the local `verified` dataset JSON files.
+*(Note: Currently hardcoded for specific GPT-5 round 2 paths in the script).*
 
-- The script loads the corresponding instance from HuggingFace dataset `princeton-nlp/SWE-bench_Verified`.
-- Loads `model_patch` for that instance from the local result JSON.
-- Opens a modern-styled Tk window showing Gold Patch and Model Patch side by side, and indicates whether they exactly match.
-- Allows copying and saving both patches to local files.
+### 6. Instance ID Collector (`collectid.py`)
+**Path:** `data/scripts/collectid.py`
+**Purpose:** Extracts all unique `instance_id`s from a specific round's result JSON and dumps them into a consolidated list.
+**Output:** `data/verified/instance_id_list.json`
 
 ---
 
-If you run into issues with paths, dependencies, or encoding when using these scripts, first double-check:
+## Troubleshooting & FAQ
 
-- You are running commands from the repository root.
-- The virtual environment is activated and `requirements.txt` dependencies are installed.
-- The values of `--m/--r/--i` match the actual structure under the `data/` directory.
-
-To further extend these scripts (e.g. add filters, batch browsing, etc.), you can add new utilities under `data/scripts/` or adapt the existing ones.
+* **Script Execution Context:** Always execute scripts from the root directory of the repository (`P_Diff2RaiAcc/`).
+* **Missing Dependencies:** Ensure your virtual environment is activated and you have run `pip install -r requirements.txt`. Data visualization and comparison scripts rely heavily on the `datasets` and `typer` libraries.
+* **`datavis.py` Exits Immediately:** Check if the hardcoded `/home/m1hu/P_Diff2RaiAcc/id.txt` file exists and contains valid instance IDs.
+* **HuggingFace Downloads:** Scripts like `datavis.py` and `res_cmp.py` download the `SWE-bench_Verified` dataset from HuggingFace on their first run. This may take some time depending on your network connection.
