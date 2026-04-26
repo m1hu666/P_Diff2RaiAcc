@@ -48,7 +48,6 @@ P_Diff2RaiAcc/
 │  └─ result/
 │     ├─ summary.txt
 │     └─ token_usage_stats.txt
-├─ trial/
 └─ venv/
 ```
 
