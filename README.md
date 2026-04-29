@@ -48,7 +48,7 @@ P_Diff2RaiAcc/
 │  └─ result/
 │     ├─ summary.txt
 │     └─ token_usage_stats.txt
-└─ venv/
+├─ examples/
 ```
 
 > **Note:** The `analyse/{model}/{instance_id}/` directory stores exported patches and text metadata for each sample, while `analyse/result/` stores aggregated statistics.
