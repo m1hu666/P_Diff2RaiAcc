@@ -1,0 +1,5 @@
+| Comparison | Difference in pp [95% CI] | Family Holm p | Global Holm p |
+| --- | --- | --- | --- |
+| Claude - Gemini | 8.00 [0.00, 16.00] | 0.289 | 0.770 |
+| Claude - GPT | 1.00 [-7.00, 9.00] | 1.000 | 1.000 |
+| Gemini - GPT | -7.00 [-15.00, 1.00] | 0.289 | 1.000 |

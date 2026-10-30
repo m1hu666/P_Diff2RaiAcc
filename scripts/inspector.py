@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: gbk -*-
-"""
-Simple terminal trajectory inspector.
+"""Interactively inspect one saved trajectory in a colorized terminal.
 
-- inspector.py --m ... --r ... --i ...
+The script reads a trajectory selected by path or by model/round/task identifiers.
+It is read-only and produces no files.
 """
 
 import json
@@ -34,8 +33,7 @@ def build_traj_path(path: str, m: str | None, r: int | None, i: str | None) -> P
         if not (m and r and i):
             raise typer.BadParameter("When using --m/--r/--i, all three must be provided")
 
-        base = Path(__file__).resolve().parents[1]  # .../P_Diff2RaiAcc/data
-        repo_root = base.parent                     # .../P_Diff2RaiAcc
+        repo_root = Path(__file__).resolve().parent.parent
 
         traj_path = (
             repo_root

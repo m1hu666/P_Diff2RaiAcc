@@ -1,0 +1,5 @@
+| Provider interface | Normalized input | Normalized completion | Inclusion rule |
+| --- | --- | --- | --- |
+| Anthropic | Native input + cache read + cache creation | Native reported output | Cache counters are included in normalized input; output retains reported thinking. |
+| OpenAI-compatible | Reported prompt/input total | Reported completion/output total | Cached input and reported reasoning are subdivisions of the totals. |
+| Gemini | Native promptTokenCount | Candidates plus thoughts, unless candidates already include thoughts | The adapter avoids adding thinking twice; missing upstream details cannot be independently reconstructed. |

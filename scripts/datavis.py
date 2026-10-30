@@ -1,12 +1,23 @@
-# -*- coding: gbk -*-
+# -*- coding: utf-8 -*-
+"""Export selected task patches and metadata into the ``analyse/`` tree.
+
+The script reads local verified results plus SWE-bench Verified metadata, using
+task IDs listed in repository-root ``id.txt``. It writes per-model task folders
+under ``analyse/`` and does not change verified labels or trajectories.
+"""
+
 import argparse
 import json
 import os
+from pathlib import Path
 from datasets import load_dataset
 
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
 def get_result_path(model: str, round_num: int) -> str:
-    return os.path.join('data', 'data', 'verified', model.replace('/', '_'), f'round{round_num}.json')
+    return str(ROOT / 'data' / 'data' / 'verified' / model.replace('/', '_') / f'round{round_num}.json')
 
 
 def get_swebench_data():
@@ -55,7 +66,7 @@ def save_patches(base_dir: str, model: str, instance_id: str, gold_patch: str, r
 
 def main():
     """Batch export patches and metadata for fixed models and ids from id.txt."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    base_dir = str(ROOT)
 
     # Fixed model list
     models = [
@@ -65,9 +76,9 @@ def main():
     ]
 
     # Load instance ids from given file
-    id_file = '/home/m1hu/P_Diff2RaiAcc/id.txt'
+    id_file = os.path.join(base_dir, 'id.txt')
     if not os.path.exists(id_file):
-        print(f"ID file not found: {id_file}")
+        print("ID file not found: id.txt")
         return
 
     with open(id_file, 'r', encoding='utf-8') as f:

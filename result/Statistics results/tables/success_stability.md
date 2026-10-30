@@ -1,0 +1,5 @@
+| Model | Resolved attempts | Resolution (%) | 0/3 tasks | 1/3 tasks | 2/3 tasks | 3/3 tasks | Unstable tasks |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Claude | 230/300 | 76.67 | 16 | 7 | 8 | 69 | 15 |
+| Gemini | 218/300 | 72.67 | 24 | 3 | 4 | 69 | 7 |
+| GPT | 210/300 | 70.00 | 24 | 4 | 10 | 62 | 14 |
