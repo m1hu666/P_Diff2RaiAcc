@@ -50,7 +50,11 @@ def read_csv(path):
 
 def write_csv(path, rows, fieldnames=None):
     with path.open('w', encoding='utf-8', newline='') as stream:
-        writer = csv.DictWriter(stream, fieldnames=fieldnames or list(rows[0]))
+        writer = csv.DictWriter(
+            stream,
+            fieldnames=fieldnames or list(rows[0]),
+            lineterminator='\n',
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -260,7 +264,7 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
                    [(f"[{r['task_id']}](#case-{r['task_id']})",*[r[m+'_outcomes'] for m in MODELS],r['failed_trials'],
                      ', '.join(code for code in categories if any(x['task_id']==r['task_id'] and x['primary_category']==code for x in catalogue))) for r in task_rows]), '',
              '## Case analyses', '',
-             'The following cases cover every task with an unresolved trial and summarize the task requirements, recorded outcomes, and assigned failure mechanisms.', '']
+             'The following cases cover every task with an unresolved trial and summarize the task requirements, recorded outcomes, and assigned failure-mode attributions.', '']
     for task in sorted(failed_tasks):
         lines.extend(case_text(task, notes[task], catalogue, categories, labels, root, report))
     lines += ['## Appendix A. Complete unresolved-trial catalogue', '',

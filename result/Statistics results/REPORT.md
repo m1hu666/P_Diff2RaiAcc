@@ -55,7 +55,7 @@ Instability means one or two successes out of three trials. The counts are 15/7/
 
 ## Settings and accounting
 
-Publication-ready settings and provider definitions are in `tables/settings` and `tables/token_accounting` (Markdown and LaTeX). Client-unset output limits and top-p are reported explicitly; an unrecorded effective value is not replaced by a current default. `tables/output_limit_diagnostics` reports observed length stops and their reported completion counts; these are observations, not reconstructed request limits.
+Archived settings, configuration provenance, and linked official provider references are in `tables/settings.md`; token-field definitions are in `tables/token_accounting.md`. Official defaults are used only to interpret omitted fields and are kept separate from saved client arguments and model capability ceilings. An unrecorded gateway-effective value is not reconstructed from current documentation. `tables/output_limit_diagnostics.md` reports observed length stops and their reported completion counts; these are observations, not configured request limits.
 
 | Model | Field | Numeric/total | Coverage (%) | Null | Missing |
 | --- | --- | --- | --- | --- | --- |

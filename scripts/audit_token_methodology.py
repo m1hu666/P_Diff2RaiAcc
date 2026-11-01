@@ -2,8 +2,8 @@
 
 Inputs are the archived trajectories and verified labels under ``data/``.
 Outputs are reproducible CSV/JSON files under ``result/Statistics results`` by
-default. The script is offline, reads source evidence without changing it, and
-uses no model or provider APIs.
+default. The script is offline, reads archived experiment data without changing
+it, and uses no model or provider APIs.
 """
 
 import argparse

@@ -29,8 +29,8 @@ Model groups are Claude (`claude-sonnet-4-5-20250929`), Gemini (`gemini-3-pro-pr
 | Problem Understanding | 23 (32.9%) | 24 (29.3%) | 24 (26.7%) | 71 (29.3%) | 9 |
 | Localization | 5 (7.1%) | 4 (4.9%) | 8 (8.9%) | 17 (7.0%) | 4 |
 | Strategy & Logic | 22 (31.4%) | 35 (42.7%) | 35 (38.9%) | 92 (38.0%) | 22 |
-| Implementation & Execution | 2 (2.9%) | 0 (0.0%) | 1 (1.1%) | 3 (1.2%) | 3 |
-| Validation & Harness Constraints | 18 (25.7%) | 19 (23.2%) | 22 (24.4%) | 59 (24.4%) | 11 |
+| Implementation & Execution | 2 (2.9%) | 0 (0.0%) | 2 (2.2%) | 4 (1.7%) | 4 |
+| Validation & Harness Constraints | 18 (25.7%) | 19 (23.2%) | 21 (23.3%) | 58 (24.0%) | 11 |
 
 ## Distribution by subcategory
 
@@ -42,8 +42,8 @@ Model groups are Claude (`claude-sonnet-4-5-20250929`), Gemini (`gemini-3-pro-pr
 | S1 | Strategy & Logic | Partial Fix / Incomplete Logic | 13 | 18 | 22 | 53 | 21.9% | 11 |
 | S2 | Strategy & Logic | Incorrect Strategy / Side Effects | 6 | 14 | 10 | 30 | 12.4% | 10 |
 | S3 | Strategy & Logic | Hardcoding / Bad Practices | 3 | 3 | 3 | 9 | 3.7% | 1 |
-| I1 | Implementation & Execution | Tool Failure / Silent State Hallucination | 2 | 0 | 1 | 3 | 1.2% | 3 |
-| V1 | Validation & Harness Constraints | Specification-Oracle Gap | 2 | 5 | 3 | 10 | 4.1% | 2 |
+| I1 | Implementation & Execution | Tool Failure / Silent State Hallucination | 2 | 0 | 2 | 4 | 1.7% | 4 |
+| V1 | Validation & Harness Constraints | Specification-Oracle Gap | 2 | 5 | 2 | 9 | 3.7% | 2 |
 | V2 | Validation & Harness Constraints | Strict Output Format Mismatch | 8 | 10 | 11 | 29 | 12.0% | 5 |
 | V3 | Validation & Harness Constraints | Side Effects | 7 | 4 | 6 | 17 | 7.0% | 3 |
 | V4 | Validation & Harness Constraints | Execution Timing Mismatch | 1 | 0 | 2 | 3 | 1.2% | 2 |
@@ -68,7 +68,7 @@ S denotes a recorded success and F a recorded failure. Within each model cell, t
 | [django__django-13343](#case-django__django-13343) | S F S | S S S | S S S | 1 | V4 |
 | [django__django-13344](#case-django__django-13344) | F S F | S S F | F F F | 6 | L1 |
 | [django__django-13401](#case-django__django-13401) | S S S | S S S | S F S | 1 | S2 |
-| [django__django-13406](#case-django__django-13406) | S F S | F F F | F S S | 5 | V1 |
+| [django__django-13406](#case-django__django-13406) | S F S | F F F | F S S | 5 | I1, V1 |
 | [django__django-14140](#case-django__django-14140) | F S F | F F F | S S F | 6 | V2 |
 | [django__django-14155](#case-django__django-14155) | F F F | F F F | F F F | 9 | P2 |
 | [django__django-14771](#case-django__django-14771) | S S S | S F S | F F F | 4 | V2 |
@@ -104,7 +104,7 @@ S denotes a recorded success and F a recorded failure. Within each model cell, t
 
 ## Case analyses
 
-The following cases cover every task with an unresolved trial and summarize the task requirements, recorded outcomes, and assigned failure mechanisms.
+The following cases cover every task with an unresolved trial and summarize the task requirements, recorded outcomes, and assigned failure-mode attributions.
 
 <a id="case-astropy__astropy-13398"></a>
 
@@ -268,11 +268,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: S F S; Gemini: F F F; GPT: F S S.
 
-**Analysis.** Claude trial 2 and all three Gemini trials preserve the original values_list result structure, while the benchmark expects dictionary-like values results when only the query is restored. GPT trial 1 has a separate implementation defect: it inserts an assignment inside an open parenthesized expression in QuerySet.values_list, making query.py syntactically invalid.
+**Analysis.** Claude trial 2 and all three Gemini trials preserve the original values_list result structure, while the benchmark expects dictionary-like values results when only the query is restored. GPT trial 1 has a separate implementation-state failure: a compound edit partially applies before its final awk stage fails, and an uninspected residual assignment inside QuerySet.values_list makes query.py syntactically invalid.
 
-**Primary assignments.** V1: Claude-2, Gemini-1, Gemini-2, Gemini-3, GPT-1.
+**Primary assignments.** I1: GPT-1; V1: Claude-2, Gemini-1, Gemini-2, Gemini-3.
 
-**Interpretation.** Four trials differ from the tested result-format contract, while GPT trial 1 fails earlier because its edit makes the module syntactically invalid.
+**Interpretation.** The four result-contract failures are V1 cases. GPT trial 1 is an I1 case because the failed compound edit leaves an unrecovered syntax error before the query-restoration behavior can be exercised.
 
 <a id="case-django__django-14140"></a>
 
@@ -762,7 +762,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 66 | django__django-13406 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 67 | django__django-13406 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 68 | django__django-13406 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
-| 69 | django__django-13406 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
+| 69 | django__django-13406 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-13406/django__django-13406.traj.json) | I1 Tool Failure / Silent State Hallucination | Implementation & Execution |
 | 70 | django__django-14140 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-14140/django__django-14140.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 71 | django__django-14140 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-14140/django__django-14140.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 72 | django__django-14140 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-14140/django__django-14140.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |

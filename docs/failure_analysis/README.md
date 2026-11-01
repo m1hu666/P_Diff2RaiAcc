@@ -20,3 +20,8 @@ python3 scripts/build_failure_analysis.py
 The builder enforces one-to-one coverage of the archived `label=false` records,
 checks retained evidence hashes, and writes the complete English report to
 `result/analyse.md`.
+
+The separate [taxonomy coder-check package](../taxonomy_methodology/README.md)
+documents how the taxonomy was constructed and provides two label-blind coder
+sheets plus the comparison procedure. Canonical final annotations do not
+substitute for pre-discussion coder labels.

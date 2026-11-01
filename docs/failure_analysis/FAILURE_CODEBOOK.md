@@ -2,7 +2,7 @@
 
 This codebook defines the stages and categories used in the failure analysis. The machine-readable version is [failure_codebook.json](failure_codebook.json). Category names and codes follow the manuscript; numeric codes provide the corresponding hierarchical notation.
 
-The annotation unit is one failed model trial on one task. Each failed trial has one primary category, chosen as the earliest causally dominant unrecovered breakdown supported by the archived evidence. A task can contain trials with different categories. Secondary manifestations may appear in a trial's explanation without generating additional category counts.
+The annotation unit is one failed model trial on one task. Each failed trial receives one primary observed failure-mode category so that category counts remain mutually exclusive. A task can contain trials with different categories, and a trial can contain co-occurring or downstream problems that are described without being counted again. The label is an evidence-supported diagnostic attribution, not an identified causal root cause.
 
 ## Stages and categories
 
@@ -26,17 +26,17 @@ Interpret each annotation alongside the issue description, candidate patch, refe
 
 Artifact paths identify the materials available in this repository. They are navigation and provenance aids, not evidence that every listed artifact was necessary for every annotation.
 
-The published count tables summarize the canonical trial annotations. The existence of a coded dataset does not by itself establish independent-coder agreement, causal priority, or semantic correctness. No agreement coefficient should be inferred without a separate reliability study.
+The published count tables summarize the canonical trial annotations. The existence of a coded dataset does not by itself establish independent-coder agreement, causal identification, or semantic correctness. No agreement coefficient should be inferred without a separate reliability study.
 
-Apply the manuscript's Failure Diagnosis Workflow: compare candidate and reference patches, reconstruct historical context when necessary, trace the trajectory, inspect the evaluation requirements, and identify the earliest causally dominant unrecovered breakdown. A transient error that is subsequently recovered is not the primary failure.
+Apply the Failure Diagnosis Workflow in the manuscript: group and order tasks, compare candidate and reference patches, reconstruct the historical repository context when patch comparison is insufficient, trace the trajectory step by step, and inspect the benchmark harness when a self-generated reproduction succeeds but official evaluation fails. Enumerate observable deviations and exclude transient errors that the agent demonstrably recovered. Select the remaining failure mode with the clearest archived evidence link to the unsuccessful submission. If multiple candidates have such a link, use chronology only as a deterministic tie-breaker; temporal precedence alone is insufficient.
 
 Retain selected successful cases as a separate comparison set. They illustrate alternative repairs or successful execution and receive no failure label. Exclude them from failure-category denominators.
 
 ## Category boundaries
 
-**L1 and S1.** L1 concerns where the repair is attempted and whether all required implementation locations are covered. S1 concerns which required behaviors the selected logic handles. Omitting a subclass is a scope problem; handling creation but not later updates is incomplete behavioral coverage. Some cases can exhibit both. Use the earliest causally dominant breakdown and explain the specific omission rather than applying an automatic priority rule.
+**L1 and S1.** L1 concerns where the repair is attempted and whether all required implementation locations are covered. S1 concerns which required behaviors the selected logic handles. Omitting a subclass is a scope problem; handling creation but not later updates is incomplete behavioral coverage. Some cases can exhibit both. Select the mode with the clearest archived evidence link to the unsuccessful submission and explain the specific omission rather than applying an automatic category-priority rule.
 
-**S2 and V3.** S2 concerns the suitability of the repair strategy itself. V3 concerns broader consequences for state or contracts exercised beyond the immediate reproduced scenario. A faulty strategy can also cause a regression, so these are not inherently exclusive mechanisms. Use the primary failure mechanism for the single-label assignment. V3 includes type and contract regressions and should not uniformly be described as environment pollution.
+**S2 and V3.** Use S2 when the repair strategy itself fails to satisfy the target behavior or project constraint. Use V3 when the target repair is otherwise achieved but a confirmed regression affects previously valid state, types, contracts, or behavior. A regression requires retained test or repository evidence and should not be inferred from patch breadth alone. V3 includes type and contract regressions and should not uniformly be described as environment pollution.
 
 **V1 and V2.** V1 concerns the scope of required behavior; V2 concerns its concrete representation. A test that checks an additional exception case can motivate V1. An exact argument-list or string assertion can motivate V2. Neither label alone proves that the candidate is semantically equivalent to the reference or that the test is invalid: representations can form part of a public contract.
 
@@ -46,6 +46,22 @@ Retain selected successful cases as a separate comparison set. They illustrate a
 
 **V4 and other categories.** A timing diagnosis should identify when a value or transformation is required and when the patch supplies it. A workaround that merely changes accepted input syntax does not establish a timing failure without a documented processing-stage distinction.
 
+## Earliest-link audit
+
+The separate `earliest_link` field evaluates whether the selected primary mode
+also satisfies the study's chronological attribution convention. It is not a
+causal label.
+
+| Value | Decision rule |
+|---|---|
+| `SUPPORTED` | The selected mode is the earliest observable unrecovered deviation, and archived patch, repository-state, tool, or evaluation evidence directly traces its retained effect to the unsuccessful submission. |
+| `NOT_SUPPORTED` | The evidence identifies an earlier unrecovered deviation with an equally or more direct link to the unsuccessful submission than the selected mode, or contradicts the selected mode's proposed link. |
+| `INDETERMINATE` | Missing evidence, multiple similarly supported explanations, or an unclear sequence prevents a defensible judgment. |
+
+An event does not qualify as `SUPPORTED` merely because it occurs first, appears
+in the trajectory narrative, differs from the reference patch, or precedes a
+failed benchmark outcome.
+
 ## Annotation policy
 
-Do not invent supporting evidence or change a benchmark outcome without an applicable evaluation. Assign a category only when the archived issue, patches, trajectory, and evaluation requirements support the stated mechanism. Keep outcome labels separate from qualitative diagnoses, and avoid stronger claims than the retained evidence supports.
+Do not invent supporting evidence or change a benchmark outcome without an applicable evaluation. Assign a category only when the archived issue, patches, trajectory, and evaluation requirements support the stated attribution. Keep outcome labels separate from qualitative diagnoses, and avoid stronger claims than the retained evidence supports.

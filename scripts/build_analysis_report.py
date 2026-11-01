@@ -1,7 +1,7 @@
-"""Generate publication tables and a concise report from canonical statistics.
+"""Generate Markdown tables and a concise report from canonical statistics.
 
 The script reads CSV/JSON results produced by the audit and inferential scripts,
-writes Markdown/LaTeX tables below ``result/Statistics results/tables``, and
+writes Markdown tables below ``result/Statistics results/tables``, and
 writes ``REPORT.md`` beside the statistical data. It does not inspect raw
 trajectories or modify experimental inputs.
 """
@@ -38,24 +38,17 @@ def probability(value):
     return '<0.001' if float(value) < .001 else f'{float(value):.3f}'
 
 
-def tex_escape(text):
-    special = {'\\': r'\textbackslash{}', '&': r'\&', '%': r'\%', '$': r'\$',
-               '#': r'\#', '_': r'\_', '{': r'\{', '}': r'\}', '~': r'\textasciitilde{}',
-               '<': r'\textless{}', '>': r'\textgreater{}'}
-    return ''.join(special.get(char, char) for char in str(text))
+def markdown_table(headers, rows):
+    md = ['| '+' | '.join(headers)+' |', '| '+' | '.join('---' for _ in headers)+' |']
+    md.extend('| '+' | '.join(map(str, row))+' |' for row in rows)
+    return '\n'.join(md)
 
 
 def table(directory, name, headers, rows):
-    md = ['| '+' | '.join(headers)+' |', '| '+' | '.join('---' for _ in headers)+' |']
-    md.extend('| '+' | '.join(map(str, row))+' |' for row in rows)
+    md = markdown_table(headers, rows)
     directory.mkdir(parents=True, exist_ok=True)
-    (directory/(name+'.md')).write_text('\n'.join(md)+'\n')
-    latex = [r'\begin{tabular}{'+'l'*len(headers)+'}', r'\hline',
-             ' & '.join(tex_escape(h) for h in headers)+r' \\', r'\hline']
-    latex.extend(' & '.join(tex_escape(cell) for cell in row)+r' \\' for row in rows)
-    latex.extend([r'\hline', r'\end{tabular}'])
-    (directory/(name+'.tex')).write_text('\n'.join(latex)+'\n')
-    return '\n'.join(md)
+    (directory/(name+'.md')).write_text(md+'\n')
+    return md
 
 
 def displayed_setting(settings, model, parameter):
@@ -147,13 +140,101 @@ def main():
                       'stream', 'tools', 'tool_choice', 'parallel_tool_calls', 'cache_control',
                       'step_limit', 'cost_limit_usd', 'shell_timeout_seconds', 'agent_wrapper', 'framework_version']:
         parameter_rows.append([parameter]+[displayed_setting(settings, model, parameter) for model in MODELS])
-    settings_md = table(tables, 'settings', ['Saved setting', 'Claude', 'Gemini', 'GPT'], parameter_rows)
-    accounting_rows = [
-        ['Anthropic', 'Native input + cache read + cache creation', 'Native reported output', 'Cache counters are included in normalized input; output retains reported thinking.'],
-        ['OpenAI-compatible', 'Reported prompt/input total', 'Reported completion/output total', 'Cached input and reported reasoning are subdivisions of the totals.'],
-        ['Gemini', 'Native promptTokenCount', 'Candidates plus thoughts, unless candidates already include thoughts', 'The adapter avoids adding thinking twice; missing upstream details cannot be independently reconstructed.'],
+    archived_settings_md = markdown_table(['Saved setting', 'Claude', 'Gemini', 'GPT'], parameter_rows)
+    provider_rows = [
+        [
+            'Claude Sonnet 4.5',
+            '`temperature=0.0`, `drop_params=true`; `top_p`, `top_k`, '
+            '`max_tokens` aliases, `thinking`, and native `tools` unset.',
+            '[Messages API](https://platform.claude.com/docs/en/api/messages/create): '
+            '`max_tokens` is required. [API reference](https://platform.claude.com/docs/en/api/beta/messages/create): '
+            'temperature defaults to 1.0 only when omitted. '
+            '[Release notes](https://platform.claude.com/docs/en/release-notes/overview): '
+            '`top_p` default 0.99 from 2025-05-22. '
+            '[Thinking defaults](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting): '
+            'thinking off when omitted. '
+            '[Output limits](https://platform.claude.com/docs/en/build-with-claude/thinking): '
+            '64K model output ceiling.',
+            'The archived 0.0 request, rather than the temperature default, is the reproducible client setting. '
+            'Any direct Anthropic Messages request would have required a `max_tokens` value, but the '
+            'gateway-filled value was not archived; '
+            '64K is a capability ceiling, not the experimental request limit.',
+        ],
+        [
+            'Gemini 3 Pro Preview',
+            '`temperature=0.0`, `drop_params=true`; `top_p`, `top_k`, '
+            '`max_output_tokens`, `thinking_config`, `seed`, and native `tools` unset.',
+            '[Gemini 3 guide](https://ai.google.dev/gemini-api/docs/gemini-3): '
+            'temperature default 1.0 and omitted thinking level defaults to high. '
+            '[Generation API](https://ai.google.dev/api/generate-content): '
+            'sampling/output defaults are model-dependent and an omitted seed is randomized. '
+            '[Prompt guide](https://ai.google.dev/gemini-api/docs/prompting-strategies): '
+            'general `topP` default 0.95. '
+            '[Model page](https://ai.google.dev/gemini-api/docs/models/gemini-3-pro-preview): '
+            '65,536-token output ceiling.',
+            'If forwarded, the archived 0.0 request overrides the documented temperature default. '
+            'High thinking is the documented omitted-field behavior, not a saved gateway setting. '
+            'The exact historical `topP`, `topK`, and output-limit values were not archived; 65,536 is a ceiling.',
+        ],
+        [
+            'GPT-5 (2025-08-07)',
+            '`temperature=0.0`, `drop_params=true`; medium reasoning requested in all 300 attempts '
+            '(`reasoning` in 299, `reasoning_effort` in one); `top_p`, output limit, and native `tools` unset.',
+            '[GPT-5 guide](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5): '
+            'reasoning effort defaults to medium. '
+            '[Model page](https://developers.openai.com/api/docs/models/gpt-5): '
+            '128K model output ceiling. '
+            '[Parameter compatibility](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4): '
+            'older GPT-5 models reject `temperature` and `top_p`.',
+            'Medium was the only model-specific decoding override added by the experimenter during the '
+            'mini-SWE-agent 1.15.0 upgrade. Successful calls, `drop_params=true`, and the documented '
+            'incompatibility are consistent with adapter removal of temperature; the native payload was not archived. '
+            'The 128K ceiling is not a recovered request limit.',
+        ],
     ]
-    table(tables, 'token_accounting', ['Provider interface', 'Normalized input', 'Normalized completion', 'Inclusion rule'], accounting_rows)
+    provider_md = markdown_table(
+        ['Model', 'Archived client/adapter configuration', 'Official direct-API reference', 'Interpretation boundary'],
+        provider_rows,
+    )
+    settings_document = f'''# Experimental settings
+
+The first table is generated from the 900 archived trajectories. `Unset` means
+the field was absent from the saved client arguments; it does not by itself
+identify the value ultimately sent by an adapter or gateway. All trajectories
+record mini-SWE-agent 1.15.0. During that upgrade, the experimenter added only
+one model-specific decoding override: medium reasoning for GPT. The serialized
+`temperature=0.0` and `drop_params=true` values otherwise came from the common
+framework/client configuration.
+
+## Archived client and agent configuration
+
+{archived_settings_md}
+
+## Official provider reference context
+
+Official documentation supplies reference defaults and model capability
+ceilings for omitted fields. It does not reconstruct the unarchived native
+payload produced by the intermediary service. Capability ceilings must not be
+reported as configured output limits. Provider pages were accessed on
+2026-10-31.
+
+{provider_md}
+
+[Output-limit diagnostics](output_limit_diagnostics.md) reports observed
+length-stop responses and their saved completion counts. Those observations do
+not recover the configured maximum-output value.
+
+No native provider tools were configured. The common agent instead requested
+one textual Bash block, parsed it locally, and executed commands serially.
+'''
+    tables.mkdir(parents=True, exist_ok=True)
+    (tables/'settings.md').write_text(settings_document)
+    accounting_rows = [
+        ['Anthropic route', 'Saved usage.prompt_tokens', 'Saved usage.completion_tokens', 'Cache-read and cache-creation counters when reported.'],
+        ['OpenAI-compatible route', 'Saved usage.prompt_tokens', 'Saved usage.completion_tokens', 'Cached-input and reasoning counters when reported.'],
+        ['Gemini route', 'Saved usage.prompt_tokens', 'Saved usage.completion_tokens', 'Cached, text and reasoning counters when reported.'],
+    ]
+    table(tables, 'token_accounting', ['Routed interface', 'Analyzed input', 'Analyzed completion', 'Available subdivisions'], accounting_rows)
     coverage_rows = []
     for model in MODELS:
         for field in ['prompt_tokens', 'completion_tokens', 'prompt_tokens_details.cached_tokens',
@@ -201,14 +282,14 @@ Instability means one or two successes out of three trials. The counts are 15/7/
 
 ## Settings and accounting
 
-Publication-ready settings and provider definitions are in `tables/settings` and `tables/token_accounting` (Markdown and LaTeX). Client-unset output limits and top-p are reported explicitly; an unrecorded effective value is not replaced by a current default. `tables/output_limit_diagnostics` reports observed length stops and their reported completion counts; these are observations, not reconstructed request limits.
+Archived settings, configuration provenance, and linked official provider references are in `tables/settings.md`; token-field definitions are in `tables/token_accounting.md`. Official defaults are used only to interpret omitted fields and are kept separate from saved client arguments and model capability ceilings. An unrecorded gateway-effective value is not reconstructed from current documentation. `tables/output_limit_diagnostics.md` reports observed length stops and their reported completion counts; these are observations, not configured request limits.
 
 {coverage_md}
 
 Optional cache/thinking details are not uniformly complete. Missing values remain missing, and subdivisions are not added again to their totals. Exact formulas, the common tool protocol, prompt consistency and differing orchestration settings are specified in [METHODS.md]({methods_link}).
 '''
     (out/'REPORT.md').write_text(report)
-    print('Generated publication tables and REPORT.md.')
+    print('Generated Markdown tables and REPORT.md.')
 
 
 if __name__ == '__main__':

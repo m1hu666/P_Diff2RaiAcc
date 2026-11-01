@@ -25,7 +25,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-root', type=Path, default=ROOT)
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument('--agent-root', type=Path, help='Optional agent source checkout')
+    parser.add_argument('--agent-root', type=Path,
+                        help='Optional exact mini-SWE-agent 1.15.0 experiment checkout')
     parser.add_argument('--adapter-root', type=Path, help='Optional litellm package source')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--bootstrap-repetitions', type=int, default=10000)

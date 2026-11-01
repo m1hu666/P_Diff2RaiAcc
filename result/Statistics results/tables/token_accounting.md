@@ -1,5 +1,5 @@
-| Provider interface | Normalized input | Normalized completion | Inclusion rule |
+| Routed interface | Analyzed input | Analyzed completion | Available subdivisions |
 | --- | --- | --- | --- |
-| Anthropic | Native input + cache read + cache creation | Native reported output | Cache counters are included in normalized input; output retains reported thinking. |
-| OpenAI-compatible | Reported prompt/input total | Reported completion/output total | Cached input and reported reasoning are subdivisions of the totals. |
-| Gemini | Native promptTokenCount | Candidates plus thoughts, unless candidates already include thoughts | The adapter avoids adding thinking twice; missing upstream details cannot be independently reconstructed. |
+| Anthropic route | Saved usage.prompt_tokens | Saved usage.completion_tokens | Cache-read and cache-creation counters when reported. |
+| OpenAI-compatible route | Saved usage.prompt_tokens | Saved usage.completion_tokens | Cached-input and reasoning counters when reported. |
+| Gemini route | Saved usage.prompt_tokens | Saved usage.completion_tokens | Cached, text and reasoning counters when reported. |

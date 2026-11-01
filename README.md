@@ -4,9 +4,22 @@ This repository archives the model patches, trajectories, evaluation labels, and
 reproducible analyses used to compare three coding agents on 100 SWE-bench
 Verified tasks with three attempts per model/task.
 
+The experiments used [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent)
+version 1.15.0 from its v1 codebase; see the official
+[v1 documentation](https://mini-swe-agent.com/v1/). The exact prompt templates
+extracted from the archived runs are released in
+[prompt_templates.json](result/Statistics%20results/prompt_templates.json), and
+the [methods notes](docs/METHODS.md#experimental-settings-and-prompts) document
+prompt consistency and the serial bash interaction loop. Each saved trajectory
+also retains the agent configuration and complete ordered message history.
+
 Provider-specific token definitions, experimental settings, interaction counts,
 cost estimates, and task-paired statistical methods are documented in
 [docs/METHODS.md](docs/METHODS.md).
+
+For a complete file index, metric definitions, denominators and interpretation
+of the existing statistics, see the
+[statistics catalogue](result/Statistics%20results/README.md).
 
 ## Setup
 
@@ -30,7 +43,8 @@ P_Diff2RaiAcc/
 │   └── traj/                      # Saved trajectories and evaluation reports
 ├── docs/
 │   ├── METHODS.md                 # Accounting, settings, and statistical design
-│   └── failure_analysis/          # Final codebook, annotations, and case notes
+│   ├── failure_analysis/          # Final codebook, annotations, and case notes
+│   └── taxonomy_methodology/      # Taxonomy construction and two-coder check
 ├── result/
 │   ├── analyse.md                 # Complete failure-analysis catalogue
 │   ├── summary.txt                # Three-trial outcome summary
@@ -58,8 +72,8 @@ The canonical quantitative outputs are written under
 `result/analyse.md`. Validation records include input hashes and coverage checks
 so the generated tables can be checked against the archived data.
 
-To refresh the optional implementation-source evidence, provide a local agent
-checkout explicitly:
+Optional implementation-source inspection requires an exact mini-SWE-agent
+1.15.0 checkout from the experiment:
 
 ```bash
 python3 scripts/run_analysis.py --agent-root /path/to/mini-swe-agent
@@ -91,6 +105,7 @@ relevant.
 | `scripts/label_add.py` | Synchronize one verified label file with its evaluation report; this utility mutates the selected label file |
 | `scripts/audit_submission_integrity.py` | Compare submissions, verified patches, and evaluation labels |
 | `scripts/audit_inference_usage.py` | Produce an independent trajectory-level usage audit |
+| `scripts/taxonomy_coder_check.py` | Prepare two label-blind coder sheets, compare their classifications, and summarize reconciled attribution decisions |
 
 Example trajectory inspection:
 

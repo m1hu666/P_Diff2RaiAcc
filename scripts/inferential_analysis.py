@@ -287,7 +287,7 @@ def analyze(args):
         "global_multiplicity_sensitivity": "An additional Holm adjustment across all 15 resource, success and stability tests is reported alongside outcome-family adjustments.",
         "scope": "fixed archived routes and settings; observational model comparisons, not causal effects of matched decoding parameters",
         "outcome_splits": "success/failure resource summaries are descriptive; no within-outcome hypothesis tests",
-        "unavailable_annotations": "failure-taxonomy category tests require per-attempt annotation labels; aggregate category totals do not preserve task dependence"
+        "taxonomy_scope": "task/attempt-level labels are available in failure_trial_catalog.csv; category-level inferential tests are not implemented; any future tests must retain task dependence"
     }
     (args.output / "analysis_design.json").write_text(json.dumps(design, indent=2) + "\n")
     print(f"Analyzed {len(rows)} attempts in {n_tasks} paired task clusters.")

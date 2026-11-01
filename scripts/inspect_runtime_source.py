@@ -1,4 +1,4 @@
-"""Extract portable agent/runtime source references for the experiment.
+"""Extract portable references from the exact experiment source checkout.
 
 Usage:
     python3 scripts/inspect_runtime_source.py --agent-root PATH
@@ -6,6 +6,8 @@ Usage:
 
 The adapter root is the litellm package directory. If omitted, discovery checks
 the supplied checkout's virtual environments and installed distribution metadata.
+The mini-SWE-agent checkout must report version 1.15.0, matching every archived
+trajectory; evidence from another checkout must not be mixed with the experiment.
 The resulting portable JSON/CSV evidence is written under
 ``result/Statistics results`` by default. No provider clients are imported and
 no environment configuration is loaded.
@@ -26,6 +28,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
 DEFAULT_OUTPUT = ROOT / 'result' / 'Statistics results'
+EXPERIMENT_AGENT_VERSION = '1.15.0'
 
 
 def git_commit(root):
@@ -227,13 +230,18 @@ def collect(agent_root, adapter_root, discovery):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--agent-root', type=Path, required=True, help='mini-SWE-agent repository root')
+    parser.add_argument('--agent-root', type=Path, required=True,
+                        help='exact mini-SWE-agent 1.15.0 experiment checkout')
     parser.add_argument('--adapter-root', type=Path, help='Optional litellm package directory')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     agent_root = args.agent_root.resolve()
     if not (agent_root/'src/minisweagent').is_dir():
         parser.error('The agent root must contain src/minisweagent.')
+    actual_agent_version = source_version(agent_root/'src/minisweagent')
+    if actual_agent_version != EXPERIMENT_AGENT_VERSION:
+        parser.error(f'The agent checkout reports {actual_agent_version!r}; '
+                     f'the archived experiment requires {EXPERIMENT_AGENT_VERSION}.')
     if args.adapter_root:
         adapter_root, discovery = args.adapter_root.resolve(), 'explicit adapter root'
         if not (adapter_root/'main.py').is_file():
