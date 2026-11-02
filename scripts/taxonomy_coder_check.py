@@ -26,7 +26,7 @@ DEFAULT_CODEBOOK = ROOT / 'docs' / 'failure_analysis' / 'failure_codebook.json'
 DEFAULT_ANNOTATIONS = ROOT / 'docs' / 'failure_analysis' / 'failure_annotations.csv'
 DEFAULT_DOCS = ROOT / 'docs' / 'taxonomy_methodology'
 DEFAULT_STATISTICS = ROOT / 'result' / 'Statistics results' / 'taxonomy_reliability'
-FROZEN_CODEBOOK_SHA256 = '2bbd1f38282886f742c79442c939b36fd82c0eae16f8195f7df6ff34643fe2af'
+FROZEN_CODEBOOK_SHA256 = '02cc27631636fb042ec93a65b64213334c13c4ae7f76118d0541a39fb98b418f'
 MODEL_IDS = {
     'Claude': 'claude-sonnet-4-5-20250929',
     'Gemini': 'gemini-3-pro-preview',

@@ -12,7 +12,7 @@ The annotation unit is one failed model trial on one task. Each failed trial ret
 | Problem Understanding | P2 | 1.2 | Distracted by Hints / TODOs | The diagnosis links the chosen direction to a specific suggestion or TODO that leaves the required behavior unresolved. |
 | Localization | L1 | 2.1 | Incomplete Scope / Wrong Layer | Required files, entry points, or subclasses are omitted, or the intervention is placed at an unsuitable architectural layer. |
 | Strategy & Logic | S1 | 3.1 | Partial Fix / Incomplete Logic | The repair covers part of the required behavior but misses an operation, input combination, boundary case, or compatibility condition. |
-| Strategy & Logic | S2 | 3.2 | Incorrect Repair Strategy | The selected algorithm or transformation fails to implement the target operation's required behavior or project constraint. |
+| Strategy & Logic | S2 | 3.2 | Incorrect Strategy | The selected algorithm or transformation fails to implement the target operation's required behavior or project constraint. |
 | Strategy & Logic | S3 | 3.3 | Hardcoding / Bad Practices | A fixed or environment-specific assumption fails to satisfy required portability or repository conventions. |
 | Implementation & Execution | I1 | 4.1 | Tool Failure / Silent State Hallucination | An operation fails or produces an unintended change, or the agent proceeds with an incorrect belief about the repository state. |
 | Validation & Harness Constraints | V1 | 5.1 | Specification-Oracle Gap | The diagnosis identifies a difference between the behavior emphasized by the issue and an additional requirement enforced by the tests. |

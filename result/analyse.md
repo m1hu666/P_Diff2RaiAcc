@@ -40,7 +40,7 @@ Model groups are Claude (`claude-sonnet-4-5-20250929`), Gemini (`gemini-3-pro-pr
 | P2 | Problem Understanding | Distracted by Hints / TODOs | 9 | 9 | 9 | 27 | 11.2% | 3 |
 | L1 | Localization | Incomplete Scope / Wrong Layer | 5 | 4 | 8 | 17 | 7.0% | 4 |
 | S1 | Strategy & Logic | Partial Fix / Incomplete Logic | 13 | 18 | 22 | 53 | 21.9% | 11 |
-| S2 | Strategy & Logic | Incorrect Repair Strategy | 5 | 10 | 5 | 20 | 8.3% | 8 |
+| S2 | Strategy & Logic | Incorrect Strategy | 5 | 10 | 5 | 20 | 8.3% | 8 |
 | S3 | Strategy & Logic | Hardcoding / Bad Practices | 3 | 3 | 3 | 9 | 3.7% | 1 |
 | I1 | Implementation & Execution | Tool Failure / Silent State Hallucination | 2 | 0 | 2 | 4 | 1.7% | 4 |
 | V1 | Validation & Harness Constraints | Specification-Oracle Gap | 2 | 5 | 2 | 9 | 3.7% | 2 |
@@ -726,17 +726,17 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 24 | astropy__astropy-8872 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 25 | astropy__astropy-8872 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 26 | django__django-10554 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-10554/django__django-10554.traj.json) | I1 Tool Failure / Silent State Hallucination | Implementation & Execution |
-| 27 | django__django-10554 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 28 | django__django-10554 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 29 | django__django-10554 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 30 | django__django-10554 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 31 | django__django-10554 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 32 | django__django-10554 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 33 | django__django-10554 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 34 | django__django-10554 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 35 | django__django-11276 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 36 | django__django-11276 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 37 | django__django-11276 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 27 | django__django-10554 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 28 | django__django-10554 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 29 | django__django-10554 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 30 | django__django-10554 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 31 | django__django-10554 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 32 | django__django-10554 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 33 | django__django-10554 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 34 | django__django-10554 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 35 | django__django-11276 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 36 | django__django-11276 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 37 | django__django-11276 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 38 | django__django-11532 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 39 | django__django-11532 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 40 | django__django-11532 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
@@ -750,7 +750,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 48 | django__django-11790 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-11790/django__django-11790.traj.json) | V4 Execution Timing Mismatch | Validation & Harness Constraints |
 | 49 | django__django-11790 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-11790/django__django-11790.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 50 | django__django-11790 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-11790/django__django-11790.traj.json) | V4 Execution Timing Mismatch | Validation & Harness Constraints |
-| 51 | django__django-12125 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-12125/django__django-12125.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 51 | django__django-12125 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-12125/django__django-12125.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 52 | django__django-13023 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-13023/django__django-13023.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 53 | django__django-13023 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-13023/django__django-13023.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 54 | django__django-13023 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-13023/django__django-13023.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
@@ -763,7 +763,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 61 | django__django-13344 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-13344/django__django-13344.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 62 | django__django-13344 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-13344/django__django-13344.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 63 | django__django-13344 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-13344/django__django-13344.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
-| 64 | django__django-13401 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-13401/django__django-13401.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 64 | django__django-13401 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-13401/django__django-13401.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 65 | django__django-13406 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 66 | django__django-13406 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 67 | django__django-13406 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
@@ -788,10 +788,10 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 86 | django__django-14771 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-14771/django__django-14771.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 87 | django__django-14771 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-14771/django__django-14771.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 88 | django__django-14771 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-14771/django__django-14771.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
-| 89 | django__django-15022 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 90 | django__django-15022 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 91 | django__django-15022 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
-| 92 | django__django-15022 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 89 | django__django-15022 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 90 | django__django-15022 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 91 | django__django-15022 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
+| 92 | django__django-15022 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 93 | django__django-15103 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15103/django__django-15103.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 94 | django__django-15103 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-15103/django__django-15103.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 95 | django__django-15629 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15629/django__django-15629.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
@@ -889,7 +889,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 187 | scikit-learn__scikit-learn-26194 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/scikit-learn__scikit-learn-26194/scikit-learn__scikit-learn-26194.traj.json) | P2 Distracted by Hints / TODOs | Problem Understanding |
 | 188 | sphinx-doc__sphinx-10323 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 189 | sphinx-doc__sphinx-11510 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
-| 190 | sphinx-doc__sphinx-11510 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 190 | sphinx-doc__sphinx-11510 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 191 | sphinx-doc__sphinx-11510 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 192 | sphinx-doc__sphinx-11510 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 193 | sphinx-doc__sphinx-11510 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
@@ -918,7 +918,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 216 | sphinx-doc__sphinx-8548 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 217 | sphinx-doc__sphinx-8548 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 218 | sphinx-doc__sphinx-8548 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
-| 219 | sphinx-doc__sphinx-9591 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-9591/sphinx-doc__sphinx-9591.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 219 | sphinx-doc__sphinx-9591 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-9591/sphinx-doc__sphinx-9591.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 220 | sympy__sympy-12489 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 221 | sympy__sympy-12489 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 222 | sympy__sympy-12489 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
@@ -937,7 +937,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 235 | sympy__sympy-17630 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 236 | sympy__sympy-17630 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 237 | sympy__sympy-17630 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
-| 238 | sympy__sympy-18211 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 238 | sympy__sympy-18211 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S2 Incorrect Strategy | Strategy & Logic |
 | 239 | sympy__sympy-18211 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 240 | sympy__sympy-18211 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 241 | sympy__sympy-18211 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
