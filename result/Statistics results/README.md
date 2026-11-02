@@ -61,19 +61,26 @@ that failure causes additional reasoning, because the selected task sets differ.
 
 | File | Contents | Interpretation |
 |---|---|---|
-| [failure_trial_catalog.csv](failure_trial_catalog.csv) | 242 failed attempts, each with one final primary category, stage, diagnosis, source paths and hashes | The auditable trial-level classification table. Successful attempts are excluded. Human annotations are inputs; the builder checks and summarizes them rather than automatically diagnosing causes. |
+| [failure_trial_catalog.csv](failure_trial_catalog.csv) | 242 failed attempts, each with one retained primary category, stage, diagnosis, source paths and hashes | The auditable trial-level table preserves all failed outcomes. Assignments awaiting further verification remain in their categories, with evidence limitations in their diagnoses. Human annotations are inputs; the builder checks and summarizes them rather than automatically diagnosing causes. |
 | [failure_model_summary.csv](failure_model_summary.csv) | Three rows; failed attempts, failure rate and tasks containing a failure | Claude: 70/300 failures on 31 tasks; Gemini: 82/300 on 31 tasks; GPT: 90/300 on 38 tasks. |
 | [failure_stage_summary.csv](failure_stage_summary.csv) | Five stages, with overall/model counts, percentages and distinct task counts | Overall stage composition and model-specific incidence. These are descriptive counts, without category-level significance tests. |
 | [failure_taxonomy_summary.csv](failure_taxonomy_summary.csv) | Eleven subcategories, with the same overall/model breakdown | Fine-grained failure composition. Repeated failures on one task must not be interpreted as independent task evidence. |
 | [failure_task_summary.csv](failure_task_summary.csv) | 45 tasks with at least one failed attempt; each model's three outcomes and failure categories | Shows how failures cluster within tasks and repeat across models/trials. |
 
 The stage totals are Problem Understanding 71 (29.34%), Localization 17 (7.02%),
-Strategy & Logic 92 (38.02%), Implementation & Execution 4 (1.65%), and
-Validation & Harness Constraints 58 (23.97%). These percentages use 242 failed
+Strategy & Logic 82 (33.88%), Implementation & Execution 4 (1.65%), and
+Validation & Harness Constraints 68 (28.10%). These percentages use all 242 failed
 attempts as their denominator. Subcategory counts are P1=44, P2=27, L1=17,
-S1=53, S2=30, S3=9, I1=4, V1=9, V2=29, V3=17 and V4=3. Definitions are in the
+S1=53, S2=20, S3=9, I1=4, V1=9, V2=29, V3=27 and V4=3. Definitions are in the
 [failure codebook](../../docs/failure_analysis/FAILURE_CODEBOOK.md); the complete
 case report is [result/analyse.md](../analyse.md).
+
+Fourteen assignments remain in their original categories pending further
+verification: Astropy-8872 (all nine, V3), Django-11532 (Claude/GPT trials 1
+and 3, V3), and Sphinx-11510 (Claude trial 2, S2). Their evidence limitations
+are stated in the diagnoses and case notes. Retention is not confirmation of
+the attribution. All 242 failures remain in the eleven-category totals and
+percentage denominators.
 
 The stage and taxonomy CSVs deliberately distinguish these denominators:
 
@@ -165,6 +172,7 @@ Extra diagnostic columns have no dedicated inferential tests in this package.
 | [prompt_consistency.csv](prompt_consistency.csv) | 100 tasks, each with nine initial-prompt hashes and image-string variant counts | Every task has one initial system/user prompt variant. Initial prompt equality does not imply identical later histories or effective decoding. Image strings are compared, not container-content digests. |
 | [prompt_templates.json](prompt_templates.json) | One unique set of agent templates | Full system, task, observation, timeout and format-error instructions used by the saved configurations. |
 | [usage_field_coverage.csv](usage_field_coverage.csv) | 30 rows: three models x ten token fields; numeric/null/missing counts, zeros/nonzeros and observed sums | Measures reporting availability. Both top-level token totals are numeric for every response. Optional-field availability is not model accuracy or an estimate of hidden computation. |
+| [failure_boundary_checks.json](failure_boundary_checks.json) | Fourteen small baseline/candidate behavior checks, including an optional historical SymPy source check | Diagnostic evidence for the S2/V3 distinction. Sphinx and printer checks use stubs; this file is not a set of new model trials or full benchmark evaluations. Reproduce with `scripts/check_failure_boundary_examples.py` and the documented historical source for the fourteenth check. |
 | [response_model_mapping.csv](response_model_mapping.csv) | Six requested/returned model-label combinations and response counts | Route-label metadata; labels alone do not independently identify an upstream backend. |
 
 Gemini's cache field is numeric in 7,930/11,683 responses (67.88%) and null in
@@ -203,7 +211,7 @@ samples or hypothesis tests.
 | [input_manifest.json](input_manifest.json) | SHA-256 hashes for 900 trajectories and nine verified-label JSON files |
 | [validation.json](validation.json) | Main output validation: coverage, arithmetic, 909 input hashes and 15 comparison rows pass |
 | [failure_analysis_inputs.json](failure_analysis_inputs.json) | Hashes for 887 indexed evidence files and three annotation-input files |
-| [failure_analysis_validation.json](failure_analysis_validation.json) | Failure catalogue validation: 242 unique failures on 45 tasks, five stages, eleven subcategories, zero unmapped failures or successful trials in the catalogue |
+| [failure_analysis_validation.json](failure_analysis_validation.json) | Failure catalogue validation: 242 unique failures on 45 tasks, five stages, eleven subcategories, zero missing failure records or successful trials in the catalogue |
 | [trajectory_audit/per_trajectory.csv](trajectory_audit/per_trajectory.csv) | Independent trajectory-level extraction for 900 attempts; overlaps the canonical `per_attempt.csv` as a cross-check |
 | [trajectory_audit/audit.json](trajectory_audit/audit.json) | Independent usage/configuration/completeness summary; no missing trajectories or reported issues |
 | [submission_integrity/submission_inventory.csv](submission_integrity/submission_inventory.csv) | 900 attempts comparing archived submissions, verified patches and evaluation labels |

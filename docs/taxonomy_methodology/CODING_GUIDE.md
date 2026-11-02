@@ -1,133 +1,134 @@
-# Coder instructions
+# Coder instructions: verify existing trial assignments
 
-## Task
+## What to review
 
-Independently classify every row in the assigned coder sheet using the frozen
-[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md). Do not inspect the
-canonical annotations, aggregate category counts, generated failure report, or
-the other coder's sheet before submitting your completed file.
+Independently check the current category and diagnosis for every failed trial
+in your assigned CSV sheet. Start with the readable
+[verification packet](VERIFICATION_CASES.md), which presents the authors'
+existing analysis and links to the underlying materials. Use the frozen
+[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) to decide whether
+that analysis supports the current category. The packet and original label are
+provided intentionally; this is informed verification, not blind recoding.
 
-For each row, inspect the issue description, hints, generated patch, developer
-reference patch, test patch, and trajectory. A difference from the reference
-patch or a failed benchmark outcome does not by itself identify the failure
-mode.
+Begin with the task summary, current diagnosis, and candidate patch. Check the
+decisive behavioral claim against the relevant issue, reference, test, or
+trajectory material. Open the remaining artifacts when the claim is unclear
+or appears wrong; a complete fresh diagnosis of every trial is not required
+for this post hoc check. The sheet order groups tasks by repository and places
+tasks with fewer failed attempts first. Check all failed trials of one task
+before moving to the next.
 
-The CSV uses short model names. Their repository directory names are:
+The model names in the sheet correspond to these source directories:
 
-| CSV value | Repository directory |
-|---|---|
+| Sheet value | Repository directory |
+| --- | --- |
 | `Claude` | `claude-sonnet-4-5-20250929` |
 | `Gemini` | `gemini-3-pro-preview` |
 | `GPT` | `gpt-5-2025-08-07-medium-reasoning` |
 
-Task materials are under `analyse/<model-directory>/<task_id>/`. The candidate
-patch is `<trial><task_id>_model.patch`; the other evidence files use the task
-ID in their file names. The trajectory is under
+The packet links directly to the materials, including the dataset's
+`FAIL_TO_PASS` and `PASS_TO_PASS` test-ID lists. Those lists describe expected
+benchmark tests, not the outcome of the particular model trial. The materials
+can also be found under
+`analyse/<model-directory>/<task_id>/` and
 `data/traj/<model-directory>/round<trial>/<task_id>/`.
 
-The repository preserves summary evaluation reports rather than detailed
-per-test evaluation traces, and it does not include reconstructed checkouts for
-every `base_commit`. When Steps 4 or 6 require material not retained here,
-obtain it from the official SWE-bench task metadata or evaluation artifacts.
-If it remains unavailable, record that limitation in `notes` and do not infer a
-cause that the available evidence cannot support.
+## How to check a trial
 
-## Required diagnostic workflow
+Use the manuscript's three-phase, seven-step Failure Diagnosis Workflow as
+the basis for the check. The existing diagnosis gives you a starting point;
+verify its decisive claim against the relevant materials. Where that claim is
+unclear or the label appears wrong, follow the applicable steps in greater
+depth:
 
-Apply the same three-phase, seven-step Failure Diagnosis Workflow reported in
-the manuscript.
+**Phase 1: task preparation and triage**
 
-### Phase 1: task preparation and triage
+1. Group tasks from the same repository.
+2. Within each repository, review tasks in ascending order of failed attempts.
 
-1. **Repository grouping.** Analyze tasks from the same repository together.
-2. **Difficulty ordering.** Within each repository, analyze tasks in ascending
-   order of their total failure count across all nine attempts. The supplied
-   sheets are already ordered this way. Analyze all failed rows for one task as
-   a group before moving to the next task.
+**Phase 2: diagnostic iteration**
 
-### Phase 2: diagnostic iteration
+3. Compare failed candidate patches with the developer patch, including
+   behavior and modified locations; a different implementation can still be
+   correct.
+4. Reconstruct the historical repository context at the task's `base_commit`
+   when patch comparison alone does not explain the behavior.
+5. Trace the saved trajectory step by step and distinguish submitted
+   deviations from errors the agent later corrected.
+6. Inspect the evaluation tests and harness requirements when the agent's own
+   reproduction succeeds but official evaluation fails.
 
-3. **Patch comparison.** Compare every failed generated patch for the task with
-   the developer reference patch. Examine modified files, insertion locations,
-   logic differences, and behavioral equivalence. A different implementation
-   is not automatically incorrect.
-4. **Context reconstruction.** If patch comparison does not explain the
-   failure, reconstruct the historical repository state at the task's
-   `base_commit` and inspect the surrounding control flow, dependencies, and
-   framework constraints.
-5. **Trajectory attribution.** Trace the saved interaction log step by step and
-   align it with the patch and repository context. Enumerate observable
-   deviations, determine whether the agent later recovered them, and identify
-   any retained effects in the submitted patch or repository state.
-6. **Harness diagnosis.** If the agent's self-generated reproduction succeeds
-   but official SWE-bench evaluation fails, inspect the official test patch and
-   the relevant `FAIL_TO_PASS` and `PASS_TO_PASS` requirements. Attribute the
-   failure to benchmark strictness or a hidden/test-side constraint only when
-   the combined issue, reference-solution, and evaluation evidence supports
-   that interpretation.
+**Phase 3: synthesis**
 
-### Phase 3: synthesis
+7. Synthesize the observable failure modes and check the one current primary
+   assignment against the codebook. Use chronology only to break a tie among
+   directly supported unrecovered deviations; an earlier event alone does not
+   establish a cause.
 
-7. **Failure labeling.** Synthesize all applicable evidence and assign the one
-   primary observed failure mode with the clearest archived evidence link to
-   the unsuccessful submission. If multiple unrecovered candidates have such a
-   link, use chronology only as a deterministic tie-breaker. Do not separately
-   count co-occurring or downstream problems.
+The repository contains summary evaluation reports rather than detailed
+per-test traces for every trial and does not include a checkout for every
+historical `base_commit`. If a decisive source remains unavailable, choose
+`UNSURE` as your review decision and explain what is missing. This response
+does not add a failure category; the original category remains in place until
+the post-review discussion.
 
-## Fields to complete
+## Fill your sheet
 
-Do not modify the prefilled `task_id`, `model`, or `trial` columns. Complete:
+Keep the prefilled `task_id`, `model`, `trial`, and `current_category` unchanged.
+Complete only these fields:
 
-| Column | Required content |
-|---|---|
-| `category` | One of `P1`, `P2`, `L1`, `S1`, `S2`, `S3`, `I1`, `V1`, `V2`, `V3`, `V4`, or `OTHER` |
-| `failure_reason` | A concise explanation tied to concrete evidence in this trial |
-| `earliest_link` | One of `SUPPORTED`, `NOT_SUPPORTED`, or `INDETERMINATE` using the rules below |
-| `notes` | Optional ambiguity, competing category, missing evidence, or codebook feedback |
+| Field | Entry |
+| --- | --- |
+| `decision` | `ACCEPT` if the current category is supported; `CHANGE` if another category fits better; `UNSURE` if the available materials do not permit a decision. |
+| `proposed_category` | For `CHANGE` only, select `P1`, `P2`, `L1`, `S1`, `S2`, `S3`, `I1`, `V1`, `V2`, `V3`, `V4`, or `OTHER`. Leave blank for `ACCEPT` and `UNSURE`. |
+| `reason` | Required if `decision` is `CHANGE` or `UNSURE`, or if `earliest_link` is `NOT_SUPPORTED` or `INDETERMINATE`. Explain the category distinction, earlier deviation, contradiction, or missing evidence. Otherwise optional. |
+| `earliest_link` | Judge the displayed current category using `SUPPORTED`, `NOT_SUPPORTED`, or `INDETERMINATE` as defined below. |
 
-Every row must contain a category, a failure reason, and an `earliest_link`
-decision. Write all human-entered text in English so the locked sheets can be
-released without a later translation step that might alter the coding
-rationale.
+Use `OTHER` only when the evidence supports an observed failure mode outside
+the current taxonomy; name and explain that mode in `reason`. `UNSURE` is a
+review decision for insufficient information, not an additional taxonomy
+label. A different patch from the reference solution or an unsuccessful
+benchmark outcome does not by itself establish a different failure mode.
 
-## Decision rule
+Write free-text comments in English. A trial with multiple problems still
+receives one proposed primary category; mention a relevant secondary problem
+in `reason`. For S2 and V3, apply the boundary in the codebook: S2 concerns
+an incorrect approach to the task's requested behavior; V3 concerns a patch
+that handles the targeted scenario while disrupting previously working
+behavior.
 
-First enumerate the observable deviations and exclude those that the agent
-demonstrably corrected before submission. Among the remaining candidates,
-select the failure mode with the clearest archived evidence link to the
-unsuccessful submission. Use chronology only to break a tie between multiple
-directly supported candidates. Temporal precedence, trajectory prose, a patch
-difference, or a failed outcome alone is insufficient.
+## Chronological-link check
 
-Use `OTHER` rather than forcing a case into an existing category when the
-evidence supports a distinct observed mode. Explain the proposed mode in
-`failure_reason` and, if useful, propose a short category name in `notes`.
-
-The codebook contains the boundary rules for L1/S1, S2/V3, V1/V2, I1/other,
-P1/P2, and V4/other. In particular, use S2 when the repair strategy itself
-leaves the target behavior or project constraint unresolved. Use V3 when the
-target repair is otherwise achieved but retained evidence confirms a regression
-in previously valid state, types, contracts, or behavior.
-
-## Earliest-link decision
-
-This field audits the previously stated chronological attribution rule; it does
-not assert causality.
+For every row, assess whether the **displayed current category** also marks
+the earliest observable unrecovered deviation whose retained effect can be
+traced to the unsuccessful submission. Record the assessment in
+`earliest_link` even if you propose a different category. This operationally
+checks the manuscript's earlier "earliest causally dominant breakdown"
+wording; a `SUPPORTED` response does not prove a causal root cause.
 
 | Value | Use when |
-|---|---|
-| `SUPPORTED` | The selected primary mode is the earliest observable unrecovered deviation, and archived patch, repository-state, tool, or evaluation evidence directly traces its retained effect to the unsuccessful submission. |
-| `NOT_SUPPORTED` | The evidence identifies an earlier unrecovered deviation with an equally or more direct link to the unsuccessful submission than the selected mode, or contradicts the selected mode's proposed link. |
-| `INDETERMINATE` | Missing evidence, multiple similarly supported explanations, or an unclear sequence prevents a defensible judgment. |
+| --- | --- |
+| `SUPPORTED` | The current category identifies the earliest observable unrecovered deviation with a direct evidence link to the unsuccessful submission. |
+| `NOT_SUPPORTED` | An earlier unrecovered deviation has an equally or more direct link, or the proposed link for the current category is contradicted. |
+| `INDETERMINATE` | Missing evidence, competing explanations, or an unclear sequence prevents this judgment. |
 
-Do not use `NOT_SUPPORTED` merely because evidence is missing; use
-`INDETERMINATE`. Explain a non-obvious decision in `failure_reason` or `notes`.
+Do not mark `SUPPORTED` solely because an event came first in the trajectory.
+If you mark `NOT_SUPPORTED` or `INDETERMINATE`, explain why in `reason`. If your
+category decision is `UNSURE`, the chronological link will normally be
+`INDETERMINATE` unless the available evidence directly contradicts it. The
+discussion table will separately reassess `final_earliest_link` if the final
+category changes. When both judgments need explanation, address both in the
+same `reason` cell.
 
-## Independence and submission
+## Independence and discussion
 
-Do not discuss individual cases with the other coder before both files are
-complete. Procedural questions may be sent to the coordinator, but the answer
-must not reveal a canonical or peer label. Submit the completed CSV as a locked
-snapshot; subsequent corrections must be recorded rather than silently
-overwriting the submitted version.
+Review the existing analysis and underlying materials without viewing or
+discussing the other coders' sheets. Submit a locked copy of your completed
+sheet before any case-by-case discussion. The comparison script records the
+hash of each submitted sheet and creates the discussion table only after all
+three are complete. Any changes after discussion belong in that comparison
+table; do not silently revise the locked pre-discussion sheets.
 
+The original label is visible to all three coders, so agreement in this check
+measures verification concordance, not agreement from the original taxonomy
+construction or an independent blind application of the codebook.

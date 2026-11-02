@@ -192,8 +192,8 @@ def summarize(catalogue, labels, categories):
             selected = [r for r in catalogue if r[group] == value]
             row = {group: value}
             if group == 'primary_category':
-                row.update(subcategory=categories[value]['name'] if value else 'Not established',
-                           stage=categories[value]['stage'] if value else '')
+                row.update(subcategory=categories[value]['name'],
+                           stage=categories[value]['stage'])
             row.update(assigned_trials=len(selected), share_of_all_failures_percent=100*len(selected)/total,
                        distinct_tasks=len({r['task_id'] for r in selected}))
             for short, model in MODELS.items():
@@ -234,7 +234,8 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
              f'The [codebook]({package_link("FAILURE_CODEBOOK.md")}) defines the category boundaries.', '',
              'Artifact paths are provided for navigation and reproducibility. They identify the archived inputs used by the public catalogue without asserting that every linked artifact independently establishes the assigned cause.', '',
              '## Scope and interpretation', '',
-             'Each unresolved trial receives one primary category. Secondary defects may coexist, but are not counted again. '
+             'Each unresolved trial retains one primary category. Secondary defects may coexist, but are not counted again. '
+             'Assignments awaiting further verification remain in their existing categories, with evidence limitations stated in their diagnoses and case notes; retention does not mean that a recheck confirmed the attribution. '
              'An evaluation outcome and its qualitative explanation are separate: a failed label does not establish a cause, and a difference from the reference patch does not establish incorrectness. '
              'In particular, V1/V2 annotations identify a specification or representation distinction; they do not automatically establish that the patch is semantically correct or that the benchmark is invalid.', '',
              'The counts below are descriptive. The three trials on one task and the model results for that task are dependent. '
@@ -344,11 +345,11 @@ def main():
     validation = {
         'passed': True, 'evaluated_tasks': len({key[0] for key in labels}), 'evaluated_trials':len(labels),
         'recorded_failures':len(catalogue), 'unique_catalogue_rows':len({r['trial_id'] for r in catalogue}),
-        'unmapped_failures':0,'successful_trials_in_catalogue':0,'duplicate_annotations':0,
+        'missing_failure_records':0,'successful_trials_in_catalogue':0,'duplicate_annotations':0,
         'failure_tasks':len({r['task_id'] for r in catalogue}),
         'stages':len({r['stage'] for r in categories.values()}),'subcategories':len(categories),
         'category_counts':{r['primary_category']:r['assigned_trials'] for r in category_rows},
-        'counts_scope':'One final primary category per archived unresolved trial',
+        'counts_scope':'One retained primary category per archived unresolved trial; evidence limitations remain in the diagnoses and case notes',
         'checks':'Coverage, uniqueness, labels, categories, source hashes, artifact availability, CSV rows, appendix rows, report links, English and portable paths',
     }
     validation_path = out/'failure_analysis_validation.json'

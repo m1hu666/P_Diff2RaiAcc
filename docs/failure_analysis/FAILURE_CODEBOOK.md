@@ -1,8 +1,8 @@
 # Failure annotation codebook
 
-This codebook defines the stages and categories used in the failure analysis. The machine-readable version is [failure_codebook.json](failure_codebook.json). Category names and codes follow the manuscript; numeric codes provide the corresponding hierarchical notation.
+This codebook defines the stages and categories used in the failure analysis. The machine-readable version is [failure_codebook.json](failure_codebook.json). The category codes retain the study's hierarchical notation; the S2 and V3 names clarify their behavioral boundary.
 
-The annotation unit is one failed model trial on one task. Each failed trial receives one primary observed failure-mode category so that category counts remain mutually exclusive. A task can contain trials with different categories, and a trial can contain co-occurring or downstream problems that are described without being counted again. The label is an evidence-supported diagnostic attribution, not an identified causal root cause.
+The annotation unit is one failed model trial on one task. Each failed trial retains one primary observed failure-mode category so that category counts remain mutually exclusive. A task can contain trials with different categories, and a trial can contain co-occurring or downstream problems that are described without being counted again. The labels are diagnostic attributions, not identified causal root causes. Where an existing assignment still needs verification, retain its category and state the evidence limitation in the diagnosis or case notes rather than treating that assignment as newly confirmed.
 
 ## Stages and categories
 
@@ -12,12 +12,12 @@ The annotation unit is one failed model trial on one task. Each failed trial rec
 | Problem Understanding | P2 | 1.2 | Distracted by Hints / TODOs | The diagnosis links the chosen direction to a specific suggestion or TODO that leaves the required behavior unresolved. |
 | Localization | L1 | 2.1 | Incomplete Scope / Wrong Layer | Required files, entry points, or subclasses are omitted, or the intervention is placed at an unsuitable architectural layer. |
 | Strategy & Logic | S1 | 3.1 | Partial Fix / Incomplete Logic | The repair covers part of the required behavior but misses an operation, input combination, boundary case, or compatibility condition. |
-| Strategy & Logic | S2 | 3.2 | Incorrect Strategy / Side Effects | The proposed algorithm, control flow, or repair strategy is unsuitable or introduces a behavioral conflict. |
+| Strategy & Logic | S2 | 3.2 | Incorrect Repair Strategy | The selected algorithm or transformation fails to implement the target operation's required behavior or project constraint. |
 | Strategy & Logic | S3 | 3.3 | Hardcoding / Bad Practices | A fixed or environment-specific assumption fails to satisfy required portability or repository conventions. |
 | Implementation & Execution | I1 | 4.1 | Tool Failure / Silent State Hallucination | An operation fails or produces an unintended change, or the agent proceeds with an incorrect belief about the repository state. |
 | Validation & Harness Constraints | V1 | 5.1 | Specification-Oracle Gap | The diagnosis identifies a difference between the behavior emphasized by the issue and an additional requirement enforced by the tests. |
 | Validation & Harness Constraints | V2 | 5.2 | Strict Output Format Mismatch | The produced string, argument structure, serialized form, or attribute representation differs from the asserted representation. |
-| Validation & Harness Constraints | V3 | 5.3 | Side Effects | The repair interferes with shared state, cached values, downstream contracts, or behavior checked by other tests. |
+| Validation & Harness Constraints | V3 | 5.3 | Regression of Existing Behavior | The patch addresses the reported local defect but demonstrably breaks another previously valid input, caller contract, or state lifecycle. |
 | Validation & Harness Constraints | V4 | 5.4 | Execution Timing Mismatch | Required state or a transformation is supplied at a different lifecycle point or processing stage from the expected one. |
 
 ## Evidence and interpretation
@@ -36,7 +36,9 @@ Retain selected successful cases as a separate comparison set. They illustrate a
 
 **L1 and S1.** L1 concerns where the repair is attempted and whether all required implementation locations are covered. S1 concerns which required behaviors the selected logic handles. Omitting a subclass is a scope problem; handling creation but not later updates is incomplete behavioral coverage. Some cases can exhibit both. Select the mode with the clearest archived evidence link to the unsuccessful submission and explain the specific omission rather than applying an automatic category-priority rule.
 
-**S2 and V3.** Use S2 when the repair strategy itself fails to satisfy the target behavior or project constraint. Use V3 when the target repair is otherwise achieved but a confirmed regression affects previously valid state, types, contracts, or behavior. A regression requires retained test or repository evidence and should not be inferred from patch breadth alone. V3 includes type and contract regressions and should not uniformly be described as environment pollution.
+**S2 and V3.** Assign S2 when the selected repair strategy leaves the target operation incorrect. Assign V3 when the reported local defect is addressed but the patch demonstrably breaks another previously valid input, caller contract, or state lifecycle. When an overly broad strategy produces such a confirmed regression, assign V3 and describe the strategy as a secondary observation. Breadth, a difference from the reference patch, or a failed outcome alone does not establish a regression. Identify the prior behavior and the patch-induced change using tests or repository evidence. A successful local reproduction does not establish that every target case is fixed; co-occurring target defects may remain. Test membership in `FAIL_TO_PASS` or `PASS_TO_PASS` alone does not determine the category.
+
+The V3 preference applies to the same repair's directly supported regression, not to any earlier or unrelated recovered error. It does not override the general evidence requirement or establish causality. A repeated-call regression can occur in the same function as the local fix. V3 includes type and contract regressions and is not limited to environment pollution.
 
 **V1 and V2.** V1 concerns the scope of required behavior; V2 concerns its concrete representation. A test that checks an additional exception case can motivate V1. An exact argument-list or string assertion can motivate V2. Neither label alone proves that the candidate is semantically equivalent to the reference or that the test is invalid: representations can form part of a public contract.
 

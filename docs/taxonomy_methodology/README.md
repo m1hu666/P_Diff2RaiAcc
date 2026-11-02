@@ -1,9 +1,12 @@
-# Taxonomy construction and coder check
+# Taxonomy construction and three-coder verification
 
-This directory contains the materials for checking whether two additional
-coders can independently apply the final failure taxonomy. It complements the
-[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) and the current
-canonical [trial annotations](../failure_analysis/failure_annotations.csv).
+This directory documents the taxonomy and provides three independent checks
+of the authors' existing trial assignments. Coders receive the current label
+and analysis for each trial in the readable
+[verification packet](VERIFICATION_CASES.md), then inspect the linked materials
+and record a decision in their own sheet. The authoritative source records
+remain the [trial annotations](../failure_analysis/failure_annotations.csv) and
+the [failure codebook](../failure_analysis/FAILURE_CODEBOOK.md).
 
 ## How the taxonomy was constructed
 
@@ -23,7 +26,9 @@ the three-phase Failure Diagnosis Workflow reported in the manuscript:
    patch and evaluation requirements were also inspected.
 3. **Synthesis:** the issue specification, patch evidence, repository context,
    evaluation requirements, and trajectory evidence were combined to select
-   one primary evidence-supported observed failure mode per failed trial. If
+   one primary observed failure mode per failed trial, with evidence limitations
+   recorded in the diagnosis or case notes for assignments awaiting further
+   verification. If
    multiple unrecovered candidates had a direct archived evidence link to the
    unsuccessful submission, chronology was used only as a deterministic
    tie-breaker. Co-occurring or downstream problems were not counted again.
@@ -52,50 +57,80 @@ experimentally manipulated and no counterfactual trajectory was evaluated.
 The labels therefore represent diagnostic attributions supported by the
 archived evidence, not identified causal root causes.
 
-## Two-coder check
+## Source repositories
 
-The new check uses two files:
+The failed tasks in this taxonomy check come from
+[Astropy](https://github.com/astropy/astropy),
+[Django](https://github.com/django/django),
+[Matplotlib](https://github.com/matplotlib/matplotlib),
+[Requests](https://github.com/psf/requests),
+[Pylint](https://github.com/pylint-dev/pylint),
+[scikit-learn](https://github.com/scikit-learn/scikit-learn),
+[Sphinx](https://github.com/sphinx-doc/sphinx), and
+[SymPy](https://github.com/sympy/sympy).
+
+## Three-coder verification of existing assignments
+
+The check uses three blank response sheets:
 
 - [coder_a.csv](coder_a.csv)
 - [coder_b.csv](coder_b.csv)
+- [coder_c.csv](coder_c.csv)
 
-Both files contain the same 242 trial identifiers but omit the canonical
-category and canonical diagnosis. Each coder fills `category`,
-`failure_reason`, and `earliest_link` independently by following
-[CODING_GUIDE.md](CODING_GUIDE.md). The allowed categories are the eleven
-codebook labels plus `OTHER`. Their row order implements the manuscript's task
-triage rule: repository grouping followed by ascending task failure count.
+The sheets contain the same 242 failed trials, ordered by repository and then
+by increasing task failure count. Each row shows the current category. The
+verification packet adds the existing diagnosis and direct links to task
+materials, benchmark test-ID lists, candidate patch, and trajectory without
+the hash and path columns of the machine-readable annotation file. It is
+regenerated with:
 
-The coders must not view the canonical annotation file, the generated failure
-catalogue, `result/analyse.md`, or the other coder's sheet before submitting
-their locked file. Removing the answer columns from the sheets is insufficient
-if a coder can inspect those other repository files. Provide a separate
-read-only evidence package when practical. The study is label-blind and
-coder-independent; it should not be described as model-blind because model
-identity may be apparent from the trajectories.
+```bash
+python3 scripts/build_taxonomy_review_packet.py
+```
 
-After both sheets are complete, run:
+Following [CODING_GUIDE.md](CODING_GUIDE.md), each coder independently marks
+`ACCEPT`, `CHANGE`, or `UNSURE`. `CHANGE` requires a proposed category from the
+eleven codebook categories or `OTHER` and a concise reason. `UNSURE` requires a
+reason describing what prevents a decision; it does not introduce a failure
+category or change the retained assignment. `ACCEPT` may include an optional
+note about wording. Each coder also fills `earliest_link` to judge whether the
+displayed current category corresponds to the earliest observable unrecovered
+deviation with a direct evidence link to the unsuccessful submission. Its
+values are `SUPPORTED`, `NOT_SUPPORTED`, and `INDETERMINATE`; the latter two
+require an explanation in the same `reason` column. The three coders work
+separately and lock their sheets before seeing anyone else's responses or
+discussing individual trials.
+
+This is a post hoc verification of disclosed existing labels and analyses,
+not de novo, label-blind coding. The original assignment is a shared reference,
+not a fourth independent rating. Because the original open-code lists and
+pre-reconciliation labels were not retained, this check cannot reconstruct
+agreement during the original taxonomy construction. Coders may be influenced
+by seeing the authors' labels and explanations.
+
+After all three sheets are complete, run:
 
 ```bash
 python3 scripts/taxonomy_coder_check.py compare
 ```
 
-The command validates the two sheets, computes pre-discussion A-B agreement,
-and creates a comparison table containing the canonical, Coder A, and Coder B
-decisions. Discussion and any final category or rationale changes happen only
-after this table has been generated.
+The command validates the locked sheets and creates a discussion table and
+pre-discussion statistics. Report each coder's acceptance, proposed changes,
+and unresolved decisions; the number accepted by all three; and pairwise
+agreement on their chosen categories. The report also provides three-coder
+agreement and task-cluster bootstrap intervals where defined. Category
+agreement excludes rows with an `UNSURE` decision and states its denominator.
+The chronological-link responses are compared separately, retaining all three
+values and their denominators. Agreement with the current label measures
+review concordance. It is not an estimate of independent agreement during
+original coding.
 
-All category or `earliest_link` disagreements require discussion. Cases with
-the same values but materially different attribution rationales should also be
-reviewed when reading the side-by-side reasons; text equivalence is not inferred
-automatically.
-
-The primary reliability results are A-B exact agreement and unweighted Cohen's
-kappa. Because multiple trials belong to the same task, 95% intervals are
-computed by resampling complete task clusters. Category agreement and
-`earliest_link` agreement are reported separately. Agreement between either
-coder and the canonical category is secondary concordance, not a third
-independent rating and not a reconstruction of the original coding process.
+Discuss every proposed change, `UNSURE` decision, and chronological-link
+assessment other than `SUPPORTED`; inspect any additional comments on accepted
+labels. Where the coders choose different categories or chronological-link
+values, the comparison table keeps each pre-discussion response intact. The
+canonical category changes only after an explicit reconciled decision. If the
+category changes, reassess `final_earliest_link` for that final category.
 
 After discussion fields and final decisions have been completed in the
 comparison table, run:
@@ -104,13 +139,17 @@ comparison table, run:
 python3 scripts/taxonomy_coder_check.py summarize
 ```
 
-This reports the reconciled `SUPPORTED`, `NOT_SUPPORTED`, and `INDETERMINATE`
-counts. A `SUPPORTED` result means that the archived artifacts directly support
-the chronological attribution convention; it does not establish a causal root
-cause. Counts and percentages describe the fixed 242-trial corpus. The summary
-also provides a task-cluster bootstrap interval for the supported proportion
-when a task-level generalization is desired; failed trials must not be treated
-as independent Bernoulli observations.
+This reports the reconciled category distribution and the number and
+percentage of trials rated `SUPPORTED`, `NOT_SUPPORTED`, or `INDETERMINATE`
+for the final category. The `SUPPORTED` percentage over all failed trials
+answers how often the chronological attribution convention is supported by
+the retained evidence. An additional assessable-only percentage uses
+`SUPPORTED / (SUPPORTED + NOT_SUPPORTED)`; `INDETERMINATE` is never counted as
+`NOT_SUPPORTED`. The script resamples whole tasks for a 95% interval on the
+all-trial supported proportion. These are observational evidence-link
+judgments, not proof of a causal root cause. No agreement statistic should be
+reported before the three coder sheets have actually been completed and
+locked.
 
 ## Files created after coding
 
@@ -119,12 +158,12 @@ The comparison command writes:
 - `docs/taxonomy_methodology/coder_comparison.csv`, the table used for
   discussion and reconciliation; and
 - `result/Statistics results/taxonomy_reliability/agreement.json`, the numeric
-  pre-discussion agreement summary.
+  pre-discussion verification summary.
 
 After reconciliation, the summarize command writes
-`result/Statistics results/taxonomy_reliability/final_attribution_summary.json`.
+`result/Statistics results/taxonomy_reliability/final_review_summary.json`.
 
-The comparison table is created only after both coder sheets are complete and
+The comparison table is created only after all three coder sheets are complete and
 is not overwritten automatically after discussion fields have been edited.
 
 ## Methodological references

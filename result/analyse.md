@@ -8,7 +8,7 @@ Artifact paths are provided for navigation and reproducibility. They identify th
 
 ## Scope and interpretation
 
-Each unresolved trial receives one primary category. Secondary defects may coexist, but are not counted again. An evaluation outcome and its qualitative explanation are separate: a failed label does not establish a cause, and a difference from the reference patch does not establish incorrectness. In particular, V1/V2 annotations identify a specification or representation distinction; they do not automatically establish that the patch is semantically correct or that the benchmark is invalid.
+Each unresolved trial retains one primary category. Secondary defects may coexist, but are not counted again. Assignments awaiting further verification remain in their existing categories, with evidence limitations stated in their diagnoses and case notes; retention does not mean that a recheck confirmed the attribution. An evaluation outcome and its qualitative explanation are separate: a failed label does not establish a cause, and a difference from the reference patch does not establish incorrectness. In particular, V1/V2 annotations identify a specification or representation distinction; they do not automatically establish that the patch is semantically correct or that the benchmark is invalid.
 
 The counts below are descriptive. The three trials on one task and the model results for that task are dependent. Category percentages do not constitute model-comparison significance tests, and the unresolved trials are not treated as independent statistical samples. Within-model percentages use that model's number of failures as the denominator. The CSV summaries additionally report category incidence among all evaluated attempts per model and the number of distinct tasks. Task coverage can overlap across categories, so distinct-task counts must not be added across rows. The annotations are study data; they do not constitute a new independent-coder agreement study.
 
@@ -28,9 +28,9 @@ Model groups are Claude (`claude-sonnet-4-5-20250929`), Gemini (`gemini-3-pro-pr
 | --- | --- | --- | --- | --- | --- |
 | Problem Understanding | 23 (32.9%) | 24 (29.3%) | 24 (26.7%) | 71 (29.3%) | 9 |
 | Localization | 5 (7.1%) | 4 (4.9%) | 8 (8.9%) | 17 (7.0%) | 4 |
-| Strategy & Logic | 22 (31.4%) | 35 (42.7%) | 35 (38.9%) | 92 (38.0%) | 22 |
+| Strategy & Logic | 21 (30.0%) | 31 (37.8%) | 30 (33.3%) | 82 (33.9%) | 19 |
 | Implementation & Execution | 2 (2.9%) | 0 (0.0%) | 2 (2.2%) | 4 (1.7%) | 4 |
-| Validation & Harness Constraints | 18 (25.7%) | 19 (23.2%) | 21 (23.3%) | 58 (24.0%) | 11 |
+| Validation & Harness Constraints | 19 (27.1%) | 23 (28.0%) | 26 (28.9%) | 68 (28.1%) | 15 |
 
 ## Distribution by subcategory
 
@@ -40,12 +40,12 @@ Model groups are Claude (`claude-sonnet-4-5-20250929`), Gemini (`gemini-3-pro-pr
 | P2 | Problem Understanding | Distracted by Hints / TODOs | 9 | 9 | 9 | 27 | 11.2% | 3 |
 | L1 | Localization | Incomplete Scope / Wrong Layer | 5 | 4 | 8 | 17 | 7.0% | 4 |
 | S1 | Strategy & Logic | Partial Fix / Incomplete Logic | 13 | 18 | 22 | 53 | 21.9% | 11 |
-| S2 | Strategy & Logic | Incorrect Strategy / Side Effects | 6 | 14 | 10 | 30 | 12.4% | 10 |
+| S2 | Strategy & Logic | Incorrect Repair Strategy | 5 | 10 | 5 | 20 | 8.3% | 8 |
 | S3 | Strategy & Logic | Hardcoding / Bad Practices | 3 | 3 | 3 | 9 | 3.7% | 1 |
 | I1 | Implementation & Execution | Tool Failure / Silent State Hallucination | 2 | 0 | 2 | 4 | 1.7% | 4 |
 | V1 | Validation & Harness Constraints | Specification-Oracle Gap | 2 | 5 | 2 | 9 | 3.7% | 2 |
 | V2 | Validation & Harness Constraints | Strict Output Format Mismatch | 8 | 10 | 11 | 29 | 12.0% | 5 |
-| V3 | Validation & Harness Constraints | Side Effects | 7 | 4 | 6 | 17 | 7.0% | 3 |
+| V3 | Validation & Harness Constraints | Regression of Existing Behavior | 8 | 8 | 11 | 27 | 11.2% | 7 |
 | V4 | Validation & Harness Constraints | Execution Timing Mismatch | 1 | 0 | 2 | 3 | 1.2% | 2 |
 
 The largest category is S1 (partial or incomplete logic). Its count describes the assigned repair failures in this dataset; it does not demonstrate a general reasoning limit or establish that localization is solved. The I1 category counts primary execution failures, so it also does not measure every transient tool error recovered during otherwise successful or differently classified trajectories.
@@ -87,20 +87,20 @@ S denotes a recorded success and F a recorded failure. Within each model cell, t
 | [matplotlib__matplotlib-26291](#case-matplotlib__matplotlib-26291) | S S S | S S S | F S S | 1 | S1 |
 | [psf__requests-2931](#case-psf__requests-2931) | S S S | F S F | S F F | 4 | S1 |
 | [pylint-dev__pylint-4661](#case-pylint-dev__pylint-4661) | F F F | F F F | F F F | 9 | S3 |
-| [pylint-dev__pylint-8898](#case-pylint-dev__pylint-8898) | F S F | F F F | F F F | 8 | P1, S2 |
+| [pylint-dev__pylint-8898](#case-pylint-dev__pylint-8898) | F S F | F F F | F F F | 8 | P1, V3 |
 | [scikit-learn__scikit-learn-13135](#case-scikit-learn__scikit-learn-13135) | S S S | S S S | S F S | 1 | I1 |
 | [scikit-learn__scikit-learn-15100](#case-scikit-learn__scikit-learn-15100) | S S F | S S S | S S S | 1 | I1 |
 | [scikit-learn__scikit-learn-26194](#case-scikit-learn__scikit-learn-26194) | F F F | F F F | F F F | 9 | P2 |
-| [sphinx-doc__sphinx-10323](#case-sphinx-doc__sphinx-10323) | S S S | S S S | S F S | 1 | S2 |
-| [sphinx-doc__sphinx-11510](#case-sphinx-doc__sphinx-11510) | F F F | F F F | F F F | 9 | S2 |
+| [sphinx-doc__sphinx-10323](#case-sphinx-doc__sphinx-10323) | S S S | S S S | S F S | 1 | V3 |
+| [sphinx-doc__sphinx-11510](#case-sphinx-doc__sphinx-11510) | F F F | F F F | F F F | 9 | S2, V3 |
 | [sphinx-doc__sphinx-7748](#case-sphinx-doc__sphinx-7748) | F F F | F F F | F F F | 9 | V2 |
 | [sphinx-doc__sphinx-8056](#case-sphinx-doc__sphinx-8056) | F F S | S S S | F F F | 5 | V2 |
 | [sphinx-doc__sphinx-8548](#case-sphinx-doc__sphinx-8548) | S F F | F F F | S F F | 7 | S1 |
 | [sphinx-doc__sphinx-9591](#case-sphinx-doc__sphinx-9591) | S S S | S S S | S S F | 1 | S2 |
 | [sympy__sympy-12489](#case-sympy__sympy-12489) | F F F | F F F | F F F | 9 | P1 |
-| [sympy__sympy-15345](#case-sympy__sympy-15345) | S S S | S S S | S F S | 1 | S2 |
+| [sympy__sympy-15345](#case-sympy__sympy-15345) | S S S | S S S | S F S | 1 | V3 |
 | [sympy__sympy-17630](#case-sympy__sympy-17630) | F F F | S F F | F F F | 8 | S1 |
-| [sympy__sympy-18211](#case-sympy__sympy-18211) | S S F | F F F | F S S | 5 | S1, V3 |
+| [sympy__sympy-18211](#case-sympy__sympy-18211) | S S F | F F F | F S S | 5 | S1, S2, V3 |
 
 ## Case analyses
 
@@ -138,9 +138,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: F F F; Gemini: F F F; GPT: F F F.
 
-**Analysis.** All nine failed trials exempt floating and complex inputs from conversion but convert every other dtype to float64. This changes boolean behavior. The reference change narrows conversion to the intended integer and object kinds, preserving other previously supported dtypes.
+**Analysis.** The nine candidate patches use different dtype predicates and preserve the reported float16 input. They retain boolean-to-float behavior already present in the baseline, whereas the reference patch also changes that policy. Their original V3 assignments are retained pending further verification; the retained artifacts do not identify the official failing assertion for these nine outcomes.
 
 **Primary assignments.** V3: Claude-1, Claude-2, Claude-3, Gemini-1, Gemini-2, Gemini-3, GPT-1, GPT-2, GPT-3.
+
+**Interpretation.** The original documentation and deleted code in the reference patch explicitly show boolean conversion before the repair. A difference from the reference implementation does not establish either a new regression or the reason for a failed evaluation. Retention of the V3 labels does not mean that the recheck confirmed those attributions.
 
 <a id="case-django__django-10554"></a>
 
@@ -178,9 +180,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: F F F; Gemini: S S S; GPT: F F F.
 
-**Analysis.** Claude trials 1 and 3 and GPT trials 1 and 3 convert the hostname at Message-ID creation but leave a Unicode value in the shared DNS cache. Claude trial 2 introduces another cache attribute that the test cleanup does not reset. GPT trial 2 has a repeated-call logic defect. The passing Gemini trials avoid the problematic cached representation.
+**Analysis.** Claude trial 2 supports the local IDNA fix but adds a second cache that survives the established _fqdn reset, leaving a stale hostname. GPT trial 2 supports the first lookup but reads an unassigned local fqdn on a later cache hit. Both independently reproducible cache-lifecycle regressions are V3. Claude trials 1 and 3 and GPT trials 1 and 3 repair Message-ID locally while preserving the baseline Unicode cache behavior; their original V3 assignments are retained pending further verification.
 
 **Primary assignments.** V3: Claude-1, Claude-2, Claude-3, GPT-1, GPT-2, GPT-3.
+
+**Interpretation.** An unchanged baseline cache value is not evidence of a newly introduced regression. The retained V3 labels for Claude/GPT trials 1 and 3 do not mean that the recheck confirmed their primary failure. A complete per-test evaluation trace is needed.
 
 <a id="case-django__django-11790"></a>
 
@@ -516,9 +520,9 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Analysis.** Claude trial 2 handles quantifier commas while preserving the existing configuration parser conventions and passes. Claude trials 1 and 3 and GPT trials 2 and 3 change grouping-sensitive splitting; Gemini trials 1 and 3 and GPT trial 1 use CSV parsing without resolving the quantifier case. Gemini trial 2 correctly traces the parser and adopts a quoting/escaping workaround, but its generic CSV escape rule consumes existing regex backslashes and changes matching semantics. Configuration deletion is a secondary execution defect.
 
-**Primary assignments.** P1: Claude-1, Claude-3, Gemini-1, Gemini-3, GPT-1, GPT-2, GPT-3; S2: Gemini-2.
+**Primary assignments.** P1: Claude-1, Claude-3, Gemini-1, Gemini-3, GPT-1, GPT-2, GPT-3; V3: Gemini-2.
 
-**Interpretation.** The issue explicitly permits escaping, so disagreement with the raw-quantifier test alone does not establish P1. The S2 classification is based on the independently demonstrated regex-semantic regressions.
+**Interpretation.** The issue explicitly permits escaping, so disagreement with the raw-quantifier test alone does not establish P1. Gemini trial 2 is V3 because its supported comma-escaping workaround also changes an existing digit pattern from \d+ to d+, a directly reproducible regression.
 
 <a id="case-scikit-learn__scikit-learn-13135"></a>
 
@@ -568,11 +572,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: S S S; Gemini: S S S; GPT: S F S.
 
-**Analysis.** GPT trial 2 adds indentation inference inside prepend_filter and append_filter instead of limiting the repair to filter order. This changes the established behavior of the prepend and append options and is the only failed trial for this task.
+**Analysis.** GPT trial 2 moves dedent before prepend/append but also infers indentation from the included body. Even with no dedent option, a body line starting with four spaces makes the patch add those spaces to previously verbatim prepend/append strings. This confirmed regression is assigned V3 under the preference over a co-occurring strategy error. The other eight trials pass.
 
-**Primary assignments.** S2: GPT-2.
+**Primary assignments.** V3: GPT-2.
 
-**Interpretation.** The failure concerns an unnecessary semantic change in option handling, not the intended ordering repair itself.
+**Interpretation.** The new target-combination test also exposes the extra indentation. Its membership in FAIL_TO_PASS does not erase the independently demonstrated regression in the pre-existing no-dedent scenario.
 
 <a id="case-sphinx-doc__sphinx-11510"></a>
 
@@ -582,11 +586,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: F F F; Gemini: F F F; GPT: F F F.
 
-**Analysis.** Claude, GPT, and Gemini trial 2 replace substantial parts of the include implementation, introducing behavior differences. Gemini trial 1 supplies the including document name rather than the included document name to the event. Gemini trial 3 supplies a source path instead of the document name and also emits an event for literal text inclusion that the tests exclude. The reference patch intercepts insert_input during include processing.
+**Analysis.** Claude trials 1 and 3 and all Gemini and GPT trials enable source-read processing for parsed includes but also apply the event to literal include content. The baseline includes literal text verbatim, and a transforming handler now changes that existing behavior. These eight trials are V3 under the confirmed-regression preference; event-identity and other integration defects may coexist. Claude trial 2 delegates literal/code modes and passes its archived local and existing tests; its original S2 assignment is retained pending further verification because the retained official evaluation evidence does not identify the primary defect.
 
-**Primary assignments.** S2: Claude-1, Claude-2, Claude-3, Gemini-1, Gemini-2, Gemini-3, GPT-1, GPT-2, GPT-3.
+**Primary assignments.** S2: Claude-2; V3: Claude-1, Claude-3, Gemini-1, Gemini-2, Gemini-3, GPT-1, GPT-2, GPT-3.
 
-**Interpretation.** The relevant defects concern event identity and include semantics; patch size alone does not establish failure.
+**Interpretation.** Literal transformations are visible in several saved executions. The diagnostic script additionally reconstructs all eight final Include implementations from archived source and patches and checks literal event reachability using dependency stubs. It does not run the full historical Sphinx suite. A broad rewrite alone does not establish a failure category.
 
 <a id="case-sphinx-doc__sphinx-7748"></a>
 
@@ -658,9 +662,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: S S S; Gemini: S S S; GPT: S F S.
 
-**Analysis.** The passing trials provide suitable printing logic. GPT trial 2 also removes the StrPrinter.doprint delegation and changes _format_code, altering the existing string-output and argument-ordering behavior. It is the only failed trial for this task.
+**Analysis.** GPT trial 2 produces Max/Min syntax but also replaces the StrPrinter.doprint entry point with the inherited CodePrinter implementation. The archived recursive list formatter calls self.doprint again; the inner call deletes state still owned by the outer call. An isolated execution of those archived methods reproduces AttributeError for a nonempty list. This existing-behavior regression is assigned V3. The other eight trials pass.
 
-**Primary assignments.** S2: GPT-2.
+**Primary assignments.** V3: GPT-2.
+
+**Interpretation.** The printer check uses the archived method bodies with dispatch stubs; it is not a historical full-suite execution. The diagnostic script documents this scope explicitly.
 
 <a id="case-sympy__sympy-17630"></a>
 
@@ -682,11 +688,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: S S F; Gemini: F F F; GPT: F S S.
 
-**Analysis.** Gemini trials 1 and 2 handle equalities but leave the relevant inequality path unchanged; GPT trial 1 likewise has incomplete relational coverage. Claude trial 3 and Gemini trial 3 change a lower-level solver to return ConditionSet, altering its existing return contract rather than handling the fallback at the relational conversion boundary.
+**Analysis.** The failed trials use different symbolic-set fallback strategies. Gemini trials 1 and 2 and GPT trial 1 retain their S1 assignments for limited relational coverage. Claude trial 3 adds an Equality-specific solveset fallback: the first official target assertion passes, but the second returns a ConditionSet over a transformed equation that admits an extraneous positive solution, so this trial is S2. Gemini trial 3 changes the lower-level solver's exception contract; archived original tests report DID NOT RAISE, supporting V3.
 
-**Primary assignments.** S1: Gemini-1, Gemini-2, GPT-1; V3: Claude-3, Gemini-3.
+**Primary assignments.** S1: Gemini-1, Gemini-2, GPT-1; S2: Claude-3; V3: Gemini-3.
 
-**Interpretation.** The appropriate fallback boundary matters: changing a lower-level solver return type also affects callers other than Relational.as_set.
+**Interpretation.** Claude trial 3 does not modify the lower-level inequality solver. The two official equality assertions were checked against its archived method using the exact historical SymPy source. The diagnostic script provides this optional source-dependent check separately from its standard-library-only checks.
 
 ## Appendix A. Complete unresolved-trial catalogue
 
@@ -710,33 +716,33 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 14 | astropy__astropy-14182 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/astropy__astropy-14182/astropy__astropy-14182.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 15 | astropy__astropy-14182 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/astropy__astropy-14182/astropy__astropy-14182.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 16 | astropy__astropy-14182 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/astropy__astropy-14182/astropy__astropy-14182.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
-| 17 | astropy__astropy-8872 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 18 | astropy__astropy-8872 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 19 | astropy__astropy-8872 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 20 | astropy__astropy-8872 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 21 | astropy__astropy-8872 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 22 | astropy__astropy-8872 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 23 | astropy__astropy-8872 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 24 | astropy__astropy-8872 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 25 | astropy__astropy-8872 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Side Effects | Validation & Harness Constraints |
+| 17 | astropy__astropy-8872 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 18 | astropy__astropy-8872 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 19 | astropy__astropy-8872 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 20 | astropy__astropy-8872 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 21 | astropy__astropy-8872 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 22 | astropy__astropy-8872 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 23 | astropy__astropy-8872 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 24 | astropy__astropy-8872 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 25 | astropy__astropy-8872 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/astropy__astropy-8872/astropy__astropy-8872.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 26 | django__django-10554 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-10554/django__django-10554.traj.json) | I1 Tool Failure / Silent State Hallucination | Implementation & Execution |
-| 27 | django__django-10554 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 28 | django__django-10554 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 29 | django__django-10554 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 30 | django__django-10554 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 31 | django__django-10554 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 32 | django__django-10554 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 33 | django__django-10554 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 34 | django__django-10554 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 35 | django__django-11276 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 36 | django__django-11276 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 37 | django__django-11276 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 38 | django__django-11532 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-11532/django__django-11532.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 39 | django__django-11532 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-11532/django__django-11532.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 40 | django__django-11532 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-11532/django__django-11532.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 41 | django__django-11532 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-11532/django__django-11532.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 42 | django__django-11532 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-11532/django__django-11532.traj.json) | V3 Side Effects | Validation & Harness Constraints |
-| 43 | django__django-11532 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-11532/django__django-11532.traj.json) | V3 Side Effects | Validation & Harness Constraints |
+| 27 | django__django-10554 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 28 | django__django-10554 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 29 | django__django-10554 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 30 | django__django-10554 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 31 | django__django-10554 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 32 | django__django-10554 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 33 | django__django-10554 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 34 | django__django-10554 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-10554/django__django-10554.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 35 | django__django-11276 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 36 | django__django-11276 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 37 | django__django-11276 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-11276/django__django-11276.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 38 | django__django-11532 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 39 | django__django-11532 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 40 | django__django-11532 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 41 | django__django-11532 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 42 | django__django-11532 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 43 | django__django-11532 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-11532/django__django-11532.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 44 | django__django-11790 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-11790/django__django-11790.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 45 | django__django-11790 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-11790/django__django-11790.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 46 | django__django-11790 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-11790/django__django-11790.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
@@ -744,7 +750,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 48 | django__django-11790 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-11790/django__django-11790.traj.json) | V4 Execution Timing Mismatch | Validation & Harness Constraints |
 | 49 | django__django-11790 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-11790/django__django-11790.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 50 | django__django-11790 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-11790/django__django-11790.traj.json) | V4 Execution Timing Mismatch | Validation & Harness Constraints |
-| 51 | django__django-12125 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-12125/django__django-12125.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 51 | django__django-12125 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-12125/django__django-12125.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
 | 52 | django__django-13023 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-13023/django__django-13023.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 53 | django__django-13023 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-13023/django__django-13023.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 54 | django__django-13023 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-13023/django__django-13023.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
@@ -757,7 +763,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 61 | django__django-13344 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-13344/django__django-13344.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 62 | django__django-13344 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-13344/django__django-13344.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 63 | django__django-13344 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-13344/django__django-13344.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
-| 64 | django__django-13401 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-13401/django__django-13401.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 64 | django__django-13401 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-13401/django__django-13401.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
 | 65 | django__django-13406 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 66 | django__django-13406 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
 | 67 | django__django-13406 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-13406/django__django-13406.traj.json) | V1 Specification-Oracle Gap | Validation & Harness Constraints |
@@ -782,10 +788,10 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 86 | django__django-14771 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/django__django-14771/django__django-14771.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 87 | django__django-14771 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-14771/django__django-14771.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 88 | django__django-14771 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-14771/django__django-14771.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
-| 89 | django__django-15022 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 90 | django__django-15022 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 91 | django__django-15022 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 92 | django__django-15022 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 89 | django__django-15022 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 90 | django__django-15022 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 91 | django__django-15022 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 92 | django__django-15022 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/django__django-15022/django__django-15022.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
 | 93 | django__django-15103 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15103/django__django-15103.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 94 | django__django-15103 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/django__django-15103/django__django-15103.traj.json) | L1 Incomplete Scope / Wrong Layer | Localization |
 | 95 | django__django-15629 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/django__django-15629/django__django-15629.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
@@ -865,7 +871,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 169 | pylint-dev__pylint-8898 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 170 | pylint-dev__pylint-8898 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 171 | pylint-dev__pylint-8898 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
-| 172 | pylint-dev__pylint-8898 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 172 | pylint-dev__pylint-8898 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 173 | pylint-dev__pylint-8898 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 174 | pylint-dev__pylint-8898 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 175 | pylint-dev__pylint-8898 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/pylint-dev__pylint-8898/pylint-dev__pylint-8898.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
@@ -881,16 +887,16 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 185 | scikit-learn__scikit-learn-26194 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/scikit-learn__scikit-learn-26194/scikit-learn__scikit-learn-26194.traj.json) | P2 Distracted by Hints / TODOs | Problem Understanding |
 | 186 | scikit-learn__scikit-learn-26194 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/scikit-learn__scikit-learn-26194/scikit-learn__scikit-learn-26194.traj.json) | P2 Distracted by Hints / TODOs | Problem Understanding |
 | 187 | scikit-learn__scikit-learn-26194 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/scikit-learn__scikit-learn-26194/scikit-learn__scikit-learn-26194.traj.json) | P2 Distracted by Hints / TODOs | Problem Understanding |
-| 188 | sphinx-doc__sphinx-10323 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 189 | sphinx-doc__sphinx-11510 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 190 | sphinx-doc__sphinx-11510 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 191 | sphinx-doc__sphinx-11510 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 192 | sphinx-doc__sphinx-11510 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 193 | sphinx-doc__sphinx-11510 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 194 | sphinx-doc__sphinx-11510 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 195 | sphinx-doc__sphinx-11510 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 196 | sphinx-doc__sphinx-11510 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
-| 197 | sphinx-doc__sphinx-11510 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 188 | sphinx-doc__sphinx-10323 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 189 | sphinx-doc__sphinx-11510 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 190 | sphinx-doc__sphinx-11510 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
+| 191 | sphinx-doc__sphinx-11510 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 192 | sphinx-doc__sphinx-11510 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 193 | sphinx-doc__sphinx-11510 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 194 | sphinx-doc__sphinx-11510 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 195 | sphinx-doc__sphinx-11510 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 196 | sphinx-doc__sphinx-11510 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
+| 197 | sphinx-doc__sphinx-11510 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-11510/sphinx-doc__sphinx-11510.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 198 | sphinx-doc__sphinx-7748 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sphinx-doc__sphinx-7748/sphinx-doc__sphinx-7748.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 199 | sphinx-doc__sphinx-7748 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sphinx-doc__sphinx-7748/sphinx-doc__sphinx-7748.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
 | 200 | sphinx-doc__sphinx-7748 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sphinx-doc__sphinx-7748/sphinx-doc__sphinx-7748.traj.json) | V2 Strict Output Format Mismatch | Validation & Harness Constraints |
@@ -912,7 +918,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 216 | sphinx-doc__sphinx-8548 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 217 | sphinx-doc__sphinx-8548 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 218 | sphinx-doc__sphinx-8548 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-8548/sphinx-doc__sphinx-8548.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
-| 219 | sphinx-doc__sphinx-9591 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-9591/sphinx-doc__sphinx-9591.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 219 | sphinx-doc__sphinx-9591 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sphinx-doc__sphinx-9591/sphinx-doc__sphinx-9591.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
 | 220 | sympy__sympy-12489 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 221 | sympy__sympy-12489 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 222 | sympy__sympy-12489 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
@@ -922,7 +928,7 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 226 | sympy__sympy-12489 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 227 | sympy__sympy-12489 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
 | 228 | sympy__sympy-12489 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sympy__sympy-12489/sympy__sympy-12489.traj.json) | P1 Misinterpretation / Domain Knowledge Lack | Problem Understanding |
-| 229 | sympy__sympy-15345 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sympy__sympy-15345/sympy__sympy-15345.traj.json) | S2 Incorrect Strategy / Side Effects | Strategy & Logic |
+| 229 | sympy__sympy-15345 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sympy__sympy-15345/sympy__sympy-15345.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 230 | sympy__sympy-17630 | Claude | [1](../data/traj/claude-sonnet-4-5-20250929/round1/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 231 | sympy__sympy-17630 | Claude | [2](../data/traj/claude-sonnet-4-5-20250929/round2/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 232 | sympy__sympy-17630 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
@@ -931,10 +937,10 @@ All 242 rows below correspond one-to-one to the archived `label=false` records. 
 | 235 | sympy__sympy-17630 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 236 | sympy__sympy-17630 | GPT | [2](../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 237 | sympy__sympy-17630 | GPT | [3](../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/sympy__sympy-17630/sympy__sympy-17630.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
-| 238 | sympy__sympy-18211 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | V3 Side Effects | Validation & Harness Constraints |
+| 238 | sympy__sympy-18211 | Claude | [3](../data/traj/claude-sonnet-4-5-20250929/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S2 Incorrect Repair Strategy | Strategy & Logic |
 | 239 | sympy__sympy-18211 | Gemini | [1](../data/traj/gemini-3-pro-preview/round1/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 | 240 | sympy__sympy-18211 | Gemini | [2](../data/traj/gemini-3-pro-preview/round2/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
-| 241 | sympy__sympy-18211 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | V3 Side Effects | Validation & Harness Constraints |
+| 241 | sympy__sympy-18211 | Gemini | [3](../data/traj/gemini-3-pro-preview/round3/sympy__sympy-18211/sympy__sympy-18211.traj.json) | V3 Regression of Existing Behavior | Validation & Harness Constraints |
 | 242 | sympy__sympy-18211 | GPT | [1](../data/traj/gpt-5-2025-08-07-medium-reasoning/round1/sympy__sympy-18211/sympy__sympy-18211.traj.json) | S1 Partial Fix / Incomplete Logic | Strategy & Logic |
 
 ## Reproduction and data fields

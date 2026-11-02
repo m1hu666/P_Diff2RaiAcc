@@ -37,14 +37,14 @@ pip install -r requirements.txt
 
 ```text
 P_Diff2RaiAcc/
-├── analyse/                       # Per-model patches and task text evidence
+├── analyse/                       # Per-model patches, task text, and benchmark test IDs
 ├── data/
 │   ├── data/verified/             # Verified patches and Boolean outcomes
 │   └── traj/                      # Saved trajectories and evaluation reports
 ├── docs/
 │   ├── METHODS.md                 # Accounting, settings, and statistical design
 │   ├── failure_analysis/          # Final codebook, annotations, and case notes
-│   └── taxonomy_methodology/      # Taxonomy construction and two-coder check
+│   └── taxonomy_methodology/      # Taxonomy construction and three-coder verification
 ├── result/
 │   ├── analyse.md                 # Complete failure-analysis catalogue
 │   ├── summary.txt                # Three-trial outcome summary
@@ -71,6 +71,15 @@ The canonical quantitative outputs are written under
 `result/Statistics results/`; the complete failure report is written to
 `result/analyse.md`. Validation records include input hashes and coverage checks
 so the generated tables can be checked against the archived data.
+
+Each `analyse/<model>/<task>/` folder also contains `<task>_test_ids.json`,
+with the dataset's `FAIL_TO_PASS` and `PASS_TO_PASS` test-ID lists. These are
+expected benchmark tests, not per-trial execution outcomes. They were exported
+from the same [Princeton SWE-bench Verified dataset](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified)
+used by `scripts/datavis.py` at revision
+`c104f840cc67f8b6eec6f759ebc8b2693d585d4a`.
+Run `python3 scripts/export_verified_test_ids.py --check` to verify the saved
+lists against that dataset; the script refuses to overwrite a differing file.
 
 Optional implementation-source inspection requires an exact mini-SWE-agent
 1.15.0 checkout from the experiment:
@@ -105,7 +114,10 @@ relevant.
 | `scripts/label_add.py` | Synchronize one verified label file with its evaluation report; this utility mutates the selected label file |
 | `scripts/audit_submission_integrity.py` | Compare submissions, verified patches, and evaluation labels |
 | `scripts/audit_inference_usage.py` | Produce an independent trajectory-level usage audit |
-| `scripts/taxonomy_coder_check.py` | Prepare two label-blind coder sheets, compare their classifications, and summarize reconciled attribution decisions |
+| `scripts/export_verified_test_ids.py` | Export and validate the two expected-test lists for each archived task without rewriting existing patches |
+| `scripts/build_taxonomy_review_packet.py` | Build a linked, readable packet of existing failed-trial labels, diagnoses, and archived materials for coder verification |
+| `scripts/taxonomy_coder_check.py` | Prepare three verification sheets, compare category and earliest-link judgments, and summarize reconciled assignments |
+| `scripts/check_failure_boundary_examples.py` | Reproduce small baseline/candidate behavior checks supporting the S2/V3 distinction; optional historical SymPy source enables two target assertions |
 
 Example trajectory inspection:
 
