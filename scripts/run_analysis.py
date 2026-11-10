@@ -10,6 +10,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from analysis_layout import artifact, COHORTS
 
 BASE = Path(__file__).resolve().parent
 ROOT = BASE.parent
@@ -39,12 +40,19 @@ def main():
     run('audit_token_methodology.py', '--data-root', args.data_root, '--output', args.output)
     if args.agent_root:
         extra = ['--adapter-root', args.adapter_root] if args.adapter_root else []
-        run('inspect_runtime_source.py', '--agent-root', args.agent_root, '--output', args.output, *extra)
+        run('inspect_runtime_source.py', '--agent-root', args.agent_root, '--output', args.output/'settings', *extra)
+    run('audit_usage_missingness.py', '--data-root', args.data_root, '--output', args.output)
+    run('build_failure_analysis.py', '--data-root', args.data_root, '--output', args.output)
     run('inferential_analysis.py', '--self-check')
-    run('inferential_analysis.py', '--input', args.output/'per_attempt.csv', '--output', args.output,
-        '--seed', args.seed, '--bootstrap-repetitions', args.bootstrap_repetitions,
-        '--permutations', args.permutations)
-    run('build_analysis_report.py', '--output', args.output)
+    run('test_clustered_statistics.py')
+    for cohort in COHORTS:
+        run('inferential_analysis.py', '--input', artifact(args.output, 'per_attempt.csv'), '--output', args.output,
+            '--cohort', cohort, '--seed', args.seed, '--bootstrap-repetitions', args.bootstrap_repetitions,
+            '--permutations', args.permutations)
+    run('clustered_sensitivity.py', '--data-root', args.data_root, '--output', args.output,
+        '--seed', args.seed, '--bootstrap-repetitions', args.bootstrap_repetitions)
+    for cohort in COHORTS:
+        run('build_analysis_report.py', '--output', args.output, '--cohort', cohort)
     run('validate_analysis_outputs.py', '--data-root', args.data_root, '--output', args.output)
 
 

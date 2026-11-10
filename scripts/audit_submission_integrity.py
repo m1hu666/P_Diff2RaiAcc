@@ -1,7 +1,7 @@
 """Compare archived trajectories, final patches, and evaluation reports offline.
 
 The script reads all 900 saved attempts and writes metadata-only integrity tables
-under ``result/Statistics results/submission_integrity``. It never changes source
+under ``result/Statistics results/audits/submissions``. It never changes source
 data, trajectories, patches, evaluation reports, or labels.
 """
 
@@ -12,7 +12,7 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "result" / "Statistics results" / "submission_integrity"
+OUT = ROOT / "result" / "Statistics results" / "audits" / "submissions"
 
 
 def normalized(text):

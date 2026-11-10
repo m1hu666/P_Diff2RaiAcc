@@ -2,7 +2,7 @@
 
 The script reads archived trajectories and verified labels, then writes an
 independent trajectory-level cross-check under
-``result/Statistics results/trajectory_audit``. Outputs contain metadata,
+``result/Statistics results/audits/trajectory``. Outputs contain metadata,
 hashes, and aggregate counts, never prompt contents. Missing usage fields remain
 missing rather than being interpreted as zero.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from statistics import mean, median
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "result" / "Statistics results" / "trajectory_audit"
+OUT = ROOT / "result" / "Statistics results" / "audits" / "trajectory"
 
 
 def canonical(value):

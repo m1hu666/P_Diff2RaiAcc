@@ -8,7 +8,7 @@ The experiments used [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agen
 version 1.15.0 from its v1 codebase; see the official
 [v1 documentation](https://mini-swe-agent.com/v1/). The exact prompt templates
 extracted from the archived runs are released in
-[prompt_templates.json](result/Statistics%20results/prompt_templates.json), and
+[prompt_templates.json](result/Statistics%20results/settings/prompt_templates.json), and
 the [methods notes](docs/METHODS.md#experimental-settings-and-prompts) document
 prompt consistency and the serial bash interaction loop. Each saved trajectory
 also retains the agent configuration and complete ordered message history.
@@ -55,7 +55,7 @@ P_Diff2RaiAcc/
 
 ## Reproduce the analyses
 
-Run the quantitative resource, settings, outcome, and inferential analysis:
+Run the complete token-accounting, resource, outcome, taxonomy, and clustered sensitivity analysis:
 
 ```bash
 python3 scripts/run_analysis.py
@@ -67,7 +67,9 @@ Run the failure-analysis catalogue builder:
 python3 scripts/build_failure_analysis.py
 ```
 
-The canonical quantitative outputs are written under
+Both the full cohort (100 tasks) and the Django-excluded cohort (50 tasks) are generated. Repository/difficulty strata and repository-cluster sensitivity are included.
+
+The categorized outputs are written under
 `result/Statistics results/`; the complete failure report is written to
 `result/analyse.md`. Validation records include input hashes and coverage checks
 so the generated tables can be checked against the archived data.

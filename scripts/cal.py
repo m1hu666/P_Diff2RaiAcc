@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SUMMARY_FILE = ROOT / "result" / "summary.txt"
-OUTPUT_FILE = ROOT / "result" / "Statistics results" / "token_usage_stats.txt"
+OUTPUT_FILE = ROOT / "result" / "Statistics results" / "accounting" / "token_usage_stats.txt"
 TRAJECTORY_ROOT = ROOT / "data" / "traj"
 
 

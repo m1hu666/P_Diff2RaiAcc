@@ -15,6 +15,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, median
+from analysis_layout import artifact, task_metadata
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
@@ -65,13 +66,17 @@ def utc(value):
 
 
 def dump_json(out, name, value):
-    (out / name).write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+    path = artifact(out, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
 def dump_csv(out, name, rows, fieldnames=None):
     if fieldnames is None:
         fieldnames = list(dict.fromkeys(k for row in rows for k in row))
-    with (out / name).open("w", newline="") as stream:
+    path = artifact(out, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
@@ -105,6 +110,7 @@ def summarize(rows, cohort, group):
 
 
 def audit(root, out):
+    metadata = task_metadata(root / 'result' / 'summary.txt')
     attempts, calls, anomalies, initial_rows, variants = [], [], [], [], {}
     task_ids = None
     coverage = defaultdict(Counter)
@@ -113,7 +119,9 @@ def audit(root, out):
     setting_counts = defaultdict(Counter)
     initial_groups = defaultdict(list)
     templates = {}
-    file_manifest = []
+    summary_path = root / 'result' / 'summary.txt'
+    file_manifest = [{'path': 'result/summary.txt',
+                      'sha256': hashlib.sha256(summary_path.read_bytes()).hexdigest()}]
     images = defaultdict(set)
     for model in MODELS:
         for trial in (1, 2, 3):
@@ -179,7 +187,7 @@ def audit(root, out):
                 submission = info.get("submission") or ""
                 verified = prediction.get("model_patch") or ""
                 patch_match = normalized_patch(submission) == normalized_patch(verified)
-                row = key | {"label": prediction.get("label"), "exit_status": info.get("exit_status"),
+                row = key | metadata[task] | {"label": prediction.get("label"), "exit_status": info.get("exit_status"),
                              "trajectory_path": str(path.relative_to(root)), "trajectory_sha256": hashlib.sha256(raw).hexdigest(),
                              "config_sha256": config_hash, "initial_prompt_sha256": digest(initial),
                              "templates_sha256": template_hash, "requested_model": model_cfg["model_name"],
@@ -358,6 +366,9 @@ def audit(root, out):
     dump_json(out, "configuration_variants.json", configuration_rows)
     dump_json(out, "prompt_templates.json", templates)
     dump_json(out, "input_manifest.json", file_manifest)
+    if set(metadata) != task_ids:
+        raise ValueError('Archived task metadata does not match the evaluated task set')
+    dump_csv(out, "task_metadata.csv", [metadata[task] for task in sorted(task_ids)])
     print(f"Extracted {len(attempts)} attempts and {len(calls)} saved responses; {len(anomalies)} structural anomalies.")
 
 

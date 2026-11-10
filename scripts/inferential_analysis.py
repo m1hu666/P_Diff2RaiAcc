@@ -17,6 +17,7 @@ import random
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean
+from analysis_layout import artifact, repository, DJANGO, COHORTS
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
@@ -109,16 +110,18 @@ def portable_name(path):
         return path.name
 
 
-def write_csv(directory, name, rows, fieldnames):
-    with (directory / name).open("w", newline="") as stream:
+def write_csv(directory, name, rows, fieldnames, cohort="full"):
+    path = artifact(directory, name, cohort)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
 
-def load_attempts(path):
+def load_attempts(path, exclude_repositories=()):
     with path.open() as stream:
-        rows = list(csv.DictReader(stream))
+        rows = [r for r in csv.DictReader(stream) if repository(r['task']) not in exclude_repositories]
     grouped = defaultdict(lambda: defaultdict(list))
     seen = set()
     for row in rows:
@@ -152,7 +155,8 @@ def load_attempts(path):
 
 
 def analyze(args):
-    rows, grouped, models, tasks = load_attempts(args.input)
+    excluded = [DJANGO] if args.cohort == 'without_django' else []
+    rows, grouped, models, tasks = load_attempts(args.input, excluded)
     n_tasks = len(tasks)
     cost_available = all(row["cost"] is not None for row in rows)
     # Features are model/task means. The same task resample is used for every
@@ -256,14 +260,15 @@ def analyze(args):
     args.output.mkdir(parents=True, exist_ok=True)
     for filename, result in (("resource_comparisons.csv", resources), ("success_comparisons.csv", successes),
                              ("stability_comparisons.csv", stability), ("success_stability_summary.csv", summaries)):
-        write_csv(args.output, filename, result, list(result[0]))
+        write_csv(args.output, filename, result, list(result[0]), args.cohort)
     cost_fields = ["left_model", "right_model", "n_tasks", "trials_per_model_task", "metric", "left_mean", "right_mean",
                    "mean_difference", "difference_ci95_lower", "difference_ci95_upper", "ratio_of_means",
                    "ratio_ci95_lower", "ratio_ci95_upper"]
-    write_csv(args.output, "estimated_cost_comparisons.csv", costs, cost_fields)
+    write_csv(args.output, "estimated_cost_comparisons.csv", costs, cost_fields, args.cohort)
     design = {
         "input": portable_name(args.input), "input_sha256": hashlib.sha256(args.input.read_bytes()).hexdigest(),
         "n_tasks": n_tasks, "n_attempts": len(rows), "models": models, "trials_per_model_task": 3,
+        "cohort": args.cohort, "excluded_repositories": excluded, "included_tasks": tasks,
         "sampling_unit": "task; all models and their three trials are kept together",
         "resource_estimand": "mean per-attempt usage after averaging trials within model/task; effects are left-minus-right means and ratios of arithmetic means",
         "bootstrap": {"method": "paired task-cluster percentile bootstrap", "repetitions": args.bootstrap_repetitions,
@@ -287,9 +292,9 @@ def analyze(args):
         "global_multiplicity_sensitivity": "An additional Holm adjustment across all 15 resource, success and stability tests is reported alongside outcome-family adjustments.",
         "scope": "fixed archived routes and settings; observational model comparisons, not causal effects of matched decoding parameters",
         "outcome_splits": "success/failure resource summaries are descriptive; no within-outcome hypothesis tests",
-        "taxonomy_scope": "task/attempt-level labels are available in failure_trial_catalog.csv; category-level inferential tests are not implemented; any future tests must retain task dependence"
+        "taxonomy_scope": "Exploratory paired task-level category-incidence tests and bootstrap intervals are produced by clustered_sensitivity.py; their multiplicity families are separate from these 15 tests."
     }
-    (args.output / "analysis_design.json").write_text(json.dumps(design, indent=2) + "\n")
+    artifact(args.output, "analysis_design.json", args.cohort).write_text(json.dumps(design, indent=2) + "\n")
     print(f"Analyzed {len(rows)} attempts in {n_tasks} paired task clusters.")
     for row in summaries:
         print(f"{row['model']}: resolution={100*row['resolution_rate']:.2f}%; unstable tasks={row['unstable_tasks']}/{n_tasks}")
@@ -322,8 +327,9 @@ def self_check():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=DEFAULT_OUTPUT / "per_attempt.csv")
+    parser.add_argument("--input", type=Path, default=artifact(DEFAULT_OUTPUT, "per_attempt.csv"))
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--cohort", choices=COHORTS, default='full')
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bootstrap-repetitions", type=int, default=10000)
     parser.add_argument("--permutations", type=int, default=19999)

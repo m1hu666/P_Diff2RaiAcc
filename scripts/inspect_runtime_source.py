@@ -27,7 +27,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
-DEFAULT_OUTPUT = ROOT / 'result' / 'Statistics results'
+DEFAULT_OUTPUT = ROOT / 'result' / 'Statistics results' / 'settings'
 EXPERIMENT_AGENT_VERSION = '1.15.0'
 
 

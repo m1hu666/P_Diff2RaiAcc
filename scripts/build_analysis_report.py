@@ -1,8 +1,8 @@
 """Generate Markdown tables and a concise report from canonical statistics.
 
 The script reads CSV/JSON results produced by the audit and inferential scripts,
-writes Markdown tables below ``result/Statistics results/tables``, and
-writes ``REPORT.md`` beside the statistical data. It does not inspect raw
+writes Markdown tables beside their categorized CSVs and a report per cohort.
+It does not inspect raw
 trajectories or modify experimental inputs.
 """
 
@@ -11,6 +11,7 @@ import csv
 import json
 import os
 from pathlib import Path
+from analysis_layout import artifact, COHORTS
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
@@ -21,8 +22,8 @@ MODELS = ['claude-sonnet-4-5-20250929', 'gemini-3-pro-preview',
 SHORT = dict(zip(MODELS, ['Claude', 'Gemini', 'GPT']))
 
 
-def read_csv(directory, name):
-    with (directory/name).open() as stream:
+def read_csv(directory, name, cohort='full'):
+    with artifact(directory, name, cohort).open() as stream:
         return list(csv.DictReader(stream))
 
 
@@ -46,8 +47,9 @@ def markdown_table(headers, rows):
 
 def table(directory, name, headers, rows):
     md = markdown_table(headers, rows)
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory/(name+'.md')).write_text(md+'\n')
+    path = artifact(directory.parent, name+'.md', directory.name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(md+'\n')
     return md
 
 
@@ -75,25 +77,26 @@ def displayed_setting(settings, model, parameter):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument('--cohort', choices=COHORTS, default='full')
     parser.add_argument('--methods', type=Path, default=DEFAULT_METHODS)
     args = parser.parse_args()
-    out, tables = args.output, args.output/'tables'
-    methods_link = Path(os.path.relpath(args.methods.resolve(), out.resolve())).as_posix().replace(' ', '%20')
-    audit = json.loads((out/'audit.json').read_text())
-    design = json.loads((out/'analysis_design.json').read_text())
-    summaries = read_csv(out, 'summary_metrics.csv')
-    resources = read_csv(out, 'resource_comparisons.csv')
-    success = read_csv(out, 'success_comparisons.csv')
-    stability = read_csv(out, 'stability_comparisons.csv')
-    costs = read_csv(out, 'estimated_cost_comparisons.csv')
-    outcomes = read_csv(out, 'success_stability_summary.csv')
+    out, tables = args.output, args.output/args.cohort
+    methods_link = Path(os.path.relpath(args.methods.resolve(), tables.resolve())).as_posix().replace(' ', '%20')
+    audit = json.loads(artifact(out, 'audit.json').read_text())
+    design = json.loads(artifact(out, 'analysis_design.json', args.cohort).read_text())
+    summaries = read_csv(out, 'summary_metrics.csv', args.cohort)
+    resources = read_csv(out, 'resource_comparisons.csv', args.cohort)
+    success = read_csv(out, 'success_comparisons.csv', args.cohort)
+    stability = read_csv(out, 'stability_comparisons.csv', args.cohort)
+    costs = read_csv(out, 'estimated_cost_comparisons.csv', args.cohort)
+    outcomes = read_csv(out, 'success_stability_summary.csv', args.cohort)
     settings = read_csv(out, 'settings.csv')
     coverage = read_csv(out, 'usage_field_coverage.csv')
 
     resource_rows = []
     for model in MODELS:
-        for group in ['success', 'failure']:
-            values = {r['metric']:r for r in summaries if r['model']==model and r['group']==group and r['cohort']=='all_archived_900'}
+        for group in ['all', 'success', 'failure']:
+            values = {r['metric']:r for r in summaries if r['model']==model and r['group']==group and r['cohort']==args.cohort}
             steps = values['steps']
             resource_rows.append([SHORT[model], group, steps['attempts'], number(steps['mean']),
                                   number(steps['median'])+' '+ci(steps['q25'], steps['q75']),
@@ -220,7 +223,7 @@ reported as configured output limits. Provider pages were accessed on
 
 {provider_md}
 
-[Output-limit diagnostics](output_limit_diagnostics.md) reports observed
+[Output-limit diagnostics](../accounting/output_limit_diagnostics.md) reports observed
 length-stop responses and their saved completion counts. Those observations do
 not recover the configured maximum-output value.
 
@@ -228,7 +231,7 @@ No native provider tools were configured. The common agent instead requested
 one textual Bash block, parsed it locally, and executed commands serially.
 '''
     tables.mkdir(parents=True, exist_ok=True)
-    (tables/'settings.md').write_text(settings_document)
+    artifact(out, 'settings.md').write_text(settings_document)
     accounting_rows = [
         ['Anthropic route', 'Saved usage.prompt_tokens', 'Saved usage.completion_tokens', 'Cache-read and cache-creation counters when reported.'],
         ['OpenAI-compatible route', 'Saved usage.prompt_tokens', 'Saved usage.completion_tokens', 'Cached-input and reasoning counters when reported.'],
@@ -256,17 +259,17 @@ one textual Bash block, parsed it locally, and executed commands serially.
 
     report = f'''# Analysis results
 
-Analysis set: {audit['tasks']} tasks x 3 models x 3 trials = {audit['observed_attempts']} attempts. Inference uses {design['n_tasks']} paired task clusters; all {audit['recorded_responses']:,} saved responses have input and completion counts. Full methods are in [METHODS.md]({methods_link}).
+Cohort: `{args.cohort}`. Analysis set: {design['n_tasks']} tasks x 3 models x 3 trials = {design['n_attempts']} attempts. Inference uses {design['n_tasks']} paired task clusters. Input and completion totals are numeric for every saved response. Full methods are in [METHODS.md]({methods_link}).
 
 ## Resource use
 
 {resource_md}
 
-k = 1,000 reported tokens. Outcome-specific rows are descriptive because the successful/failed task sets differ across models. Model inference below uses the same complete set of 100 tasks.
+k = 1,000 reported tokens. Outcome-specific rows are descriptive because the successful/failed task sets differ across models. Model inference below uses the same complete set of {design['n_tasks']} tasks in this cohort.
 
 {resource_inference}
 
-Differences are left minus right; ratios are left divided by right. Intervals are pointwise task-bootstrap estimates. Holm correction covers the nine resource tests. Step and reported-input differences are supported; completion-count differences are not statistically established. This is not evidence of equivalent completion usage or matched internal reasoning computation.
+Differences are left minus right; ratios are left divided by right. Intervals are pointwise task-bootstrap estimates. Holm correction covers the nine resource tests. Read the adjusted p-values for this cohort; a non-significant result does not establish equivalence. Cross-provider token counts do not measure matched internal reasoning computation. A joint adjustment over both cohorts is provided in `../sensitivity/model_comparisons_both_cohorts.csv`.
 
 ## Resolution and execution consistency
 
@@ -274,22 +277,24 @@ Differences are left minus right; ratios are left divided by right. Intervals ar
 
 {success_md}
 
-Resolution: the Claude-GPT difference passes correction within the three resolution comparisons, but does not pass the conservative global correction across all 15 tests. Treat this finding as exploratory rather than robust across endpoints.
+Resolution differences use task success fractions. Family Holm adjustment covers three model pairs; global adjustment covers all 15 resource/outcome tests within this cohort. Intervals are pointwise, not multiplicity-adjusted.
 
 {stability_md}
 
-Instability means one or two successes out of three trials. The counts are 15/7/14 for Claude/Gemini/GPT. Gemini is numerically more consistent, but no paired stability comparison is significant after correction; consistently failed tasks also count as consistent.
+Instability means one or two successes out of three trials. Counts and paired comparisons are shown above; consistently failed tasks also count as consistent.
 
 ## Settings and accounting
 
-Archived settings, configuration provenance, and linked official provider references are in `tables/settings.md`; token-field definitions are in `tables/token_accounting.md`. Official defaults are used only to interpret omitted fields and are kept separate from saved client arguments and model capability ceilings. An unrecorded gateway-effective value is not reconstructed from current documentation. `tables/output_limit_diagnostics.md` reports observed length stops and their reported completion counts; these are observations, not configured request limits.
+Archived settings, configuration provenance, and linked official provider references are in [settings](../settings/settings.md); token-field definitions are in [token definitions](../accounting/token_accounting.md). Official defaults are used only to interpret omitted fields and are kept separate from saved client arguments and model capability ceilings. An unrecorded gateway-effective value is not reconstructed from current documentation. [output diagnostics](../accounting/output_limit_diagnostics.md) reports observed length stops and their reported completion counts; these are observations, not configured request limits.
 
 {coverage_md}
 
 Optional cache/thinking details are not uniformly complete. Missing values remain missing, and subdivisions are not added again to their totals. Exact formulas, the common tool protocol, prompt consistency and differing orchestration settings are specified in [METHODS.md]({methods_link}).
 '''
-    (out/'REPORT.md').write_text(report)
-    print('Generated Markdown tables and REPORT.md.')
+    (tables/'REPORT.md').write_text(report)
+    from build_sensitivity_report import overview
+    overview(out)
+    print(f'Generated categorized Markdown tables and {args.cohort}/REPORT.md.')
 
 
 if __name__ == '__main__':

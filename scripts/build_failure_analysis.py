@@ -16,6 +16,7 @@ import re
 from urllib.parse import unquote
 from collections import Counter
 from pathlib import Path
+from analysis_layout import artifact
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
@@ -223,7 +224,7 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
     total = len(catalogue)
     tasks = {key[0] for key in labels}
     failed_tasks = {r['task_id'] for r in catalogue}
-    reference = lambda filename: link(out/filename, report)
+    reference = lambda filename: link(artifact(out, filename), report)
     package_link = lambda filename: link(FAILURE_DOCS/filename, report)
     lines = ['# Failure Analysis and Trial-Level Catalogue', '',
              f'The evaluated dataset contains {len(labels):,} trials: {len(tasks)} tasks, three model groups, and three trials per task. '
@@ -331,9 +332,11 @@ def main():
         'failure_task_summary.csv': task_rows,
     }
     for filename, rows in datasets.items():
-        write_csv(out/filename, rows)
-        english_portable((out/filename).read_text(encoding='utf-8'),filename)
-        require(len(read_csv(out/filename)) == len(rows), f'CSV serialization changed row count: {filename}')
+        path = artifact(out, filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_csv(path, rows)
+        english_portable(path.read_text(encoding='utf-8'),filename)
+        require(len(read_csv(path)) == len(rows), f'CSV serialization changed row count: {filename}')
     report.write_text(content,encoding='utf-8')
     appendix = content.split('## Appendix A. Complete unresolved-trial catalogue',1)[1].split('## Reproduction and data fields',1)[0]
     require(sum(bool(re.match(r'^\| \d+ \|',line)) for line in appendix.splitlines()) == len(catalogue), 'Incomplete appendix')
@@ -341,7 +344,9 @@ def main():
         'indexed_inputs': [{'path':p.relative_to(root).as_posix(),'sha256':sha256(p)} for p in sorted(set(input_paths))],
         'annotation_inputs': [{'name':p.resolve().relative_to(root).as_posix(),'sha256':sha256(p)} for p in (args.annotations,args.codebook,args.case_notes)],
     }
-    (out/'failure_analysis_inputs.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
+    manifest_path = artifact(out, 'failure_analysis_inputs.json')
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
     validation = {
         'passed': True, 'evaluated_tasks': len({key[0] for key in labels}), 'evaluated_trials':len(labels),
         'recorded_failures':len(catalogue), 'unique_catalogue_rows':len({r['trial_id'] for r in catalogue}),
@@ -352,7 +357,7 @@ def main():
         'counts_scope':'One retained primary category per archived unresolved trial; evidence limitations remain in the diagnoses and case notes',
         'checks':'Coverage, uniqueness, labels, categories, source hashes, artifact availability, CSV rows, appendix rows, report links, English and portable paths',
     }
-    validation_path = out/'failure_analysis_validation.json'
+    validation_path = artifact(out, 'failure_analysis_validation.json')
     for match in re.finditer(r'\]\(([^)]+)\)',content):
         target=unquote(match.group(1).strip('<>'))
         if not target.startswith('#'):

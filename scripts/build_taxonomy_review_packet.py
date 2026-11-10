@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CATALOGUE = ROOT / 'result' / 'Statistics results' / 'failure_trial_catalog.csv'
+DEFAULT_CATALOGUE = ROOT / 'result' / 'Statistics results' / 'full' / 'failures' / 'failure_trial_catalog.csv'
 DEFAULT_ANNOTATIONS = ROOT / 'docs' / 'failure_analysis' / 'failure_annotations.csv'
 DEFAULT_NOTES = ROOT / 'docs' / 'failure_analysis' / 'failure_case_notes.json'
 DEFAULT_CODEBOOK = ROOT / 'docs' / 'failure_analysis' / 'failure_codebook.json'

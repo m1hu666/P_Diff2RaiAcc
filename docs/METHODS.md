@@ -41,11 +41,11 @@ The archived `info.model_stats.instance_cost` is a framework-estimated API cost.
 
 ## Experimental settings and prompts
 
-`result/Statistics results/settings.csv` contains one row per model, setting and value, with its run count and status. `explicit` means present in saved client model arguments; `unset` means omitted; agent settings use their recorded values. The publication table includes temperature, top-p/top-k, output-limit aliases, reasoning/thinking, seed, stop, penalties, verbosity, n, stream, native API tools, cache markers and execution limits.
+`result/Statistics results/settings/settings.csv` contains one row per model, setting and value, with its run count and status. `explicit` means present in saved client model arguments; `unset` means omitted; agent settings use their recorded values. The publication table includes temperature, top-p/top-k, output-limit aliases, reasoning/thinking, seed, stop, penalties, verbosity, n, stream, native API tools, cache markers and execution limits.
 
 All 900 trajectories record mini-SWE-agent 1.15.0. During the upgrade to that version, the only model-specific decoding override added by the experimenter was medium reasoning for GPT; the other model arguments were left at the common framework/client configuration values. This provenance is distinct from serialization status: all archived client configurations contain `temperature=0.0` and `drop_params=true`, while GPT contains `reasoning: medium` in 299 attempts and `reasoning_effort: medium` in one. Thus medium reasoning was requested in every GPT attempt. Unsupported values may be removed by the adapter, so the common serialized temperature is not evidence of equal upstream temperatures.
 
-Official documentation is used as reference context for omitted fields, not as a substitute for the archived request. For direct Anthropic Messages requests, temperature defaults to 1.0 if omitted, `top_p` defaulted to 0.99 during the experiments, `max_tokens` is required, and Claude Sonnet 4.5 defaults to thinking off with a 64K model output ceiling. Google documents a Gemini 3 temperature default of 1.0, high thinking when `thinking_level` is omitted, a general `topP` default of 0.95 while noting model-dependent generation defaults, a randomized seed when omitted, and a 65,536-token output ceiling for `gemini-3-pro-preview`. OpenAI documents medium as the original GPT-5 reasoning default, a 128K output ceiling, and incompatibility of older GPT-5 models with `temperature` and `top_p`. These documented defaults and ceilings are linked in the generated [settings table](../result/Statistics%20results/tables/settings.md) and below.
+Official documentation is used as reference context for omitted fields, not as a substitute for the archived request. For direct Anthropic Messages requests, temperature defaults to 1.0 if omitted, `top_p` defaulted to 0.99 during the experiments, `max_tokens` is required, and Claude Sonnet 4.5 defaults to thinking off with a 64K model output ceiling. Google documents a Gemini 3 temperature default of 1.0, high thinking when `thinking_level` is omitted, a general `topP` default of 0.95 while noting model-dependent generation defaults, a randomized seed when omitted, and a 65,536-token output ceiling for `gemini-3-pro-preview`. OpenAI documents medium as the original GPT-5 reasoning default, a 128K output ceiling, and incompatibility of older GPT-5 models with `temperature` and `top_p`. These documented defaults and ceilings are linked in the generated [settings table](../result/Statistics%20results/settings/settings.md) and below.
 
 Top-p, top-k and maximum generation tokens were not explicitly specified in the archived client arguments. Any direct Anthropic Messages request would have required a `max_tokens` value after adapter/gateway processing, but that native payload was not retained. For GPT, successful calls together with `drop_params=true` and OpenAI's documented incompatibility are consistent with the adapter dropping temperature; this cannot be confirmed from a native payload. The exact historical gateway-effective values are consequently marked unrecorded. The 64K, 65,536 and 128K values are model capability ceilings, not reconstructed experimental limits. Observed `length` stops and their completion counts are descriptive diagnostics only. Claude and Gemini have no explicitly configured thinking field; their documented off/high behaviors apply only if the route preserved omitted-field behavior. A prompt requiring a THOUGHT section does not establish equal hidden-reasoning budgets.
 
@@ -65,7 +65,121 @@ For stability, a task is unstable when exactly one or two of its three attempts 
 
 As a multiplicity sensitivity analysis, all 15 hypothesis tests are additionally adjusted together using Holm. Both adjustments are exported. The outcome-family analysis and the conservative global analysis are distinguished in the results, particularly for marginal resolution findings. Confidence intervals are not used to bypass the specified p-value corrections.
 
-Success/failure resource splits, the all-models/all-trials-successful subset, and common-budget task-round subsets remain descriptive sensitivity summaries. Conditioning on success selects different task sets across models, so those splits are not causal evidence that failure causes extra reasoning or that one model is intrinsically more efficient. Task/attempt-level failure labels are available in `failure_trial_catalog.csv`, but category-level inferential tests are not implemented in the current pipeline. Such tests must retain task dependence; aggregate category counts alone do not preserve that structure.
+Success/failure resource splits, the all-models/all-trials-successful subset, and common-budget task-round subsets remain descriptive sensitivity summaries. Conditioning on success selects different task sets across models, so those splits are not causal evidence that failure causes extra reasoning or that one model is intrinsically more efficient. Task/attempt-level failure labels are available under each cohort in `failures/failure_trial_catalog.csv`. The exploratory category-incidence inference described below retains task dependence; aggregate category counts alone do not preserve that structure.
+
+## Optional-field missingness audit
+
+The extraction keeps numeric, null and unavailable states distinct. In particular,
+a null parent detail object makes its nested counter unavailable; this is not a
+numeric zero. `accounting/missing_usage_shapes.csv` additionally distinguishes
+parent-null objects, null leaves, absent keys and numeric reports by model,
+field and returned model label. `accounting/missing_usage_examples.json` retains
+exact saved usage objects and their trajectory/message locations. The audit
+re-reads all 900 trajectories and checks every field's state counts against the
+extraction coverage; prompt/completion totals are numeric for every response.
+
+The incomplete details already occur in the saved normalized responses. The
+archive cannot determine whether a provider did not supply a counter, a gateway
+or adapter did not preserve it, or serialization omitted it. These are possible
+mechanisms, not established causes; the available objects cannot recover the
+native upstream responses or missing historical conversion code. Missingness
+must not be imputed as zero or interpreted as disabled thinking. The audit and
+its boundaries are summarized in `accounting/MISSINGNESS.md`.
+
+## Full data and Django exclusion
+
+The same analysis is run for `full/` (100 tasks, 900 attempts, 11 repositories)
+and `without_django/` (50 tasks, 450 attempts, 10 repositories). Django membership
+is determined from the archived task identifier, not from a failure outcome.
+All trials and all models of an included task are retained. The excluded cohort
+is nested in the full cohort and is a sensitivity analysis, not an independent
+replication. Human category assignments are retained without relabeling.
+
+Repository and difficulty metadata are stored in `data/task_metadata.csv`.
+Repository is parsed from the task identifier. Difficulty is the archived
+SWE-bench human-fix-time label in `result/summary.txt`, not a difficulty estimate
+constructed from the compared models' outcomes. The summary source and generated
+metadata are hashed. There are 39 tasks labeled `<15 min fix`, 51 labeled
+`15 min - 1 hour`, and 10 labeled `1-4 hours` in the complete set.
+
+Both cohorts report resource distributions, resolution, instability and failure
+frequencies with identical definitions. Previous descriptive subsets of jointly
+solved tasks and common-budget/common-timeout task-rounds are retained within
+each cohort's resource summary. They do not have separate hypothesis tests.
+The task-paired inference described above applies separately to each cohort.
+As an additional multiplicity sensitivity, all 30 resource/outcome tests across
+both cohorts are Holm-adjusted together in
+`sensitivity/model_comparisons_both_cohorts.csv`. This adjustment does not assume
+independent cohorts. Within-family, within-cohort-global and cross-cohort
+adjustments are labeled separately.
+
+## Taxonomy incidence, composition and task dependence
+
+For each model, task and category, we retain the number of its three trials
+assigned that category (zero through three). The same is done for the five
+broader stages. Category incidence is the category count divided by all attempts;
+failure composition is the category count divided by observed failures.
+Pooled estimates retain all nine model/trial attempts per task. Distinct tasks
+with a category are also reported and can overlap across categories.
+
+In each cohort, a complete-task bootstrap (10,000 resamples, seed 42) produces
+pointwise percentile 95% intervals for incidence and composition, per model and
+pooled. Composition is recomputed as a ratio of sums in every draw. A draw with
+no failures has undefined composition and is omitted; the number of valid draws
+is recorded. A category with zero observed events can have a degenerate bootstrap
+interval; that interval is not a bound on an unseen event probability.
+
+Exploratory model comparisons test category incidence among all attempts, not
+composition conditional on failure. Exact two-sided task-block-swap tests use
+the integer category-count differences and the same exchangeability null as the
+resolution comparison. This preserves three-trial dependence and task pairing.
+There are 48 tests per cohort: (11 subcategories + 5 stages) times three model
+pairs. Holm correction is reported within each cohort and jointly across all
+96 taxonomy tests. Stage/category outcomes overlap and these tests remain
+exploratory; they form a separate family from resource/outcome tests. Intervals
+are pointwise and do not override the multiplicity correction.
+
+## Repository and difficulty strata
+
+Both cohorts export the same estimates by repository and archived difficulty in
+`stratified/`, with task and attempt denominators. Complete tasks, including all
+models and trials, are bootstrapped within each stratum. Paired differences use
+the same draws for both models. These are descriptive estimation analyses with
+no additional stratum-level hypothesis-test battery. A stratum containing one
+task has no estimation interval. Matching difficulty labels does not itself make
+trials independent or resolve correlation among tasks from one repository.
+
+The main task-bootstrap assumption is supplemented, not replaced, by
+`repository_sensitivity/`. A whole-repository bootstrap samples the observed
+repositories with replacement and carries all their tasks, models and trials
+together. Task-weighted means and category compositions are calculated as ratios
+of summed statistics; the denominator therefore changes with the selected
+repository sizes. This permits arbitrary dependence within a repository but
+assumes repositories are suitable independent clusters. Only 11/10 unequal
+clusters are available, so intervals are exploratory; no repository-level
+p-values are reported. Few-cluster limitations follow the discussion in
+[Cameron and Miller](https://cameron.econ.ucdavis.edu/research/Cameron_Miller_JHR_2015_February.pdf).
+
+Repository-equal summaries separately average repository-specific estimates.
+This changes the estimand from an average task to an average observed repository;
+undefined within-repository failure compositions are excluded and the number of
+defined repositories is stated. Leave-one-repository-out estimates expose the
+influence of each repository without supplying extra independent observations.
+Removing Django alone does not establish representativeness of new projects.
+
+## Django influence on failure distributions
+
+`sensitivity/django_taxonomy_shift.csv` reports counts and compositions in the
+full, Django-only and non-Django sets, Django's share of each category, and the
+category/stage rankings before and after exclusion. Its uncertainty analysis
+uses a joint task bootstrap stratified by Django membership: sample Django tasks
+and non-Django tasks separately at their observed sizes, then reuse the same
+non-Django draw in both the full and excluded estimates. The resulting contrast
+is excluded-minus-full composition in percentage points. This preserves overlap
+and conditions on the observed 50/50 task mix; it is not an independent-groups
+test. Intervals are pointwise descriptive estimates with no separate significance
+claims for the sixteen correlated composition changes. Their dependence on the
+observed repository mix and retained qualitative annotations remains explicit.
 
 ## References
 
