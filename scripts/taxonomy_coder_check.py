@@ -1,4 +1,4 @@
-"""Prepare three label-review sheets and compare the completed checks.
+"""Prepare and compare complete structured CSV coder checks.
 
 ``prepare`` pairs archived failed trials with their current primary categories
 and creates three eight-column coder sheets. Each coder also audits whether the
@@ -7,6 +7,10 @@ current label meets the codebook's earliest supported-link convention.
 reports pre-discussion agreement. ``summarize`` validates reconciled decisions
 and reports category and earliest-link counts. The script never modifies source
 artifacts, canonical annotations, or a previously created discussion table.
+The submitted reviews are now English CSV transcriptions with some incomplete
+or informal category-review cells. This historical agreement workflow requires
+fully interpreted entries and its original codebook. Final chronological-link
+counts use summarize_earliest_links.py and the post-reconciliation categories.
 """
 
 import argparse
@@ -78,7 +82,7 @@ def load_codebook(path):
             'Unexpected earliest-link values in the codebook')
     codebook_hash = sha256(path)
     require(codebook_hash == FROZEN_CODEBOOK_SHA256,
-            'The frozen codebook changed; review it and regenerate the coder sheets')
+            'Pre-discussion agreement requires the original frozen eleven-category codebook; the reconciled V5 codebook cannot be substituted')
     return categories, stages, earliest_values, codebook_hash
 
 

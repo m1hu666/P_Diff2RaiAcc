@@ -51,6 +51,7 @@ def main():
             '--permutations', args.permutations)
     run('clustered_sensitivity.py', '--data-root', args.data_root, '--output', args.output,
         '--seed', args.seed, '--bootstrap-repetitions', args.bootstrap_repetitions)
+    run('summarize_earliest_links.py', '--output', args.output/'taxonomy_reliability')
     for cohort in COHORTS:
         run('build_analysis_report.py', '--output', args.output, '--cohort', cohort)
     run('validate_analysis_outputs.py', '--data-root', args.data_root, '--output', args.output)

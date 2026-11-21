@@ -1,7 +1,8 @@
 """Validate all canonical quantitative outputs against their archived inputs.
 
-The validator checks coverage, arithmetic, task-paired comparison families,
-input hashes, and portable English paths in ``scripts/``, ``docs/``, and
+The validator checks coverage, canonical annotations, arithmetic, task-paired
+comparison families, input hashes, local document links, and portable English
+paths in ``scripts/``, ``docs/``, and
 ``result/Statistics results``. It only writes ``validation.json`` in the output
 directory and never changes trajectories, labels, patches, or manuscript files.
 """
@@ -13,6 +14,7 @@ import argparse
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
+from urllib.parse import unquote
 from analysis_layout import artifact, COHORTS, DJANGO
 from inferential_analysis import holm_adjust
 
@@ -65,6 +67,14 @@ def main():
     assert len(metadata) == 100
     assert sum(r['repository'] == DJANGO for r in metadata.values()) == 50
     expected_failed = {(r['task'], r['model'], r['round']) for r in attempts if r['label']=='False'}
+    failure_docs = args.data_root/'docs/failure_analysis'
+    categories = {r['code']: r for r in json.loads((failure_docs/'failure_codebook.json').read_text())['categories']}
+    with (failure_docs/'failure_annotations.csv').open() as stream:
+        annotation_rows = list(csv.DictReader(stream))
+    annotations = {(r['task_id'], r['model'], 'round'+r['trial']): r for r in annotation_rows}
+    assert len(annotations) == len(annotation_rows)
+    assert set(annotations) == expected_failed
+    checked_annotations = 0
     checked_comparisons, checked_taxonomy = 0, 0
     taxonomy_tests = []
     for cohort in COHORTS:
@@ -87,15 +97,30 @@ def main():
         catalogue = read('failure_trial_catalog.csv', cohort)
         observed_failed = {(r['task_id'], r['model'], 'round'+r['trial']) for r in catalogue}
         assert observed_failed == {key for key in expected_failed if key[0] in selected}
+        assert len(catalogue) == len(observed_failed)
+        for row in catalogue:
+            key = row['task_id'], row['model'], 'round'+row['trial']
+            source = annotations[key]
+            for field in ('primary_category', 'diagnosis', 'verified_patch_sha256', 'trajectory_sha256'):
+                assert row[field] == source[field], f'Stale {field} in {cohort} catalogue: {key}'
+            category = categories[source['primary_category']]
+            assert row['subcategory'] == category['name'] and row['stage'] == category['stage']
+        checked_annotations += len(catalogue)
         for name in ('failure_taxonomy_summary.csv', 'failure_stage_summary.csv'):
             summary = read(name, cohort)
+            group = 'primary_category' if name == 'failure_taxonomy_summary.csv' else 'stage'
+            expected_groups = set(categories) if group == 'primary_category' else {r['stage'] for r in categories.values()}
+            assert {r[group] for r in summary} == expected_groups
+            counts = Counter(r[group] for r in catalogue)
+            assert all(int(r['assigned_trials']) == counts[r[group]] for r in summary)
             assert sum(int(r['assigned_trials']) for r in summary) == len(catalogue)
             assert abs(sum(float(r['share_of_all_failures_percent']) for r in summary)-100) < 1e-8
         tests = read('category_inference.csv', cohort)
-        assert len(tests) == 48
+        expected_taxonomy_tests = 3 * (len(read('failure_taxonomy_summary.csv', cohort)) + len(read('failure_stage_summary.csv', cohort)))
+        assert len(tests) == expected_taxonomy_tests
         for r, adjusted in zip(tests, holm_adjust([float(r['p_value']) for r in tests])):
             assert int(r['n_tasks']) == expected_n
-            assert int(r['holm_family_size']) == 48
+            assert int(r['holm_family_size']) == expected_taxonomy_tests
             assert abs(float(r['p_value_holm'])-adjusted) < 1e-12
         taxonomy_tests.extend(tests)
         checked_taxonomy += len(tests)
@@ -114,7 +139,7 @@ def main():
                 assert all(r['ci95_lower']==r['ci95_upper']=='' for r in records
                            if r['dimension']==stratum['dimension'] and r['stratum']==stratum['stratum'])
     for row, p in zip(taxonomy_tests, holm_adjust([float(r['p_value']) for r in taxonomy_tests])):
-        assert int(row['both_cohorts_family_size'])==96
+        assert int(row['both_cohorts_family_size'])==len(taxonomy_tests)
         assert abs(float(row['p_value_holm_both_cohorts'])-p) < 1e-12
     joint = list(csv.DictReader((out/'sensitivity/model_comparisons_both_cohorts.csv').open()))
     assert len(joint)==30
@@ -122,11 +147,68 @@ def main():
         assert int(row['both_cohorts_family_size'])==30
         assert abs(float(row['p_value_holm_both_cohorts'])-p) < 1e-12
     shifts = list(csv.DictReader((out/'sensitivity/django_taxonomy_shift.csv').open()))
-    assert len(shifts) == 16
+    assert len(shifts) == len(read('failure_taxonomy_summary.csv')) + len(read('failure_stage_summary.csv'))
     for r in shifts:
         assert int(r['full_count']) == int(r['without_django_count']) + int(r['django_count'])
         assert abs(float(r['change_without_minus_full_pp']) -
                    (float(r['without_django_share_percent'])-float(r['full_share_percent']))) < 1e-9
+    earliest_folder = out/'taxonomy_reliability'
+    with (earliest_folder/'final_earliest_links.csv').open() as stream:
+        earliest_rows = list(csv.DictReader(stream))
+    short_models = {r['model_short']: r['model'] for r in read('failure_trial_catalog.csv')}
+    statuses = {'SUPPORTED', 'NOT_SUPPORTED', 'INDETERMINATE'}
+    review_docs = args.data_root/'docs/taxonomy_methodology'
+    coders = {}
+    for name in ('a', 'b', 'c'):
+        with (review_docs/f'coder_{name}.csv').open() as stream:
+            records = list(csv.DictReader(stream))
+        coders[name] = {(r['task_id'], r['model'], r['trial']): r for r in records}
+        assert len(coders[name]) == len(records) == len(annotations)
+        assert all(r['earliest_link'] in statuses for r in records)
+    with (review_docs/'earliest_link_decisions.csv').open() as stream:
+        decisions = {(r['task_id'], r['model'], r['trial']): r for r in csv.DictReader(stream)}
+    observed_earliest = set()
+    for row in earliest_rows:
+        review_key = row['task_id'], row['model'], row['trial']
+        source_key = row['task_id'], short_models[row['model']], 'round'+row['trial']
+        assert row['final_category'] == annotations[source_key]['primary_category']
+        assert row['final_earliest_link'] in statuses
+        assert all(coders[n][review_key]['current_category'] == row['reviewed_category'] for n in coders)
+        values = [coders[n][review_key]['earliest_link'] for n in coders]
+        assert values == [row[f'coder_{n}_earliest_link'] for n in coders]
+        if review_key in decisions:
+            expected = decisions[review_key]['final_earliest_link']
+            basis = 'discussion_decision'
+            assert decisions[review_key]['final_category'] == row['final_category']
+        elif row['reviewed_category'] != row['final_category']:
+            expected, basis = 'INDETERMINATE', 'changed_category_not_reassessed'
+        elif 'NOT_SUPPORTED' in values:
+            expected, basis = 'NOT_SUPPORTED', 'at_least_one_not_supported'
+        elif all(value == 'SUPPORTED' for value in values):
+            expected, basis = 'SUPPORTED', 'three_supported_statuses'
+        else:
+            expected, basis = 'INDETERMINATE', 'incomplete_supported_assessment'
+        assert (row['final_earliest_link'], row['decision_basis']) == (expected, basis)
+        observed_earliest.add(source_key)
+    assert observed_earliest == set(annotations) and len(earliest_rows) == len(annotations)
+    with (earliest_folder/'earliest_link_summary.csv').open() as stream:
+        earliest_summary = list(csv.DictReader(stream))
+    summary_keys = {(r['grouping'], r['group']) for r in earliest_summary}
+    assert len(summary_keys) == len(earliest_summary)
+    assert summary_keys == ({('overall', 'All')}
+                            | {('model', model) for model in short_models}
+                            | {('category', category) for category in categories})
+    for row in earliest_summary:
+        selected = [r for r in earliest_rows if row['grouping'] == 'overall'
+                    or r['model' if row['grouping'] == 'model' else 'final_category'] == row['group']]
+        assert int(row['total']) == len(selected)
+        counts = Counter(r['final_earliest_link'] for r in selected)
+        for status in statuses:
+            assert int(row[status]) == counts[status]
+            if selected:
+                assert abs(float(row[status+'_percent']) - 100*counts[status]/len(selected)) < 1e-9
+            else:
+                assert row[status+'_percent'] == ''
     shapes = read('missing_usage_shapes.csv')
     coverage = read('usage_field_coverage.csv')
     for row in coverage:
@@ -138,16 +220,31 @@ def main():
     package = SCRIPT_DIR
     personal = re.compile(r'/(?:home|Users)/[^/\\\s"\x27<>]+|[A-Za-z]:\\Users\\[^\\\s]+')
     checked = []
-    candidates = list(package.rglob('*.py')) + list(DOCS.rglob('*')) + list(out.rglob('*'))
+    candidates = [ROOT/'README.md', ROOT/'result/analyse.md'] + list(package.rglob('*.py')) + list(DOCS.rglob('*')) + list(out.rglob('*'))
+    checked_links = 0
     for path in candidates:
         if path.is_file() and path.suffix in {'.py', '.md', '.tex', '.json', '.csv'}:
             content = path.read_text()
             assert not personal.search(content), f'Personal path in published artifact: {path.name}'
             assert not any('\u4e00' <= c <= '\u9fff' for c in content), f'Non-English artifact: {path.name}'
             checked.append(path.name)
+            if path.suffix == '.md':
+                prose = re.sub(r'```.*?```', '', content, flags=re.S)
+                for match in re.finditer(r'\[[^\]]*\]\(([^)]+)\)', prose):
+                    target = match.group(1).strip().strip('<>')
+                    if target.startswith(('http:', 'https:', 'mailto:', '#')):
+                        continue
+                    local_path = unquote(target.split('#', 1)[0])
+                    if local_path:
+                        assert (path.parent/local_path).exists(), f'Broken local link in {path.name}: {target}'
+                        checked_links += 1
     result = {"passed": True, "attempts": len(attempts), "responses": len(calls),
               "checked_input_hashes": len(manifest), "initial_prompt_mismatch_tasks": audit['initial_prompt_mismatch_tasks'],
               "anomalies": len(audit['anomalies']),
+              "canonical_annotation_rows_checked": checked_annotations,
+              "final_earliest_link_trials_checked": len(earliest_rows),
+              "final_earliest_link_counts": dict(sorted(Counter(r['final_earliest_link'] for r in earliest_rows).items())),
+              "local_document_links_checked": checked_links,
               "validated_comparison_rows": checked_comparisons,
               "validated_taxonomy_comparison_rows": checked_taxonomy,
               "cohorts": list(COHORTS), "django_excluded_tasks": 50,

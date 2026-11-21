@@ -11,6 +11,13 @@ annotations remain separate from derived artifacts.
 | `failure_annotations.csv` | One retained primary-category annotation for every failed trial |
 | `failure_case_notes.json` | Task-level diagnostic notes for tasks containing at least one failed trial |
 
+The reconciled codebook includes V5 for evaluation-infrastructure
+blockers. These remain recorded unresolved trials but are not evidence of a
+model repair defect. The nine `pylint-dev__pylint-4661` assignments were
+reclassified from S3 to V5 because an unavailable evaluation dependency stops
+test collection before candidate behavior is assessed; S3 has no retained
+trial assignments after reconciliation.
+
 Rebuild and validate the derived failure outputs from the repository root:
 
 ```bash

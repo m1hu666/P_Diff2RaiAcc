@@ -339,7 +339,7 @@ def main():
               'repository_equal_summary': 'Mean of repository-specific estimates; changes the estimand. Undefined within-repository failure compositions are omitted and their count is reported.',
               'strata': 'Archived repository and human-fix-time difficulty labels. Estimation only; singleton strata have blank confidence intervals.',
               'django_shift': 'Joint bootstrap stratified by Django status; both estimates reuse the same non-Django draws. Contrast is without-Django minus full. No independent-cohort test.',
-              'taxonomy_tests': '48 exact paired task-swap incidence tests per cohort (11 categories + 5 stages, 3 model pairs). Holm within cohort and additionally across all 96 tests; exploratory, separate from resource/outcome family.',
+              'taxonomy_tests': f'{len(cohort_tests["full"])} exact paired task-swap incidence tests per cohort ({len(categories)} categories + 5 stages, 3 model pairs). Holm within cohort and additionally across all {len(all_tests)} tests; exploratory, separate from resource/outcome family.',
               'composition': 'Category count / observed failures; incidence uses all attempts. Ratios are recomputed in each bootstrap draw. Undefined zero-denominator draws are omitted and valid counts reported.',
               'intervals': 'Pointwise percentile 95% intervals; not simultaneous intervals. A zero-observed bootstrap interval is not a bound on unseen categories.',
               'inputs': [{'path': str(p.relative_to(out)), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}

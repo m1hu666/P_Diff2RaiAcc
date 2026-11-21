@@ -25,6 +25,7 @@ Statistics results/
     repository_sensitivity/   Repository clusters, equal weights, leave-one-out
   without_django/             50 tasks, 450 attempts; same subdirectories as full/
   sensitivity/                Joint Django-exclusion contrasts and multiplicity checks
+  taxonomy_reliability/        Final chronological-link decisions and descriptive counts
   audits/                     Extraction, failure provenance and output validation
 ```
 
@@ -37,6 +38,23 @@ python3 scripts/run_analysis.py
 It rebuilds both cohorts, failure summaries, optional-field audits, sensitivity
 analyses, Markdown reports, and validation. Defaults are seed 42, 10,000 bootstrap
 resamples and 19,999 resource permutations. No model/provider API is called.
+
+## Final chronological-link audit
+
+[taxonomy_reliability/README.md](taxonomy_reliability/README.md) reports the
+final `SUPPORTED`, `NOT_SUPPORTED`, and `INDETERMINATE` counts. The
+[trial table](taxonomy_reliability/final_earliest_links.csv) records all three
+coder statuses and the final resolution basis; the
+[summary CSV](taxonomy_reliability/earliest_link_summary.csv) reports overall,
+model, and final-category counts and percentages. Rebuild this part alone with
+`python3 scripts/summarize_earliest_links.py`.
+
+Explicit discussion decisions take priority. For other unchanged categories,
+any `NOT_SUPPORTED` assessment produces a negative flag; `SUPPORTED` requires
+all three coder values to be `SUPPORTED`. Changed categories without a new
+assessment and all remaining cases are `INDETERMINATE`. A negative flag does
+not imply unanimous agreement or causal disproof. These descriptive counts include
+all 242 failed trials and are separate from an agreement coefficient.
 
 ## Shared data and evidence
 
@@ -74,10 +92,10 @@ The following relative paths occur under both `full/` and `without_django/`.
 | `failures/failure_trial_catalog.csv` | Every failed attempt in that cohort, with retained human category, diagnosis, evidence locations and hashes. |
 | `failures/failure_model_summary.csv` | Failure counts/rates and distinct failed tasks per model. |
 | `failures/failure_stage_summary.csv` | Five stage counts, composition percentages, model incidence and task coverage. |
-| `failures/failure_taxonomy_summary.csv` | The same measures for eleven subcategories. |
+| `failures/failure_taxonomy_summary.csv` | The same measures for twelve reconciled subcategories, including V5 evaluation-infrastructure failures. |
 | `failures/failure_task_summary.csv` | Three outcomes and per-trial failure categories for each task with a failure. |
 | `failures/category_uncertainty.csv` | Task-bootstrap intervals for category incidence and composition, per model and pooled across models. Ratios are recomputed per draw. |
-| `failures/category_inference.csv` | 48 exploratory exact task-paired incidence comparisons: 16 category/stage outcomes times three model pairs. |
+| `failures/category_inference.csv` | 51 exploratory exact task-paired incidence comparisons: 17 category/stage outcomes times three model pairs. V5 is an evaluation blocker, not a model repair defect. |
 | `stratified/stratum_sizes.csv` | Task/attempt denominators by repository and difficulty. |
 | `stratified/resource_summary.csv` | Mean resource use and task-cluster intervals by stratum/model. |
 | `stratified/outcome_summary.csv` | Resolution and instability estimates/intervals by stratum/model. |
@@ -92,6 +110,9 @@ Markdown display tables sit beside the CSVs in `resources/` and `outcomes/`.
 The full qualitative case report remains [result/analyse.md](../analyse.md).
 Annotations awaiting verification retain their categories and evidence limitations;
 these statistics do not independently establish their causal attribution.
+The reconciled V5 category has 18 recorded trials and describes evaluation
+infrastructure blockers. The nine `pylint-dev__pylint-4661` trials were
+reclassified from S3 to V5, leaving S3 with no retained assignments.
 
 ## Cross-cohort sensitivity
 
@@ -125,8 +146,8 @@ both estimates. They do not use an independent-groups test.
 - Resource/outcome `p_value_holm` covers its outcome family (9/3/3 tests);
   `p_value_holm_global` covers 15 tests within a cohort. The cross-cohort table
   adds `p_value_holm_both_cohorts` over 30 tests.
-- Taxonomy `p_value_holm` covers 48 tests within a cohort and
-  `p_value_holm_both_cohorts` covers all 96 tests. Taxonomy inference is exploratory
+- Taxonomy `p_value_holm` covers 51 tests within a cohort and
+  `p_value_holm_both_cohorts` covers all 102 tests. Taxonomy inference is exploratory
   and a separate family from resource/outcome inference.
 - Task-weighted and repository-equal summaries target different averages.
   Difficulty strata use the existing human-fix-time labels and are not
@@ -141,6 +162,9 @@ both estimates. They do not use an independent-groups test.
 `audits/extraction/` holds the input manifest, extraction audit and anomalies.
 `audits/failures/` holds annotation/evidence hashes and exact failure coverage.
 [Output validation](audits/validation.json) checks both cohorts, token arithmetic,
-raw usage examples, failure counts, stratum denominators and multiplicity.
+raw usage examples, catalogue labels and diagnoses against the canonical
+annotations, failure counts, stratum denominators, multiplicity, and local
+Markdown links. It also checks all final chronological-link statuses against
+the coder CSVs, discussion overrides, and the stated resolution rule.
 Independent checks, when run, write to `audits/trajectory/` and
 `audits/submissions/`; these are cross-checks, not additional observations.

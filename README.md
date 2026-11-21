@@ -1,8 +1,8 @@
 # P_Diff2RaiAcc
 
 This repository archives the model patches, trajectories, evaluation labels, and
-reproducible analyses used to compare three coding agents on 100 SWE-bench
-Verified tasks with three attempts per model/task.
+reproducible analyses used to compare three models with mini-SWE-agent on 100
+SWE-bench Verified tasks with three attempts per model/task.
 
 The experiments used [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent)
 version 1.15.0 from its v1 codebase; see the official
@@ -59,15 +59,20 @@ Run the complete token-accounting, resource, outcome, taxonomy, and clustered se
 
 ```bash
 python3 scripts/run_analysis.py
+python3 scripts/build_taxonomy_review_packet.py
 ```
 
-Run the failure-analysis catalogue builder:
+The pipeline generates both the full cohort (100 tasks) and the Django-excluded
+cohort (50 tasks), including repository/difficulty strata and repository-cluster
+sensitivity. The second command refreshes the linked case index from the final
+annotations. Run both commands after changing annotations.
+
+To rebuild only the full-cohort descriptive failure catalogue and
+`result/analyse.md`, run:
 
 ```bash
 python3 scripts/build_failure_analysis.py
 ```
-
-Both the full cohort (100 tasks) and the Django-excluded cohort (50 tasks) are generated. Repository/difficulty strata and repository-cluster sensitivity are included.
 
 The categorized outputs are written under
 `result/Statistics results/`; the complete failure report is written to
@@ -117,8 +122,9 @@ relevant.
 | `scripts/audit_submission_integrity.py` | Compare submissions, verified patches, and evaluation labels |
 | `scripts/audit_inference_usage.py` | Produce an independent trajectory-level usage audit |
 | `scripts/export_verified_test_ids.py` | Export and validate the two expected-test lists for each archived task without rewriting existing patches |
-| `scripts/build_taxonomy_review_packet.py` | Build a linked, readable packet of existing failed-trial labels, diagnoses, and archived materials for coder verification |
-| `scripts/taxonomy_coder_check.py` | Prepare three verification sheets, compare category and earliest-link judgments, and summarize reconciled assignments |
+| `scripts/build_taxonomy_review_packet.py` | Build the current linked case index of reconciled trial labels, diagnoses, and archived materials |
+| `scripts/taxonomy_coder_check.py` | Historical complete-CSV workflow; the current full-sample interpretation and reproducible agreement statistics are documented in `docs/taxonomy_methodology/ANNOTATION_AGREEMENT.md` |
+| `scripts/summarize_earliest_links.py` | Resolve final chronological-link statuses from the three English coder sheets and discussion decisions; report trial-level results and grouped counts |
 | `scripts/check_failure_boundary_examples.py` | Reproduce small baseline/candidate behavior checks supporting the S2/V3 distinction; optional historical SymPy source enables two target assertions |
 
 Example trajectory inspection:

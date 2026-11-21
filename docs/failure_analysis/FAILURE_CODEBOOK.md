@@ -14,11 +14,12 @@ The annotation unit is one failed model trial on one task. Each failed trial ret
 | Strategy & Logic | S1 | 3.1 | Partial Fix / Incomplete Logic | The repair covers part of the required behavior but misses an operation, input combination, boundary case, or compatibility condition. |
 | Strategy & Logic | S2 | 3.2 | Incorrect Strategy | The selected algorithm or transformation fails to implement the target operation's required behavior or project constraint. |
 | Strategy & Logic | S3 | 3.3 | Hardcoding / Bad Practices | A fixed or environment-specific assumption fails to satisfy required portability or repository conventions. |
-| Implementation & Execution | I1 | 4.1 | Tool Failure / Silent State Hallucination | An operation fails or produces an unintended change, or the agent proceeds with an incorrect belief about the repository state. |
+| Implementation & Execution | I1 | 4.1 | Tool Failure / Silent State Hallucination | An operation fails, the agent acts on an incorrect repository state, or the archived evaluated patch differs concretely from the recorded final submission. |
 | Validation & Harness Constraints | V1 | 5.1 | Specification-Oracle Gap | The diagnosis identifies a difference between the behavior emphasized by the issue and an additional requirement enforced by the tests. |
 | Validation & Harness Constraints | V2 | 5.2 | Strict Output Format Mismatch | The produced string, argument structure, serialized form, or attribute representation differs from the asserted representation. |
 | Validation & Harness Constraints | V3 | 5.3 | Regression of Existing Behavior | The patch addresses the reported local defect but demonstrably breaks another previously valid input, caller contract, or state lifecycle. |
 | Validation & Harness Constraints | V4 | 5.4 | Execution Timing Mismatch | Required state or a transformation is supplied at a different lifecycle point or processing stage from the expected one. |
+| Validation & Harness Constraints | V5 | 5.5 | Evaluation Infrastructure Failure | An evaluation dependency or test-collection environment prevents the submitted behavior from being assessed reliably. |
 
 ## Evidence and interpretation
 
@@ -44,9 +45,13 @@ The V3 preference applies to the same repair's directly supported regression, no
 
 **I1 and other categories.** I1 requires observable tool or repository-state evidence. Suitable evidence includes a command error, an edit that was not executed, a file differing from the intended edit, or a claim that a change was applied when the saved state shows otherwise. A failed benchmark result or unrelated patch content alone does not establish a tool failure or state hallucination.
 
+An archived evaluated patch that differs concretely from the recorded final submission may also be coded I1 as a patch-state failure; identify the changed bytes and do not attribute the mismatch to model intent without evidence.
+
 **P1 and P2.** P1 concerns the interpretation of the required behavior. P2 additionally requires an identifiable cue that the recorded diagnosis connects to the chosen repair direction. An observed connection does not establish that removing the cue would have changed the outcome.
 
 **V4 and other categories.** A timing diagnosis should identify when a value or transformation is required and when the patch supplies it. A workaround that merely changes accepted input syntax does not establish a timing failure without a documented processing-stage distinction.
+
+**V5 and patch-attributable categories.** Use V5 when the reconciled evidence places the recorded failure in the evaluation environment before the candidate behavior can be assessed reliably. State the concrete blocker, such as a test-collection dependency. V5 remains a recorded unresolved trial, but it is not evidence of a defect in the model's selected repair. Do not infer V5 solely from an unsuccessful outcome or from a missing local reproduction.
 
 ## Earliest-link audit
 
@@ -63,6 +68,12 @@ causal label.
 An event does not qualify as `SUPPORTED` merely because it occurs first, appears
 in the trajectory narrative, differs from the reference patch, or precedes a
 failed benchmark outcome.
+
+These definitions apply to individual assessments. The
+[final aggregation rule](../taxonomy_methodology/README.md#final-chronological-link-judgments)
+uses any eligible negative assessment as a conservative flag and requires
+three positive assessments for support, subject to explicit discussion
+decisions. An aggregate negative flag does not imply coder consensus.
 
 ## Annotation policy
 

@@ -230,7 +230,7 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
              f'The evaluated dataset contains {len(labels):,} trials: {len(tasks)} tasks, three model groups, and three trials per task. '
              f'The archived labels record {len(labels)-total} resolved trials and {total} unresolved trials ({100*total/len(labels):.1f}%). '
              f'The unresolved trials span {len(failed_tasks)} tasks. Every unresolved trial is listed individually in Appendix A with its model, trial number, and primary category.', '',
-             'The five stages and eleven subcategories follow the study taxonomy. '
+             f'The five stages and {len(categories)} subcategories follow the reconciled study taxonomy. '
              f'The accompanying [catalogue CSV]({reference("failure_trial_catalog.csv")}) includes a trial-specific diagnosis and a repository-relative index of available patches, issue descriptions, hints, trajectories, and verified outcome records. '
              f'The [codebook]({package_link("FAILURE_CODEBOOK.md")}) defines the category boundaries.', '',
              'Artifact paths are provided for navigation and reproducibility. They identify the archived inputs used by the public catalogue without asserting that every linked artifact independently establishes the assigned cause.', '',
@@ -238,7 +238,8 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
              'Each unresolved trial retains one primary category. Secondary defects may coexist, but are not counted again. '
              'Assignments awaiting further verification remain in their existing categories, with evidence limitations stated in their diagnoses and case notes; retention does not mean that a recheck confirmed the attribution. '
              'An evaluation outcome and its qualitative explanation are separate: a failed label does not establish a cause, and a difference from the reference patch does not establish incorrectness. '
-             'In particular, V1/V2 annotations identify a specification or representation distinction; they do not automatically establish that the patch is semantically correct or that the benchmark is invalid.', '',
+             'In particular, V1/V2 annotations identify a specification or representation distinction; they do not automatically establish that the patch is semantically correct or that the benchmark is invalid. '
+             'V5 identifies a reconciled evaluation-infrastructure blocker; it remains a recorded unresolved outcome but does not describe a model repair defect.', '',
              'The counts below are descriptive. The three trials on one task and the model results for that task are dependent. '
              'Category percentages do not constitute model-comparison significance tests, and the unresolved trials are not treated as independent statistical samples. '
              'Within-model percentages use that model\'s number of failures as the denominator. The CSV summaries additionally report category incidence among all evaluated attempts per model and the number of distinct tasks. '
@@ -257,7 +258,7 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
                    [(r['primary_category'],r['stage'],r['subcategory'],*[r[m+'_count'] for m in MODELS],r['assigned_trials'],
                      f"{r['share_of_all_failures_percent']:.1f}%",r['distinct_tasks']) for r in category_rows]), '',
              'The largest category is S1 (partial or incomplete logic). Its count describes the assigned repair failures in this dataset; '
-             'it does not demonstrate a general reasoning limit or establish that localization is solved. The I1 category counts primary execution failures, '
+             'it does not demonstrate a general reasoning limit or establish that localization is solved. The I1 category counts primary tool, execution, or saved patch-state failures, '
              'so it also does not measure every transient tool error recovered during otherwise successful or differently classified trajectories.', '',
              '## Task-level outcome index', '',
              'S denotes a recorded success and F a recorded failure. Within each model cell, the order is trial 1, trial 2, trial 3. '

@@ -49,7 +49,7 @@ Official documentation is used as reference context for omitted fields, not as a
 
 Top-p, top-k and maximum generation tokens were not explicitly specified in the archived client arguments. Any direct Anthropic Messages request would have required a `max_tokens` value after adapter/gateway processing, but that native payload was not retained. For GPT, successful calls together with `drop_params=true` and OpenAI's documented incompatibility are consistent with the adapter dropping temperature; this cannot be confirmed from a native payload. The exact historical gateway-effective values are consequently marked unrecorded. The 64K, 65,536 and 128K values are model capability ceilings, not reconstructed experimental limits. Observed `length` stops and their completion counts are descriptive diagnostics only. Claude and Gemini have no explicitly configured thinking field; their documented off/high behaviors apply only if the route preserved omitted-field behavior. A prompt requiring a THOUGHT section does not establish equal hidden-reasoning budgets.
 
-The initial system/user text is compared as exact strings for all nine attempts of each task. All initial prompts and agent templates match. Subsequent prompts naturally diverge with the trajectories. Orchestration is not completely identical: the saved cost limits, shell timeouts and batch/interactive wrappers vary, as reported in the settings table. The step limit is 250 in every run. Raising the cost limit from 3 to 5 USD followed early resource-limited runs; the actual retained settings, including the 8 USD exception, are reported rather than overwritten with that intended limit.
+The initial system/user text is compared as exact strings for all nine attempts of each task. All initial prompts and agent templates match. Subsequent prompts naturally diverge with the trajectories. Orchestration is not completely identical: the saved cost limits and batch/interactive wrappers vary, as reported in the settings table. The shell timeout is 60 seconds and the step limit is 250 in every run. Raising the cost limit from 3 to 5 USD followed early resource-limited runs; the actual retained settings, including the 8 USD exception, are reported rather than overwritten with that intended limit.
 
 The common agent protocol uses exactly one bash code block per response, serial execution and format-error feedback. Long shell output is reduced to its first and last 5,000 characters. No native API tool definitions are configured, and no native tool calls appear in the responses. These settings distinguish the agent's shell interface from provider-native tool APIs.
 
@@ -133,11 +133,28 @@ Exploratory model comparisons test category incidence among all attempts, not
 composition conditional on failure. Exact two-sided task-block-swap tests use
 the integer category-count differences and the same exchangeability null as the
 resolution comparison. This preserves three-trial dependence and task pairing.
-There are 48 tests per cohort: (11 subcategories + 5 stages) times three model
+There are 51 tests per cohort: (12 subcategories + 5 stages) times three model
 pairs. Holm correction is reported within each cohort and jointly across all
-96 taxonomy tests. Stage/category outcomes overlap and these tests remain
+102 taxonomy tests. Stage/category outcomes overlap and these tests remain
 exploratory; they form a separate family from resource/outcome tests. Intervals
 are pointwise and do not override the multiplicity correction.
+
+The reconciled V5 category records evaluation-infrastructure blockers.
+Its incidence is counted among recorded unresolved trials, but it does not
+measure model repair behavior. Model comparisons of patch-attributable failure
+categories should be interpreted separately from V5.
+
+The separate chronological-link audit uses the three English coder CSVs and
+explicit final discussion decisions. For unchanged primary categories, it
+flags `NOT_SUPPORTED` when any coder supplies that assessment and assigns
+`SUPPORTED` only when all three coders supply it. Other cases, including
+changed categories without reassessment, are `INDETERMINATE` unless explicitly
+settled in discussion. A negative flag is not a consensus judgment or causal
+disproof. Blank coder statuses are also
+`INDETERMINATE`. Overall percentages retain all 242 failed trials. These are
+descriptive resolution counts, not independent-coder agreement or causal
+identification. The [coding documentation](taxonomy_methodology/README.md#final-chronological-link-judgments)
+defines the rule and links the trial-level results.
 
 ## Repository and difficulty strata
 

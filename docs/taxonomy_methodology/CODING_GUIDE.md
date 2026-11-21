@@ -1,12 +1,19 @@
 # Coder instructions: verify existing trial assignments
 
+This is the original review protocol. The linked packet and codebook have
+since been regenerated or revised after discussion. The English CSV
+transcriptions retain the categories and review judgments seen by each coder;
+their conversion policy is documented in ANNOTATION_AGREEMENT.md.
+
 ## What to review
 
 Independently check the current category and diagnosis for every failed trial
-in your assigned CSV sheet. Start with the readable
+in your assigned sheet. Start with the readable
 [verification packet](VERIFICATION_CASES.md), which presents the authors'
-existing analysis and links to the underlying materials. Use the frozen
-[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) to decide whether
+existing analysis and links to the underlying materials. The original review
+used eleven categories. The linked
+[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) now includes V5,
+which was added after reconciliation. Decide whether
 that analysis supports the current category. The packet and original label are
 provided intentionally; this is informed verification, not blind recoding.
 
@@ -67,10 +74,9 @@ depth:
 
 The repository contains summary evaluation reports rather than detailed
 per-test traces for every trial and does not include a checkout for every
-historical `base_commit`. If a decisive source remains unavailable, choose
-`UNSURE` as your review decision and explain what is missing. This response
-does not add a failure category; the original category remains in place until
-the post-review discussion.
+historical `base_commit`. If a decisive source remains unavailable, retain the
+original category (`ACCEPT`) and explain what is missing in `reason`; the
+original category remains in place until the post-review discussion.
 
 ## Fill your sheet
 
@@ -79,16 +85,15 @@ Complete only these fields:
 
 | Field | Entry |
 | --- | --- |
-| `decision` | `ACCEPT` if the current category is supported; `CHANGE` if another category fits better; `UNSURE` if the available materials do not permit a decision. |
-| `proposed_category` | For `CHANGE` only, select `P1`, `P2`, `L1`, `S1`, `S2`, `S3`, `I1`, `V1`, `V2`, `V3`, `V4`, or `OTHER`. Leave blank for `ACCEPT` and `UNSURE`. |
-| `reason` | Required if `decision` is `CHANGE` or `UNSURE`, or if `earliest_link` is `NOT_SUPPORTED` or `INDETERMINATE`. Explain the category distinction, earlier deviation, contradiction, or missing evidence. Otherwise optional. |
+| `decision` | `ACCEPT` if the current category is supported; `CHANGE` if another category fits better. |
+| `proposed_category` | In the original review, `CHANGE` selected `P1`, `P2`, `L1`, `S1`, `S2`, `S3`, `I1`, `V1`, `V2`, `V3`, `V4`, or `OTHER`. Leave blank for `ACCEPT`. |
+| `reason` | Required if `decision` is `CHANGE`, or if `earliest_link` is `NOT_SUPPORTED` or `INDETERMINATE`. Explain the category distinction, earlier deviation, contradiction, or missing evidence. Otherwise optional. |
 | `earliest_link` | Judge the displayed current category using `SUPPORTED`, `NOT_SUPPORTED`, or `INDETERMINATE` as defined below. |
 
 Use `OTHER` only when the evidence supports an observed failure mode outside
-the current taxonomy; name and explain that mode in `reason`. `UNSURE` is a
-review decision for insufficient information, not an additional taxonomy
-label. A different patch from the reference solution or an unsuccessful
-benchmark outcome does not by itself establish a different failure mode.
+the current taxonomy; name and explain that mode in `reason`. A different patch
+from the reference solution or an unsuccessful benchmark outcome does not by
+itself establish a different failure mode.
 
 Write free-text comments in English. A trial with multiple problems still
 receives one proposed primary category; mention a relevant secondary problem
@@ -113,9 +118,7 @@ wording; a `SUPPORTED` response does not prove a causal root cause.
 | `INDETERMINATE` | Missing evidence, competing explanations, or an unclear sequence prevents this judgment. |
 
 Do not mark `SUPPORTED` solely because an event came first in the trajectory.
-If you mark `NOT_SUPPORTED` or `INDETERMINATE`, explain why in `reason`. If your
-category decision is `UNSURE`, the chronological link will normally be
-`INDETERMINATE` unless the available evidence directly contradicts it. The
+If you mark `NOT_SUPPORTED` or `INDETERMINATE`, explain why in `reason`. The
 discussion table will separately reassess `final_earliest_link` if the final
 category changes. When both judgments need explanation, address both in the
 same `reason` cell.
