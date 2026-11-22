@@ -44,14 +44,15 @@ disagreement, while two unresolved ratings on the same attempt would agree
 (this does not occur in the current data). In the chance-agreement term $P_e$,
 the `UNRESOLVED` state contributes like any other category through its
 marginal proportion $n_{\text{UNRESOLVED}}/(3N)$. The V1/V2 subset consists of
-the trials whose prefilled `current_category` is `V1` or `V2`.
+the 40 trials whose final reconciled label in `failure_annotations.csv` is
+`V1` or `V2`.
 
 ## Results
 
 | Subset | N | Agreeing pairs | $P_o$ | $P_e$ | Fleiss' kappa |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Overall | 242 | 562 / 726 | 0.7741 | 0.1242 | 0.742 |
-| V1/V2 trials | 38 | 110 / 114 | 0.9649 | 0.6236 | 0.907 |
+| V1/V2 trials | 40 | 110 / 120 | 0.9167 | 0.5942 | 0.795 |
 
 ## Reproduction
 
@@ -59,7 +60,8 @@ the trials whose prefilled `current_category` is `V1` or `V2`.
 python docs/taxonomy_methodology/fleiss_kappa.py \
   docs/taxonomy_methodology/coder_a.csv \
   docs/taxonomy_methodology/coder_b.csv \
-  docs/taxonomy_methodology/coder_c.csv
+  docs/taxonomy_methodology/coder_c.csv \
+  docs/failure_analysis/failure_annotations.csv
 ```
 
 The script uses only the Python standard library.

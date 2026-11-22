@@ -2,7 +2,7 @@
 """Compute three-coder Fleiss' kappa for the failure annotations.
 
 Usage:
-  python fleiss_kappa.py coder_a.csv coder_b.csv coder_c.csv
+  python fleiss_kappa.py coder_a.csv coder_b.csv coder_c.csv failure_annotations.csv
 
 The coder sheets are pre-discussion verification responses. Each response is
 converted to a category as follows:
@@ -23,8 +23,10 @@ that every subject stays in the denominator. In the observed-agreement term,
 a pair agrees only when both ratings carry the same value, so an unresolved
 rating paired with a substantive category is a disagreement. In the
 chance-agreement term, the "UNRESOLVED" state contributes like any other
-category through its marginal proportion n_g / (3 * N). The V1/V2 subset
-consists of the trials whose prefilled current_category is V1 or V2.
+category through its marginal proportion n_g / (3 * N).
+
+The V1/V2 subset is the set of trials whose final reconciled label in
+failure_annotations.csv is V1 or V2.
 """
 
 import csv
@@ -35,6 +37,12 @@ from collections import Counter
 
 CATEGORIES = {'P1', 'P2', 'L1', 'S1', 'S2', 'S3', 'I1',
               'V1', 'V2', 'V3', 'V4', 'V5', 'OTHER'}
+
+MODEL_FULL_TO_SHORT = {
+    'claude-sonnet-4-5-20250929': 'Claude',
+    'gemini-3-pro-preview': 'Gemini',
+    'gpt-5-2025-08-07-medium-reasoning': 'GPT',
+}
 
 
 def read_sheet(path):
@@ -80,21 +88,29 @@ def fleiss(matrix):
 
 
 def main(paths):
-    sheets = [read_sheet(path) for path in paths]
+    coder_a, coder_b, coder_c, annotations = paths
+    sheets = [read_sheet(path) for path in (coder_a, coder_b, coder_c)]
     keys = [[(row['task_id'], row['model'], row['trial']) for row in sheet]
             for sheet in sheets]
     if not (len(keys[0]) == 242 and keys[0] == keys[1] == keys[2]):
-        raise SystemExit('sheets must contain the same 242 aligned attempts')
+        raise SystemExit('coder sheets must contain the same 242 aligned attempts')
 
     converted = [[response_category(row) for row in sheet] for sheet in sheets]
     items = [[converted[reviewer][index] for reviewer in range(3)]
              for index in range(242)]
 
     overall = fleiss(items)
-    v12_index = [
-        index for index, row in enumerate(sheets[0])
-        if (row.get('current_category') or '').strip().upper() in {'V1', 'V2'}
-    ]
+
+    v12_keys = set()
+    for row in read_sheet(annotations):
+        if (row.get('primary_category') or '').strip().upper() not in {'V1', 'V2'}:
+            continue
+        short = MODEL_FULL_TO_SHORT.get((row.get('model') or '').strip())
+        if short is None:
+            raise SystemExit(f'unknown model in annotations: {row.get("model")!r}')
+        v12_keys.add((row['task_id'], short, row['trial']))
+
+    v12_index = [index for index in range(242) if keys[0][index] in v12_keys]
     v12 = fleiss([items[index] for index in v12_index])
 
     unresolved = {
@@ -111,8 +127,9 @@ def main(paths):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         raise SystemExit(
-            'usage: python fleiss_kappa.py coder_a.csv coder_b.csv coder_c.csv'
+            'usage: python fleiss_kappa.py coder_a.csv coder_b.csv '
+            'coder_c.csv failure_annotations.csv'
         )
     main(sys.argv[1:])

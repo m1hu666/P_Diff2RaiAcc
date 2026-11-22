@@ -167,7 +167,7 @@ assessments and does not mean `NOT_SUPPORTED`.
 The agreement analysis and all response-conversion rules are documented in
 [ANNOTATION_AGREEMENT.md](ANNOTATION_AGREEMENT.md). Agreement is reported as
 Fleiss' kappa over the three fixed reviewers: 0.742 overall (all 242 attempts)
-and 0.907 for the 38 trials carrying V1/V2 labels at the start of validation.
+and 0.795 for the 40 trials whose final reconciled label is V1 or V2.
 The accompanying [`fleiss_kappa.py`](fleiss_kappa.py) reproduces both values
 directly from the three reviewer sheets. These statistics use pre-discussion
 responses and assess informed verification of existing assignments; they do
