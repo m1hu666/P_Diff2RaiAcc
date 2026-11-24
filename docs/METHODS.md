@@ -133,9 +133,9 @@ Exploratory model comparisons test category incidence among all attempts, not
 composition conditional on failure. Exact two-sided task-block-swap tests use
 the integer category-count differences and the same exchangeability null as the
 resolution comparison. This preserves three-trial dependence and task pairing.
-There are 51 tests per cohort: (12 subcategories + 5 stages) times three model
+There are 48 tests per cohort: (11 subcategories + 5 stages) times three model
 pairs. Holm correction is reported within each cohort and jointly across all
-102 taxonomy tests. Stage/category outcomes overlap and these tests remain
+96 taxonomy tests. Stage/category outcomes overlap and these tests remain
 exploratory; they form a separate family from resource/outcome tests. Intervals
 are pointwise and do not override the multiplicity correction.
 

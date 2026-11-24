@@ -20,7 +20,7 @@ from analysis_layout import artifact
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
-FAILURE_DOCS = ROOT / 'docs' / 'failure_analysis'
+FINAL_CODEBOOK = ROOT / 'FINAL-CODEBOOK'
 DEFAULT_OUTPUT = ROOT / 'result' / 'Statistics results'
 MODELS = {
     'Claude': 'claude-sonnet-4-5-20250929',
@@ -225,7 +225,7 @@ def report_text(report, root, out, catalogue, labels, categories, notes, model_r
     tasks = {key[0] for key in labels}
     failed_tasks = {r['task_id'] for r in catalogue}
     reference = lambda filename: link(artifact(out, filename), report)
-    package_link = lambda filename: link(FAILURE_DOCS/filename, report)
+    package_link = lambda filename: link(FINAL_CODEBOOK/filename, report)
     lines = ['# Failure Analysis and Trial-Level Catalogue', '',
              f'The evaluated dataset contains {len(labels):,} trials: {len(tasks)} tasks, three model groups, and three trials per task. '
              f'The archived labels record {len(labels)-total} resolved trials and {total} unresolved trials ({100*total/len(labels):.1f}%). '
@@ -314,9 +314,9 @@ def main():
     parser.add_argument('--data-root', type=Path, default=ROOT, help='Repository containing data/ and analyse/')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument('--report', type=Path, default=ROOT/'result/analyse.md')
-    parser.add_argument('--annotations', type=Path, default=FAILURE_DOCS/'failure_annotations.csv')
-    parser.add_argument('--codebook', type=Path, default=FAILURE_DOCS/'failure_codebook.json')
-    parser.add_argument('--case-notes', type=Path, default=FAILURE_DOCS/'failure_case_notes.json')
+    parser.add_argument('--annotations', type=Path, default=FINAL_CODEBOOK/'failure_annotations.csv')
+    parser.add_argument('--codebook', type=Path, default=FINAL_CODEBOOK/'failure_codebook.json')
+    parser.add_argument('--case-notes', type=Path, default=FINAL_CODEBOOK/'failure_case_notes.json')
     args = parser.parse_args()
     root, out, report = args.data_root.resolve(), args.output.resolve(), args.report.resolve()
     catalogue, labels, categories, notes, input_paths = load_inputs(root, args.annotations, args.codebook, args.case_notes)

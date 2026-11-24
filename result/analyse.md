@@ -2,7 +2,7 @@
 
 The evaluated dataset contains 900 trials: 100 tasks, three model groups, and three trials per task. The archived labels record 658 resolved trials and 242 unresolved trials (26.9%). The unresolved trials span 45 tasks. Every unresolved trial is listed individually in Appendix A with its model, trial number, and primary category.
 
-The five stages and 12 subcategories follow the reconciled study taxonomy. The accompanying [catalogue CSV](Statistics%20results/full/failures/failure_trial_catalog.csv) includes a trial-specific diagnosis and a repository-relative index of available patches, issue descriptions, hints, trajectories, and verified outcome records. The [codebook](../docs/failure_analysis/FAILURE_CODEBOOK.md) defines the category boundaries.
+The five stages and 11 subcategories follow the reconciled study taxonomy. The accompanying [catalogue CSV](Statistics%20results/full/failures/failure_trial_catalog.csv) includes a trial-specific diagnosis and a repository-relative index of available patches, issue descriptions, hints, trajectories, and verified outcome records. The [codebook](../FINAL-CODEBOOK/FAILURE_CODEBOOK.md) defines the category boundaries.
 
 Artifact paths are provided for navigation and reproducibility. They identify the archived inputs used by the public catalogue without asserting that every linked artifact independently establishes the assigned cause.
 
@@ -41,7 +41,6 @@ Model groups are Claude (`claude-sonnet-4-5-20250929`), Gemini (`gemini-3-pro-pr
 | L1 | Localization | Incomplete Scope / Wrong Layer | 5 | 1 | 6 | 12 | 5.0% | 4 |
 | S1 | Strategy & Logic | Partial Fix / Incomplete Logic | 14 | 16 | 19 | 49 | 20.2% | 10 |
 | S2 | Strategy & Logic | Incorrect Strategy | 4 | 10 | 5 | 19 | 7.9% | 7 |
-| S3 | Strategy & Logic | Hardcoding / Bad Practices | 0 | 0 | 0 | 0 | 0.0% | 0 |
 | I1 | Implementation & Execution | Tool Failure / Silent State Hallucination | 1 | 1 | 6 | 8 | 3.3% | 5 |
 | V1 | Validation & Harness Constraints | Specification-Oracle Gap | 1 | 7 | 2 | 10 | 4.1% | 3 |
 | V2 | Validation & Harness Constraints | Strict Output Format Mismatch | 9 | 10 | 11 | 30 | 12.4% | 6 |
@@ -577,11 +576,11 @@ The following cases cover every task with an unresolved trial and summarize the 
 
 **Recorded outcomes.** Claude: S S S; Gemini: S S S; GPT: S F S.
 
-**Analysis.** GPT trial 2 moves dedent before prepend/append but also infers indentation from the included body. Even with no dedent option, a body line starting with four spaces makes the patch add those spaces to previously verbatim prepend/append strings. This confirmed regression is assigned V3 under the preference over a co-occurring strategy error. The other eight trials pass.
+**Analysis.** GPT trial 2 implements the issue-requested filter ordering by applying dedent before prepend and append, so user-supplied option content is no longer processed by dedentation. It additionally infers indentation from the included body and applies it to those strings. In the pre-existing no-dedent path, previously verbatim prepend and append content therefore gains extra indentation, supporting the retained V3 label. The other eight trials pass.
 
 **Primary assignments.** V3: GPT-2.
 
-**Interpretation.** The new target-combination test also exposes the extra indentation. Its membership in FAIL_TO_PASS does not erase the independently demonstrated regression in the pre-existing no-dedent scenario.
+**Interpretation.** The V3 attribution rests on separate evidence for both conditions: the reordered filters implement the issue-reported dedent behavior, while the before-and-after no-dedent comparison demonstrates the regression introduced by unconditional indentation inheritance.
 
 <a id="case-sphinx-doc__sphinx-11510"></a>
 
@@ -956,6 +955,6 @@ From the repository root, rebuild this document and its tables with:
 python3 scripts/build_failure_analysis.py
 ```
 
-The editable inputs are [trial annotations](../docs/failure_analysis/failure_annotations.csv), [category definitions](../docs/failure_analysis/failure_codebook.json), and [English case notes](../docs/failure_analysis/failure_case_notes.json). The script checks exact coverage of all recorded failures, uniqueness, outcome consistency, category validity, evidence-file availability, and the patch/trajectory hashes attached to the annotations. Changed evidence requires annotation review rather than automatic reuse of an old explanation.
+The editable inputs are [trial annotations](../FINAL-CODEBOOK/failure_annotations.csv), [category definitions](../FINAL-CODEBOOK/failure_codebook.json), and [English case notes](../FINAL-CODEBOOK/failure_case_notes.json). The script checks exact coverage of all recorded failures, uniqueness, outcome consistency, category validity, evidence-file availability, and the patch/trajectory hashes attached to the annotations. Changed evidence requires annotation review rather than automatic reuse of an old explanation.
 
 The [validation result](Statistics%20results/audits/failures/failure_analysis_validation.json) records the coverage checks. [Category](Statistics%20results/full/failures/failure_taxonomy_summary.csv), [stage](Statistics%20results/full/failures/failure_stage_summary.csv), [model](Statistics%20results/full/failures/failure_model_summary.csv), and [task](Statistics%20results/full/failures/failure_task_summary.csv) CSVs reproduce the descriptive counts. Hashes identify the indexed input snapshot. The catalogue builder performs no API calls, benchmark execution, or automatic causal classification.

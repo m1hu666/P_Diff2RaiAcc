@@ -59,7 +59,7 @@ def main():
         parser.error('Bootstrap repetitions must be positive')
     args.output.mkdir(parents=True, exist_ok=True)
     inputs = [STATS / 'data' / 'per_attempt.csv',
-              ROOT / 'docs' / 'failure_analysis' / 'failure_annotations.csv']
+              ROOT / 'FINAL-CODEBOOK' / 'failure_annotations.csv']
     attempts = read_csv(inputs[0])
     annotations = {(r['task_id'], r['model'], int(r['trial'])): r['primary_category']
                    for r in read_csv(inputs[1])}
@@ -349,7 +349,7 @@ def main():
         '- [analysis_design.json](analysis_design.json): definitions, source hashes and resampling settings.', '',
         'Reproduce from the repository root with `python3 scripts/analyze_rq2_patterns.py`.', '',
         'Inputs are [per_attempt.csv](../../data/per_attempt.csv) and the '
-        '[canonical failure annotations](../../../../docs/failure_analysis/failure_annotations.csv). '
+        '[canonical failure annotations](../../../../FINAL-CODEBOOK/failure_annotations.csv). '
         f'Bootstrap intervals use {args.bootstrap_repetitions:,} draws with seed {args.seed}. '
         'Whole-task draws preserve all models and three trials for pooled persistence and budget '
         'ratios; common-success draws preserve pairing; mixed-task draws retain the selected tasks\' '

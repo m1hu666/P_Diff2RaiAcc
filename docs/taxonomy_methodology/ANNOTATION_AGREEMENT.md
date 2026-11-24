@@ -61,7 +61,7 @@ python docs/taxonomy_methodology/fleiss_kappa.py \
   docs/taxonomy_methodology/coder_a.csv \
   docs/taxonomy_methodology/coder_b.csv \
   docs/taxonomy_methodology/coder_c.csv \
-  docs/failure_analysis/failure_annotations.csv
+  FINAL-CODEBOOK/failure_annotations.csv
 ```
 
 The script uses only the Python standard library.

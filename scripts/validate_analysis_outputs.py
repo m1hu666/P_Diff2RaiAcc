@@ -2,7 +2,7 @@
 
 The validator checks coverage, canonical annotations, arithmetic, task-paired
 comparison families, input hashes, local document links, and portable English
-paths in ``scripts/``, ``docs/``, and
+paths in ``FINAL-CODEBOOK/``, ``scripts/``, ``docs/``, and
 ``result/Statistics results``. It only writes ``validation.json`` in the output
 directory and never changes trajectories, labels, patches, or manuscript files.
 """
@@ -21,6 +21,7 @@ from inferential_analysis import holm_adjust
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
 DOCS = ROOT / 'docs'
+FINAL_CODEBOOK = ROOT / 'FINAL-CODEBOOK'
 OUT = ROOT / 'result' / 'Statistics results'
 
 
@@ -67,9 +68,9 @@ def main():
     assert len(metadata) == 100
     assert sum(r['repository'] == DJANGO for r in metadata.values()) == 50
     expected_failed = {(r['task'], r['model'], r['round']) for r in attempts if r['label']=='False'}
-    failure_docs = args.data_root/'docs/failure_analysis'
-    categories = {r['code']: r for r in json.loads((failure_docs/'failure_codebook.json').read_text())['categories']}
-    with (failure_docs/'failure_annotations.csv').open() as stream:
+    final_codebook = args.data_root/'FINAL-CODEBOOK'
+    categories = {r['code']: r for r in json.loads((final_codebook/'failure_codebook.json').read_text())['categories']}
+    with (final_codebook/'failure_annotations.csv').open() as stream:
         annotation_rows = list(csv.DictReader(stream))
     annotations = {(r['task_id'], r['model'], 'round'+r['trial']): r for r in annotation_rows}
     assert len(annotations) == len(annotation_rows)
@@ -220,7 +221,9 @@ def main():
     package = SCRIPT_DIR
     personal = re.compile(r'/(?:home|Users)/[^/\\\s"\x27<>]+|[A-Za-z]:\\Users\\[^\\\s]+')
     checked = []
-    candidates = [ROOT/'README.md', ROOT/'result/analyse.md'] + list(package.rglob('*.py')) + list(DOCS.rglob('*')) + list(out.rglob('*'))
+    candidates = ([ROOT/'README.md', ROOT/'result/analyse.md']
+                  + list(FINAL_CODEBOOK.rglob('*')) + list(package.rglob('*.py'))
+                  + list(DOCS.rglob('*')) + list(out.rglob('*')))
     checked_links = 0
     for path in candidates:
         if path.is_file() and path.suffix in {'.py', '.md', '.tex', '.json', '.csv'}:

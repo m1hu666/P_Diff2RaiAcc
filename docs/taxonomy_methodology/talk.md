@@ -3,7 +3,7 @@
 This page records the final decisions from the three-coder discussion. The
 coder responses and notes are available in the English `coder_a.csv`,
 `coder_b.csv`, and `coder_c.csv` transcriptions. The canonical trial diagnoses are in
-[`failure_annotations.csv`](../failure_analysis/failure_annotations.csv).
+[`failure_annotations.csv`](../../FINAL-CODEBOOK/failure_annotations.csv).
 Rows not listed below retain their pre-discussion category. `V5` was added
 during reconciliation for evaluation-infrastructure failures; it was
 not an option on the original coder sheets. These decisions concern recorded

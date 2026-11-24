@@ -12,12 +12,11 @@ The annotation unit is one failed model trial on one task. Each failed trial ret
 | Problem Understanding | P2 | 1.2 | Distracted by Hints / TODOs | The diagnosis links the chosen direction to a specific suggestion or TODO that leaves the required behavior unresolved. |
 | Localization | L1 | 2.1 | Incomplete Scope / Wrong Layer | Required files, entry points, or subclasses are omitted, or the intervention is placed at an unsuitable architectural layer. |
 | Strategy & Logic | S1 | 3.1 | Partial Fix / Incomplete Logic | The repair covers part of the required behavior but misses an operation, input combination, boundary case, or compatibility condition. |
-| Strategy & Logic | S2 | 3.2 | Incorrect Strategy | The selected algorithm or transformation fails to implement the target operation's required behavior or project constraint. |
-| Strategy & Logic | S3 | 3.3 | Hardcoding / Bad Practices | A fixed or environment-specific assumption fails to satisfy required portability or repository conventions. |
+| Strategy & Logic | S2 | 3.2 | Incorrect Strategy | An incorrect algorithm, transformation, or workaround prevents the patch from satisfying the behavior required by the reported issue. |
 | Implementation & Execution | I1 | 4.1 | Tool Failure / Silent State Hallucination | An operation fails, the agent acts on an incorrect repository state, or the archived evaluated patch differs concretely from the recorded final submission. |
 | Validation & Harness Constraints | V1 | 5.1 | Specification-Oracle Gap | The diagnosis identifies a difference between the behavior emphasized by the issue and an additional requirement enforced by the tests. |
 | Validation & Harness Constraints | V2 | 5.2 | Strict Output Format Mismatch | The produced string, argument structure, serialized form, or attribute representation differs from the asserted representation. |
-| Validation & Harness Constraints | V3 | 5.3 | Regression of Existing Behavior | The patch addresses the reported local defect but demonstrably breaks another previously valid input, caller contract, or state lifecycle. |
+| Validation & Harness Constraints | V3 | 5.3 | Regression of Existing Behavior | The patch successfully resolves the issue-reported problem but introduces a regression in previously correct behavior. |
 | Validation & Harness Constraints | V4 | 5.4 | Execution Timing Mismatch | Required state or a transformation is supplied at a different lifecycle point or processing stage from the expected one. |
 | Validation & Harness Constraints | V5 | 5.5 | Evaluation Infrastructure Failure | An evaluation dependency or test-collection environment prevents the submitted behavior from being assessed reliably. |
 
@@ -37,9 +36,9 @@ Retain selected successful cases as a separate comparison set. They illustrate a
 
 **L1 and S1.** L1 concerns where the repair is attempted and whether all required implementation locations are covered. S1 concerns which required behaviors the selected logic handles. Omitting a subclass is a scope problem; handling creation but not later updates is incomplete behavioral coverage. Some cases can exhibit both. Select the mode with the clearest archived evidence link to the unsuccessful submission and explain the specific omission rather than applying an automatic category-priority rule.
 
-**S2 and V3.** Assign S2 when the selected repair strategy leaves the target operation incorrect. Assign V3 when the reported local defect is addressed but the patch demonstrably breaks another previously valid input, caller contract, or state lifecycle. When an overly broad strategy produces such a confirmed regression, assign V3 and describe the strategy as a secondary observation. Breadth, a difference from the reference patch, or a failed outcome alone does not establish a regression. Identify the prior behavior and the patch-induced change using tests or repository evidence. A successful local reproduction does not establish that every target case is fixed; co-occurring target defects may remain. Test membership in `FAIL_TO_PASS` or `PASS_TO_PASS` alone does not determine the category.
+**S2 and V3.** First determine whether the patch successfully resolves the issue-reported problem. Assign S2 when an incorrect algorithm, transformation, or workaround leaves that required behavior unresolved. Assign V3 only when both conditions are supported: (1) a reproduction test or other behavioral evidence confirms that the reported issue is resolved, and (2) regression tests or a before-and-after behavioral comparison confirms that the patch breaks previously correct behavior, a caller contract, or a state lifecycle. If the reported issue remains unresolved, do not assign V3 even when the patch also introduces a regression; classify the trial by the primary unresolved mechanism, such as S2 for an incorrect strategy or S1 for incomplete repair logic.
 
-The V3 preference applies to the same repair's directly supported regression, not to any earlier or unrelated recovered error. It does not override the general evidence requirement or establish causality. A repeated-call regression can occur in the same function as the local fix. V3 includes type and contract regressions and is not limited to environment pollution.
+The V3 regression must be directly linked to the same patch and may affect the same function, a repeated-call path, a type or caller contract, or a state lifecycle. An unrelated or recovered error does not qualify. Patch breadth, a difference from the reference patch, a failed outcome, or membership in `FAIL_TO_PASS` or `PASS_TO_PASS` alone does not establish either successful issue resolution or a regression.
 
 **V1 and V2.** V1 concerns the scope of required behavior; V2 concerns its concrete representation. A test that checks an additional exception case can motivate V1. An exact argument-list or string assertion can motivate V2. Neither label alone proves that the candidate is semantically equivalent to the reference or that the test is invalid: representations can form part of a public contract.
 
@@ -70,7 +69,7 @@ in the trajectory narrative, differs from the reference patch, or precedes a
 failed benchmark outcome.
 
 These definitions apply to individual assessments. The
-[final aggregation rule](../taxonomy_methodology/README.md#final-chronological-link-judgments)
+[final aggregation rule](../docs/taxonomy_methodology/README.md#final-chronological-link-judgments)
 uses any eligible negative assessment as a conservative flag and requires
 three positive assessments for support, subject to explicit discussion
 decisions. An aggregate negative flag does not imply coder consensus.

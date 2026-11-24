@@ -26,8 +26,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
 DEFAULT_CATALOGUE = ROOT / 'result' / 'Statistics results' / 'full' / 'failures' / 'failure_trial_catalog.csv'
-DEFAULT_CODEBOOK = ROOT / 'docs' / 'failure_analysis' / 'failure_codebook.json'
-DEFAULT_ANNOTATIONS = ROOT / 'docs' / 'failure_analysis' / 'failure_annotations.csv'
+DEFAULT_CODEBOOK = ROOT / 'FINAL-CODEBOOK' / 'failure_codebook.json'
+DEFAULT_ANNOTATIONS = ROOT / 'FINAL-CODEBOOK' / 'failure_annotations.csv'
 DEFAULT_DOCS = ROOT / 'docs' / 'taxonomy_methodology'
 DEFAULT_STATISTICS = ROOT / 'result' / 'Statistics results' / 'taxonomy_reliability'
 FROZEN_CODEBOOK_SHA256 = '02cc27631636fb042ec93a65b64213334c13c4ae7f76118d0541a39fb98b418f'

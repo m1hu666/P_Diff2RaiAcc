@@ -11,9 +11,10 @@ Independently check the current category and diagnosis for every failed trial
 in your assigned sheet. Start with the readable
 [verification packet](VERIFICATION_CASES.md), which presents the authors'
 existing analysis and links to the underlying materials. The original review
-used eleven categories. The linked
-[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) now includes V5,
-which was added after reconciliation. Decide whether
+used eleven categories. The linked final
+[failure codebook](../../FINAL-CODEBOOK/FAILURE_CODEBOOK.md) replaces the now-retired
+S3 with V5 after all nine S3 assignments were reclassified during
+reconciliation. Decide whether
 that analysis supports the current category. The packet and original label are
 provided intentionally; this is informed verification, not blind recoding.
 
@@ -97,10 +98,11 @@ itself establish a different failure mode.
 
 Write free-text comments in English. A trial with multiple problems still
 receives one proposed primary category; mention a relevant secondary problem
-in `reason`. For S2 and V3, apply the boundary in the codebook: S2 concerns
-an incorrect approach to the task's requested behavior; V3 concerns a patch
-that handles the targeted scenario while disrupting previously working
-behavior.
+in `reason`. For S2 and V3, first determine whether the reported issue was
+resolved. S2 applies when an incorrect strategy leaves it unresolved. V3
+requires evidence both that the patch resolves the reported issue and that it
+breaks previously correct behavior. If the reported issue remains unresolved,
+do not assign V3 even when the patch also introduces a regression.
 
 ## Chronological-link check
 

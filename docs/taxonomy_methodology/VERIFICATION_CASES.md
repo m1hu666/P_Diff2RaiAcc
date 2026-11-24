@@ -1,6 +1,6 @@
 # Existing failure assignments: coder review packet
 
-This page presents the authors' current labels and analyses for independent verification by Coders A, B, and C. It is generated from the canonical annotations and task notes; the descriptions are existing interpretations, not additional evidence. Check each trial against the [failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) and the linked materials, then record both the category decision and chronological-link judgment in the assigned coder sheet using the [coder instructions](CODING_GUIDE.md).
+This page presents the authors' current labels and analyses for independent verification by Coders A, B, and C. It is generated from the canonical annotations and task notes; the descriptions are existing interpretations, not additional evidence. Check each trial against the [failure codebook](../../FINAL-CODEBOOK/FAILURE_CODEBOOK.md) and the linked materials, then record both the category decision and chronological-link judgment in the assigned coder sheet using the [coder instructions](CODING_GUIDE.md).
 
 Each task lists shared source materials once and provides a candidate patch and trajectory for each failed trial. The linked benchmark test-ID file lists expected tests from the dataset, not this trial's execution outcome. Some retained assignments explicitly note that further verification is needed.
 
@@ -742,15 +742,15 @@ Each task lists shared source materials once and provides a candidate patch and 
 
 **Task summary:** literalinclude applies dedentation after prepend and append, removing indentation intentionally supplied by those options.
 
-**Current task analysis:** GPT trial 2 moves dedent before prepend/append but also infers indentation from the included body. Even with no dedent option, a body line starting with four spaces makes the patch add those spaces to previously verbatim prepend/append strings. This confirmed regression is assigned V3 under the preference over a co-occurring strategy error. The other eight trials pass.
+**Current task analysis:** GPT trial 2 implements the issue-requested filter ordering by applying dedent before prepend and append, so user-supplied option content is no longer processed by dedentation. It additionally infers indentation from the included body and applies it to those strings. In the pre-existing no-dedent path, previously verbatim prepend and append content therefore gains extra indentation, supporting the retained V3 label. The other eight trials pass.
 
 **Shared materials:** [Issue](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323_problem_statement.txt) · [Hints](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323_hints.txt) · [Reference patch](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323_gold.patch) · [Evaluation tests](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323_test.patch) · [Benchmark test IDs](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323_test_ids.json)
 
 | Trial | Current label | Current diagnosis | Candidate patch | Trajectory |
 | --- | --- | --- | --- | --- |
-| GPT-2 | V3 Regression of Existing Behavior | Moves dedent before prepend/append but additionally infers indentation from included lines. Even when dedent is absent, previously verbatim prepend/append strings acquire extra indentation. This separate existing-behavior regression takes precedence over the co-occurring target-combination error. | [Patch](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/2sphinx-doc__sphinx-10323_model.patch) | [Log](../../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323.traj.json) |
+| GPT-2 | V3 Regression of Existing Behavior | Moves dedent_filter before prepend_filter and append_filter, implementing the issue-requested processing order so dedentation no longer alters the subsequently inserted option text. However, it also prefixes the option strings with indentation inferred from the included body. On the pre-existing no-dedent path, prepend and append strings that were previously emitted verbatim therefore acquire extra indentation, a confirmed regression. | [Patch](../../analyse/gpt-5-2025-08-07-medium-reasoning/sphinx-doc__sphinx-10323/2sphinx-doc__sphinx-10323_model.patch) | [Log](../../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/sphinx-doc__sphinx-10323/sphinx-doc__sphinx-10323.traj.json) |
 
-**Interpretation note:** The new target-combination test also exposes the extra indentation. Its membership in FAIL_TO_PASS does not erase the independently demonstrated regression in the pre-existing no-dedent scenario.
+**Interpretation note:** The V3 attribution rests on separate evidence for both conditions: the reordered filters implement the issue-reported dedent behavior, while the before-and-after no-dedent comparison demonstrates the regression introduced by unconditional indentation inheritance.
 
 <a id="task-sphinx-doc__sphinx-9591"></a>
 

@@ -254,7 +254,7 @@ def main():
     catalogue = read(artifact(out, 'failure_trial_catalog.csv'))
     for row in catalogue:
         row['trial'] = int(row['trial'])
-    codebook = args.data_root/'docs/failure_analysis/failure_codebook.json'
+    codebook = args.data_root/'FINAL-CODEBOOK/failure_codebook.json'
     categories = {r['code']: r for r in json.loads(codebook.read_text())['categories']}
     vectors, specs = design(rows, catalogue, models, categories)
     cohort_tests, cohort_design = {}, {}

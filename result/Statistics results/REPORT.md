@@ -47,7 +47,6 @@ Django contains half of the tasks and contributes 106/242 failures (43.80%). The
 | L1 | 12 (4.96) | 3 (2.21) | -2.75 [-9.01, +1.80] | 75.00 | 8 -> 7 |
 | S1 | 49 (20.25) | 28 (20.59) | +0.34 [-12.22, +12.83] | 42.86 | 1 -> 2 |
 | S2 | 19 (7.85) | 2 (1.47) | -6.38 [-14.67, -0.23] | 89.47 | 6 -> 9 |
-| S3 | 0 (0.00) | 0 (0.00) | +0.00 [+0.00, +0.00] | undefined | 12 -> 10 |
 | I1 | 8 (3.31) | 3 (2.21) | -1.10 [-4.91, +1.73] | 62.50 | 10 -> 7 |
 | V1 | 10 (4.13) | 0 (0.00) | -4.13 [-9.58, +0.00] | 100.00 | 9 -> 10 |
 | V2 | 30 (12.40) | 15 (11.03) | -1.37 [-10.80, +8.04] | 50.00 | 3 -> 6 |
@@ -59,7 +58,7 @@ The largest observed subcategory shift is P1: +6.40 percentage points after remo
 
 The [composition-change intervals](sensitivity/django_taxonomy_shift.csv) use a joint task bootstrap stratified by Django status. The same non-Django draws enter both estimates, preserving overlap. They are pointwise descriptive intervals, not a battery of independent full-versus-excluded tests.
 
-Failure [incidence tests](full/failures/category_inference.csv) compare model category counts per all attempts using exact task-block swaps. There are 51 tests per cohort, corrected within cohort and jointly across all 102 taxonomy tests. Taxonomy findings remain exploratory and separate from the resource/outcome family. V5 counts evaluation-infrastructure blockers, not model repair defects. [Category intervals](full/failures/category_uncertainty.csv) distinguish incidence from composition; zero-event intervals do not bound unseen categories.
+Failure [incidence tests](full/failures/category_inference.csv) compare model category counts per all attempts using exact task-block swaps. There are 48 tests per cohort, corrected within cohort and jointly across all 96 taxonomy tests. Taxonomy findings remain exploratory and separate from the resource/outcome family. V5 counts evaluation-infrastructure blockers, not model repair defects. [Category intervals](full/failures/category_uncertainty.csv) distinguish incidence from composition; zero-event intervals do not bound unseen categories.
 
 ## Repository and difficulty sensitivity
 

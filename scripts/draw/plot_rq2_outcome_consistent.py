@@ -60,9 +60,9 @@ DIFFICULTIES = [
     ('1-4 hours', '1–4h'),
 ]
 STYLE = {
-    'Claude': ('#0072B2', 'o', 14),
-    'Gemini': ('#D55E00', 's', 13),
-    'GPT': ('#171717', '^', 17),
+    'Claude': ('#0072B2', 'o', 22),
+    'Gemini': ('#D55E00', 's', 21),
+    'GPT': ('#171717', '^', 25),
 }
 OUTCOMES = ['Success', 'Failure']
 
@@ -145,10 +145,15 @@ def draw(metric, name, xlabel, suggested_max, ticks, minor_interval, panel_capti
     # Render at publication width so embedding at column width preserves fonts.
     fig = plt.figure(figsize=(3.4, 5.3), facecolor='white')
     gs = fig.add_gridspec(
-        1, 4, width_ratios=[1.30, 1.42, 1.95, 1.95],
-        left=0.012, right=0.985, top=0.900, bottom=0.115, wspace=0.075,
+        1, 6,
+        width_ratios=[1.8, 1.42, 0.35, 1.95, 0.70, 1.95],
+        left=0.055, right=0.985, top=0.900,
+        bottom=0.115, wspace=0.075,
     )
-    ax_repo, ax_diff, ax_suc, ax_fail = [fig.add_subplot(gs[0, i]) for i in range(4)]
+
+    ax_repo, ax_diff, ax_suc, ax_fail = [
+        fig.add_subplot(gs[0, i]) for i in [0, 1, 3, 5]
+    ]
     axs = [ax_repo, ax_diff, ax_suc, ax_fail]
     for ax in axs:
         ax.set_ylim(y - 0.55, -0.57)

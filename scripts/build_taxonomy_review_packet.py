@@ -17,9 +17,9 @@ from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CATALOGUE = ROOT / 'result' / 'Statistics results' / 'full' / 'failures' / 'failure_trial_catalog.csv'
-DEFAULT_ANNOTATIONS = ROOT / 'docs' / 'failure_analysis' / 'failure_annotations.csv'
-DEFAULT_NOTES = ROOT / 'docs' / 'failure_analysis' / 'failure_case_notes.json'
-DEFAULT_CODEBOOK = ROOT / 'docs' / 'failure_analysis' / 'failure_codebook.json'
+DEFAULT_ANNOTATIONS = ROOT / 'FINAL-CODEBOOK' / 'failure_annotations.csv'
+DEFAULT_NOTES = ROOT / 'FINAL-CODEBOOK' / 'failure_case_notes.json'
+DEFAULT_CODEBOOK = ROOT / 'FINAL-CODEBOOK' / 'failure_codebook.json'
 DEFAULT_OUTPUT = ROOT / 'docs' / 'taxonomy_methodology' / 'VERIFICATION_CASES.md'
 MATERIALS = (
     ('Issue', 'problem_statement_path'),
@@ -90,7 +90,7 @@ def render(catalogue_path, annotations_path, notes_path, codebook_path, output):
         'verification by Coders A, B, and C. It is generated from the canonical '
         'annotations and task notes; the descriptions are existing interpretations, '
         'not additional evidence. Check each trial against the '
-        '[failure codebook](../failure_analysis/FAILURE_CODEBOOK.md) and the linked '
+        '[failure codebook](../../FINAL-CODEBOOK/FAILURE_CODEBOOK.md) and the linked '
         'materials, then record both the category decision and chronological-link '
         'judgment in the assigned coder sheet using the '
         '[coder instructions](CODING_GUIDE.md).',

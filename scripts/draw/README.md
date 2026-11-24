@@ -64,9 +64,9 @@ Suggested manuscript text (kept outside the figure):
 > including format retries and final submission; costs are framework-estimated
 > API charges per attempt. The outcome-conditioned comparisons are descriptive.
 
-The heatmap uses categories observed in the full reconciled corpus and omits
-categories whose full-corpus assignment count is zero. Both current cohort figures therefore show the same
-11 categories, with S3 absent. Categories such as V1 and V4 remain visible as
+The heatmap uses the eleven categories in the final reconciled codebook. S3 is
+absent because it was retired after all nine of its pre-reconciliation
+assignments moved to V5. Categories such as V1 and V4 remain visible as
 zeroes in the without-Django figure because they occur in the full corpus. The
 colorbar counts failed trials, whereas the bars count tasks.
 The heatmap is exported at 3.4 by 1.1 inches for a single publication column,

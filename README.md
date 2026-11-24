@@ -37,13 +37,14 @@ pip install -r requirements.txt
 
 ```text
 P_Diff2RaiAcc/
+├── FINAL-CODEBOOK/                # Canonical final taxonomy, trial diagnoses, and case notes
 ├── analyse/                       # Per-model patches, task text, and benchmark test IDs
 ├── data/
 │   ├── data/verified/             # Verified patches and Boolean outcomes
 │   └── traj/                      # Saved trajectories and evaluation reports
 ├── docs/
 │   ├── METHODS.md                 # Accounting, settings, and statistical design
-│   ├── failure_analysis/          # Final codebook, annotations, and case notes
+│   ├── failure_analysis/          # Pointer retained for the former source location
 │   └── taxonomy_methodology/      # Taxonomy construction and three-coder verification
 ├── result/
 │   ├── analyse.md                 # Complete failure-analysis catalogue
@@ -66,6 +67,10 @@ The pipeline generates both the full cohort (100 tasks) and the Django-excluded
 cohort (50 tasks), including repository/difficulty strata and repository-cluster
 sensitivity. The second command refreshes the linked case index from the final
 annotations. Run both commands after changing annotations.
+
+The four editable, reconciled failure-coding sources are collected in
+[FINAL-CODEBOOK](FINAL-CODEBOOK/README.md). Generated reports and tables under
+`result/` should be rebuilt from that package rather than edited directly.
 
 To rebuild only the full-cohort descriptive failure catalogue and
 `result/analyse.md`, run:

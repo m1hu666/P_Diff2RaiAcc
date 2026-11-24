@@ -189,9 +189,9 @@ def main():
     for name in ('a', 'b', 'c'):
         parser.add_argument('--coder-'+name, type=Path, default=DOCS/f'coder_{name}.csv')
     parser.add_argument('--annotations', type=Path,
-                        default=ROOT/'docs/failure_analysis/failure_annotations.csv')
+                        default=ROOT/'FINAL-CODEBOOK/failure_annotations.csv')
     parser.add_argument('--codebook', type=Path,
-                        default=ROOT/'docs/failure_analysis/failure_codebook.json')
+                        default=ROOT/'FINAL-CODEBOOK/failure_codebook.json')
     parser.add_argument('--decisions', type=Path, default=DOCS/'earliest_link_decisions.csv')
     parser.add_argument('--output', type=Path,
                         default=ROOT/'result/Statistics results/taxonomy_reliability')

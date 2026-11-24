@@ -7,8 +7,8 @@ their own sheets. The [verification packet](VERIFICATION_CASES.md) is now
 regenerated from the reconciled annotations and is useful as a current linked
 case index; it is not a frozen copy of the exact packet shown before discussion.
 The authoritative source records
-remain the [trial annotations](../failure_analysis/failure_annotations.csv) and
-the [failure codebook](../failure_analysis/FAILURE_CODEBOOK.md).
+remain the [trial annotations](../../FINAL-CODEBOOK/failure_annotations.csv) and
+the [failure codebook](../../FINAL-CODEBOOK/FAILURE_CODEBOOK.md).
 
 ## How the taxonomy was constructed
 
@@ -37,9 +37,10 @@ the three-phase Failure Diagnosis Workflow reported in the manuscript:
 
 Trial-level attribution statements describing the same or closely related
 observed mode were initially grouped and refined into eleven subcategories.
-The post hoc coder discussion added V5 for evaluation-infrastructure
-failures, yielding twelve categories in the reconciled codebook. The
-subcategories were mapped to five broader stages
+During the post hoc coder discussion, all nine S3 assignments were reclassified
+as V5 evaluation-infrastructure failures and S3 was retired from the final
+taxonomy. The reconciled codebook therefore contains eleven final categories.
+The subcategories were mapped to five broader stages
 derived from the agent's YAML-configured repair workflow and the sequential
 trajectory logs: problem understanding, localization, strategy and logic,
 implementation and execution, and validation and harness constraints.
@@ -120,7 +121,7 @@ by seeing the authors' labels and explanations.
 
 The three CSVs record the pre-discussion responses. The agreed decisions
 are in [talk.md](talk.md); the canonical labels and English diagnoses are in
-the [trial annotations](../failure_analysis/failure_annotations.csv). V5 was
+the [trial annotations](../../FINAL-CODEBOOK/failure_annotations.csv). V5 was
 created during reconciliation and was therefore not an option on the original
 response sheets. The [verification packet](VERIFICATION_CASES.md) reflects the
 reconciled annotations; the CSVs retain each coder's original

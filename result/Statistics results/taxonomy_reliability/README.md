@@ -25,7 +25,6 @@ The INDETERMINATE total includes 29 trials whose category changed without a new 
 | L1 | 9 | 3 | 0 | 12 |
 | S1 | 34 | 6 | 9 | 49 |
 | S2 | 14 | 1 | 4 | 19 |
-| S3 | 0 | 0 | 0 | 0 |
 | I1 | 2 | 0 | 6 | 8 |
 | V1 | 4 | 4 | 2 | 10 |
 | V2 | 20 | 0 | 10 | 30 |
