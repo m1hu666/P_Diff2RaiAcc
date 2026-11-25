@@ -10,12 +10,12 @@ per model and task (900 trials in total).
 All analyses operate on the archived artifacts and do not require model API
 access.
 
-## Reviewer-requested replication materials
+## Core replication materials
 
-The reviews explicitly requested that the replication package contain the
-following materials. These are the primary entry points.
+The following entry points collect the materials needed to inspect and
+reproduce the study.
 
-| Requested material | Location in this repository |
+| Material | Location in this repository |
 |---|---|
 | **Task IDs** | The complete 100-task list is [`data/data/verified/instance_id_list.json`](data/data/verified/instance_id_list.json). |
 | **Final labels and annotation rationale** | Archived pass/fail outcomes and submitted patches are in [`data/data/verified/`](data/data/verified/). The final reconciled qualitative labels and trial-level diagnoses are in [`FINAL-CODEBOOK/failure_annotations.csv`](FINAL-CODEBOOK/failure_annotations.csv), with task-level rationale and interpretation notes in [`FINAL-CODEBOOK/failure_case_notes.json`](FINAL-CODEBOOK/failure_case_notes.json). [`FINAL-CODEBOOK/README.md`](FINAL-CODEBOOK/README.md) explains the fields and their scope. |
@@ -27,11 +27,10 @@ separate from the archived benchmark pass/fail outcome. “Final” means
 reconciled for this fixed corpus; it does not imply causal identification,
 universal taxonomy completeness, or formal saturation.
 
-## Additional evidence for the revision
+## Additional validation and analysis materials
 
-Other review comments asked for stronger methodological and empirical support,
-although they did not explicitly require these materials to be placed in the
-repository. The package also provides:
+For further validation, methodological auditing, and quantitative analysis,
+the package also provides:
 
 - three-coder, pre-discussion verification sheets, reconciliation records, and
   agreement analysis in
@@ -102,7 +101,7 @@ including repository and difficulty strata, repository-cluster sensitivity,
 audits, and validation. Generated artifacts are written under
 `result/Statistics results/`.
 
-Refresh the linked qualitative-review packet after changing the canonical
+Refresh the linked annotation-verification packet after changing the canonical
 annotations, or check that the existing packet is current:
 
 ```bash
