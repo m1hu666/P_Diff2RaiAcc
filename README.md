@@ -1,25 +1,52 @@
-# P_Diff2RaiAcc
+# Open-Source Package for *Characterizing the Failure Modes of LLMs in Resolving Real-World GitHub Issues*
 
-This repository archives the model patches, trajectories, evaluation labels, and
-reproducible analyses used to compare three models with mini-SWE-agent on 100
-SWE-bench Verified tasks with three attempts per model/task.
+This repository is the open-source replication package for the paper
+*Characterizing the Failure Modes of LLMs in Resolving Real-World GitHub
+Issues*. It archives the model patches, complete agent trajectories, evaluation
+outcomes, qualitative annotations, and reproducible analyses for three models
+evaluated with mini-SWE-agent on 100 SWE-bench Verified tasks, with three trials
+per model and task (900 trials in total).
 
-The experiments used [mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent)
-version 1.15.0 from its v1 codebase; see the official
-[v1 documentation](https://mini-swe-agent.com/v1/). The exact prompt templates
-extracted from the archived runs are released in
-[prompt_templates.json](result/Statistics%20results/settings/prompt_templates.json), and
-the [methods notes](docs/METHODS.md#experimental-settings-and-prompts) document
-prompt consistency and the serial bash interaction loop. Each saved trajectory
-also retains the agent configuration and complete ordered message history.
+All analyses operate on the archived artifacts and do not require model API
+access.
 
-Provider-specific token definitions, experimental settings, interaction counts,
-cost estimates, and task-paired statistical methods are documented in
-[docs/METHODS.md](docs/METHODS.md).
+## Reviewer-requested replication materials
 
-For a complete file index, metric definitions, denominators and interpretation
-of the existing statistics, see the
-[statistics catalogue](result/Statistics%20results/README.md).
+The reviews explicitly requested that the replication package contain the
+following materials. These are the primary entry points.
+
+| Requested material | Location in this repository |
+|---|---|
+| **Task IDs** | The complete 100-task list is [`data/data/verified/instance_id_list.json`](data/data/verified/instance_id_list.json). |
+| **Final labels and annotation rationale** | Archived pass/fail outcomes and submitted patches are in [`data/data/verified/`](data/data/verified/). The final reconciled qualitative labels and trial-level diagnoses are in [`FINAL-CODEBOOK/failure_annotations.csv`](FINAL-CODEBOOK/failure_annotations.csv), with task-level rationale and interpretation notes in [`FINAL-CODEBOOK/failure_case_notes.json`](FINAL-CODEBOOK/failure_case_notes.json). [`FINAL-CODEBOOK/README.md`](FINAL-CODEBOOK/README.md) explains the fields and their scope. |
+| **Complete qualitative-analysis protocol, coding guidelines, codebook, and category definitions** | The taxonomy-construction and verification procedure is documented in [`docs/taxonomy_methodology/README.md`](docs/taxonomy_methodology/README.md), and the coder protocol is in [`CODING_GUIDE.md`](docs/taxonomy_methodology/CODING_GUIDE.md). The authoritative category definitions, decision rules, and boundaries are in [`FAILURE_CODEBOOK.md`](FINAL-CODEBOOK/FAILURE_CODEBOOK.md), with a machine-readable version in [`failure_codebook.json`](FINAL-CODEBOOK/failure_codebook.json). |
+| **mini-SWE-agent prompting strategy and interaction loop** | [`docs/METHODS.md`](docs/METHODS.md#experimental-settings-and-prompts) documents the agent version, prompting strategy, serial bash interaction loop, and prompt consistency across trials. Exact archived templates are in [`prompt_templates.json`](result/Statistics%20results/settings/prompt_templates.json), and the nine-attempt-per-task consistency audit is in [`prompt_consistency.csv`](result/Statistics%20results/settings/prompt_consistency.csv). Every archived trajectory under [`data/traj/`](data/traj/) retains its configuration and complete ordered message history. |
+
+The qualitative label is an evidence-based diagnostic annotation and is
+separate from the archived benchmark pass/fail outcome. “Final” means
+reconciled for this fixed corpus; it does not imply causal identification,
+universal taxonomy completeness, or formal saturation.
+
+## Additional evidence for the revision
+
+Other review comments asked for stronger methodological and empirical support,
+although they did not explicitly require these materials to be placed in the
+repository. The package also provides:
+
+- three-coder, pre-discussion verification sheets, reconciliation records, and
+  agreement analysis in
+  [`docs/taxonomy_methodology/`](docs/taxonomy_methodology/)—see
+  [`ANNOTATION_AGREEMENT.md`](docs/taxonomy_methodology/ANNOTATION_AGREEMENT.md)
+  for the scope and limitations of the reported agreement;
+- an independent review of all 40 V1/V2 cases in
+  [`V1V2_recheck/`](V1V2_recheck/README.md);
+- archived provider, agent, token-accounting, interaction-count, and prompt
+  evidence in
+  [`result/Statistics results/settings/`](result/Statistics%20results/settings/)
+  and [`docs/METHODS.md`](docs/METHODS.md); and
+- task-paired inference, repository-cluster sensitivity, Django-exclusion
+  results, denominators, and output definitions in the
+  [statistics catalogue](result/Statistics%20results/README.md).
 
 ## Setup
 
@@ -36,117 +63,58 @@ pip install -r requirements.txt
 ## Repository layout
 
 ```text
-P_Diff2RaiAcc/
-├── FINAL-CODEBOOK/                # Canonical final taxonomy, trial diagnoses, and case notes
-├── analyse/                       # Per-model patches, task text, and benchmark test IDs
+.
 ├── data/
-│   ├── data/verified/             # Verified patches and Boolean outcomes
-│   └── traj/                      # Saved trajectories and evaluation reports
+│   ├── data/verified/             # Task list, submitted patches, and outcome labels
+│   └── traj/                      # Complete trajectories, configurations, and messages
+├── analyse/                       # Per-model task artifacts and benchmark test IDs
+├── FINAL-CODEBOOK/                # Canonical taxonomy, labels, diagnoses, and case notes
 ├── docs/
-│   ├── METHODS.md                 # Accounting, settings, and statistical design
-│   ├── failure_analysis/          # Pointer retained for the former source location
-│   └── taxonomy_methodology/      # Taxonomy construction and three-coder verification
+│   ├── METHODS.md                 # Experimental, accounting, and statistical methods
+│   └── taxonomy_methodology/      # Coding protocol and three-coder verification
+├── V1V2_recheck/                  # Independent validation of the 40 V1/V2 cases
 ├── result/
-│   ├── analyse.md                 # Complete failure-analysis catalogue
+│   ├── analyse.md                 # Human-readable failure-analysis catalogue
 │   ├── summary.txt                # Three-trial outcome summary
-│   └── Statistics results/        # Generated statistics, tables, and audits
-├── scripts/                       # Reproducible analysis and utility scripts
+│   └── Statistics results/        # Generated tables, reports, settings, and audits
+├── scripts/                       # Analysis, validation, and inspection entry points
 └── examples/                      # Selected task examples
 ```
 
+The experiments used
+[mini-SWE-agent](https://github.com/SWE-agent/mini-swe-agent) version 1.15.0
+from its v1 codebase; see the official
+[v1 documentation](https://mini-swe-agent.com/v1/). The archived settings and
+their provenance are described in
+[`settings.md`](result/Statistics%20results/settings/settings.md).
+
 ## Reproduce the analyses
 
-Run the complete token-accounting, resource, outcome, taxonomy, and clustered sensitivity analysis:
+Run the complete offline token-accounting, resource, outcome, taxonomy,
+inferential, and sensitivity-analysis pipeline:
 
 ```bash
 python3 scripts/run_analysis.py
+```
+
+This rebuilds the full 100-task cohort and the 50-task Django-excluded cohort,
+including repository and difficulty strata, repository-cluster sensitivity,
+audits, and validation. Generated artifacts are written under
+`result/Statistics results/`.
+
+Refresh the linked qualitative-review packet after changing the canonical
+annotations, or check that the existing packet is current:
+
+```bash
 python3 scripts/build_taxonomy_review_packet.py
+python3 scripts/build_taxonomy_review_packet.py --check
 ```
 
-The pipeline generates both the full cohort (100 tasks) and the Django-excluded
-cohort (50 tasks), including repository/difficulty strata and repository-cluster
-sensitivity. The second command refreshes the linked case index from the final
-annotations. Run both commands after changing annotations.
+The four editable and reconciled failure-coding sources are collected in
+[`FINAL-CODEBOOK/`](FINAL-CODEBOOK/README.md). Generated reports and tables
+under `result/` should be rebuilt from those sources rather than edited
+directly.
 
-The four editable, reconciled failure-coding sources are collected in
-[FINAL-CODEBOOK](FINAL-CODEBOOK/README.md). Generated reports and tables under
-`result/` should be rebuilt from that package rather than edited directly.
-
-To rebuild only the full-cohort descriptive failure catalogue and
-`result/analyse.md`, run:
-
-```bash
-python3 scripts/build_failure_analysis.py
-```
-
-The categorized outputs are written under
-`result/Statistics results/`; the complete failure report is written to
-`result/analyse.md`. Validation records include input hashes and coverage checks
-so the generated tables can be checked against the archived data.
-
-Each `analyse/<model>/<task>/` folder also contains `<task>_test_ids.json`,
-with the dataset's `FAIL_TO_PASS` and `PASS_TO_PASS` test-ID lists. These are
-expected benchmark tests, not per-trial execution outcomes. They were exported
-from the same [Princeton SWE-bench Verified dataset](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified)
-used by `scripts/datavis.py` at revision
-`c104f840cc67f8b6eec6f759ebc8b2693d585d4a`.
-Run `python3 scripts/export_verified_test_ids.py --check` to verify the saved
-lists against that dataset; the script refuses to overwrite a differing file.
-
-Optional implementation-source inspection requires an exact mini-SWE-agent
-1.15.0 checkout from the experiment:
-
-```bash
-python3 scripts/run_analysis.py --agent-root /path/to/mini-swe-agent
-```
-
-## Independent integrity checks
-
-These checks write to separate output locations and do not alter trajectories,
-patches, or labels:
-
-```bash
-python3 scripts/audit_submission_integrity.py
-python3 scripts/audit_inference_usage.py
-python3 scripts/cal.py
-```
-
-## Supporting utilities
-
-Every script begins with its purpose, inputs, outputs, and mutation scope where
-relevant.
-
-| Script | Purpose |
-|---|---|
-| `scripts/inspector.py` | Interactively inspect one saved trajectory |
-| `scripts/res_cmp.py` | Rebuild `result/summary.txt` from verified labels |
-| `scripts/cal.py` | Independently summarize reported tokens by outcome |
-| `scripts/datavis.py` | Export selected patches and task metadata listed in root `id.txt` |
-| `scripts/collectid.py` | Rebuild the saved task-ID list |
-| `scripts/label_add.py` | Synchronize one verified label file with its evaluation report; this utility mutates the selected label file |
-| `scripts/audit_submission_integrity.py` | Compare submissions, verified patches, and evaluation labels |
-| `scripts/audit_inference_usage.py` | Produce an independent trajectory-level usage audit |
-| `scripts/export_verified_test_ids.py` | Export and validate the two expected-test lists for each archived task without rewriting existing patches |
-| `scripts/build_taxonomy_review_packet.py` | Build the current linked case index of reconciled trial labels, diagnoses, and archived materials |
-| `scripts/taxonomy_coder_check.py` | Historical complete-CSV workflow; the current full-sample interpretation and reproducible agreement statistics are documented in `docs/taxonomy_methodology/ANNOTATION_AGREEMENT.md` |
-| `scripts/summarize_earliest_links.py` | Resolve final chronological-link statuses from the three English coder sheets and discussion decisions; report trial-level results and grouped counts |
-| `scripts/check_failure_boundary_examples.py` | Reproduce small baseline/candidate behavior checks supporting the S2/V3 distinction; optional historical SymPy source enables two target assertions |
-
-Example trajectory inspection:
-
-```bash
-python3 scripts/inspector.py \
-  --m gpt-5-2025-08-07-medium-reasoning \
-  --r 1 \
-  --i astropy__astropy-7671
-```
-
-Rebuilding `result/summary.txt` requires access to the Hugging Face SWE-bench
-Verified dataset for difficulty metadata:
-
-```bash
-python3 scripts/res_cmp.py -m \
-  claude-sonnet-4-5-20250929 \
-  gpt-5-2025-08-07-medium-reasoning \
-  gemini-3-pro-preview
-```
+Each script begins with a description of its purpose, inputs, outputs, and
+mutation scope where relevant. Consult that opening documentation for usage;
+the root README intentionally lists only the main entry points.

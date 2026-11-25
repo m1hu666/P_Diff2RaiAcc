@@ -41,6 +41,7 @@ Each of the three reviewers independently completes their assigned file:
 - `checker_b.csv`
 - `checker_c.csv`
 
-The canonical category, diagnosis, and artifact paths (issue statement, generated patch, reference patch, and benchmark test patch) for each case are available in:
-
-`../Statistics results/full/failures/failure_trial_catalog.csv`
+The canonical category, diagnosis, and artifact paths (issue statement,
+generated patch, reference patch, and benchmark test patch) for each case are
+available in the
+[failure trial catalogue](../result/Statistics%20results/full/failures/failure_trial_catalog.csv).
