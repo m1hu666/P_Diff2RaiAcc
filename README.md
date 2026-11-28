@@ -8,7 +8,7 @@ per model and task (900 trials in total).
 The following entry points collect the materials needed to inspect and
 reproduce the study.
 
-| Material | Location in this repository |
+|   | Location |
 |---|---|
 | **Task IDs** | The complete 100-task list is [`data/data/verified/instance_id_list.json`](data/data/verified/instance_id_list.json). |
 | **Final labels and annotation rationale** | Archived pass/fail outcomes and submitted patches are in [`data/data/verified/`](data/data/verified/). The final reconciled qualitative labels and trial-level diagnoses are in [`FINAL-CODEBOOK/failure_annotations.csv`](FINAL-CODEBOOK/failure_annotations.csv), with task-level rationale and interpretation notes in [`FINAL-CODEBOOK/failure_case_notes.json`](FINAL-CODEBOOK/failure_case_notes.json). [`FINAL-CODEBOOK/README.md`](FINAL-CODEBOOK/README.md) explains the fields and their scope. |
@@ -19,8 +19,6 @@ The qualitative label is an evidence-based diagnostic annotation and is
 separate from the archived benchmark pass/fail outcome. “Final” means
 reconciled for this fixed corpus. It does not imply causal identification,
 universal taxonomy completeness, or formal saturation.
-
-## Additional methodology and analysis materials
 
 For further methodological auditing and quantitative analysis, the package
 also provides:
@@ -42,7 +40,7 @@ also provides:
 
 ## Setup
 
-Use Python 3.10 or newer. The main analysis pipelines use the Python standard
+Use Python>=3.10. The main analysis pipelines use the Python standard
 library. Optional inspection and export utilities require the packages listed in
 `requirements.txt`.
 
@@ -89,7 +87,7 @@ inferential, and sensitivity-analysis pipeline:
 python3 scripts/run_analysis.py
 ```
 
-This rebuilds the full 100-task cohort and the 50-task Django-excluded cohort,
+This rebuilds the full 100-task cohort and the w/o Django cohort,
 including repository and difficulty strata, repository-cluster sensitivity,
 audits, and output consistency checks. Generated artifacts are written under
 `result/Statistics results/`.
