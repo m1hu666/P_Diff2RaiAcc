@@ -1,16 +1,9 @@
-# Open-Source Package for *Characterizing the Failure Modes of LLMs in Resolving Real-World GitHub Issues*
+# Replication Package for *Characterizing the Failure Modes of LLMs in Resolving Real-World GitHub Issues*
 
-This repository is the open-source replication package for the paper
-*Characterizing the Failure Modes of LLMs in Resolving Real-World GitHub
-Issues*. It archives the model patches, complete agent trajectories, evaluation
+This repository is the replication package for *Characterizing the Failure Modes of LLMs in Resolving Real-World GitHub Issues*. It archives the model patches, complete agent trajectories, evaluation
 outcomes, qualitative annotations, and reproducible analyses for three models
 evaluated with mini-SWE-agent on 100 SWE-bench Verified tasks, with three trials
 per model and task (900 trials in total).
-
-All analyses operate on the archived artifacts and do not require model API
-access.
-
-## Core replication materials
 
 The following entry points collect the materials needed to inspect and
 reproduce the study.
