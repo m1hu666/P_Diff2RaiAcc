@@ -506,7 +506,7 @@ Each task lists shared source materials once and provides a candidate patch and 
 | GPT-2 | P1 Misinterpretation / Domain Knowledge Lack | Suppresses the HEAD response body but does not satisfy the tested response-header handling, including the required treatment of Content-Length. | [Patch](../../analyse/gpt-5-2025-08-07-medium-reasoning/django__django-16502/2django__django-16502_model.patch) | [Log](../../data/traj/gpt-5-2025-08-07-medium-reasoning/round2/django__django-16502/django__django-16502.traj.json) |
 | GPT-3 | P1 Misinterpretation / Domain Knowledge Lack | Suppresses the HEAD response body but does not satisfy the tested response-header handling, including the required treatment of Content-Length. | [Patch](../../analyse/gpt-5-2025-08-07-medium-reasoning/django__django-16502/3django__django-16502_model.patch) | [Log](../../data/traj/gpt-5-2025-08-07-medium-reasoning/round3/django__django-16502/django__django-16502.traj.json) |
 
-**Interpretation note:** The absence of Content-Length is a case-specific benchmark expectation and does not imply that HTTP forbids a Content-Length header in every HEAD response.
+**Interpretation note:** The absence of Content-Length is a case-specific Django policy and does not imply that HTTP forbids a correct Content-Length header in every HEAD response. For this taxonomy, failing to identify the selected omission policy is treated as incomplete framework/domain understanding (P1), because that interpretation appears in the trajectory and persists directly into the evaluated patch.
 
 <a id="task-matplotlib__matplotlib-20859"></a>
 

@@ -302,7 +302,7 @@ def main():
                       f"{r['ratio_of_means']:.2f} [{r['ratio_ci95_lower']:.2f}, {r['ratio_ci95_upper']:.2f}] |")
     report += [
         '', 'These exploratory intervals condition on the observed common-success subset; '
-        'no new hypothesis tests are run. The existing [all-task resource tests](../resources/resource_comparisons.csv) '
+        'no new hypothesis tests are run. The existing [all-task interaction-step tests](../resources/resource_comparisons.csv) '
         'are separate and must not be presented as tests of this subset or of outcome-specific plotted cells.', '',
         '## Supporting cost finding: unresolved attempts absorb disproportionate estimated spending', '',
         '| Model | Failure rate (%) | Failure budget share (%) [95% CI] | Estimated USD spent on failed attempts |',

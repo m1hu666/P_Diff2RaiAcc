@@ -23,6 +23,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
 DEFAULT_OUTPUT = ROOT / "result" / "Statistics results"
 RESOURCE_METRICS = ("steps", "prompt_tokens", "completion_tokens")
+INFERENTIAL_RESOURCE_METRICS = ("steps",)
 PREFERRED_MODELS = ("claude-sonnet-4-5-20250929", "gemini-3-pro-preview",
                     "gpt-5-2025-08-07-medium-reasoning")
 
@@ -161,7 +162,7 @@ def analyze(args):
     cost_available = all(row["cost"] is not None for row in rows)
     # Features are model/task means. The same task resample is used for every
     # model and outcome, preserving cross-model pairing and within-task trials.
-    resource_names = list(RESOURCE_METRICS) + (["cost"] if cost_available else [])
+    resource_names = list(INFERENTIAL_RESOURCE_METRICS) + (["cost"] if cost_available else [])
     features = resource_names + ["resolution_rate", "instability"]
     feature_index = {name: index for index, name in enumerate(features)}
     width = len(features)
@@ -191,9 +192,10 @@ def analyze(args):
                 "trials_per_model_task": 3}
         vectors = [[sum(row[metric] for row in grouped[task][left])
                     - sum(row[metric] for row in grouped[task][right]) for task in tasks]
-                   for metric in RESOURCE_METRICS]
+                   for metric in INFERENTIAL_RESOURCE_METRICS]
         p_values = resource_swap_p_values(vectors, args.permutations, args.seed + pair_index)
-        for metric_index, metric in enumerate(resource_names):
+        p_value_by_metric = dict(zip(INFERENTIAL_RESOURCE_METRICS, p_values))
+        for metric in resource_names:
             a = left_index * width + feature_index[metric]
             b = right_index * width + feature_index[metric]
             differences = [x-y for x, y in zip(bootstrap_means[a], bootstrap_means[b])]
@@ -209,7 +211,7 @@ def analyze(args):
             if metric == "cost":
                 costs.append(record)
             else:
-                record["p_value"] = p_values[metric_index]
+                record["p_value"] = p_value_by_metric[metric]
                 resources.append(record)
         for feature, destination, multiplier in (("resolution_rate", successes, 100),
                                                   ("instability", stability, 100)):
@@ -270,14 +272,15 @@ def analyze(args):
         "n_tasks": n_tasks, "n_attempts": len(rows), "models": models, "trials_per_model_task": 3,
         "cohort": args.cohort, "excluded_repositories": excluded, "included_tasks": tasks,
         "sampling_unit": "task; all models and their three trials are kept together",
-        "resource_estimand": "mean per-attempt usage after averaging trials within model/task; effects are left-minus-right means and ratios of arithmetic means",
+        "resource_estimand": "mean per-attempt interaction steps after averaging trials within model/task; effects are left-minus-right means and ratios of arithmetic means",
         "bootstrap": {"method": "paired task-cluster percentile bootstrap", "repetitions": args.bootstrap_repetitions,
                       "seed": args.seed, "confidence_level": .95,
                       "intervals": "pointwise estimation intervals, not simultaneous intervals"},
-        "resource_test": {"method": "two-sided Monte Carlo task-level sign-flip test", "permutations": args.permutations,
+        "resource_test": {"metric": "interaction steps",
+                          "method": "two-sided Monte Carlo task-level sign-flip test", "permutations": args.permutations,
                           "p_value": "(extreme permutations + 1)/(permutations + 1)",
                           "null": "within each task, the two complete model outcome blocks are exchangeable; the statistic is the absolute mean paired difference",
-                          "multiplicity": "Holm correction across all nine model-pair by resource-metric tests"},
+                          "multiplicity": "Holm correction across the three model-pair interaction-step tests"},
         "success_test": {"method": "exact task-level sign-flip test by integer-sum dynamic programming",
                          "estimand": "difference in mean task success fractions, in percentage points",
                          "null": "within each task, the paired three-trial success counts are exchangeable between models",
@@ -289,10 +292,10 @@ def analyze(args):
                            "interpretation": "agreement includes consistently failed tasks; it is not equivalent to successful reliability"},
         "cost": {"included": cost_available, "analysis": "exploratory paired task-bootstrap differences and ratios only; no hypothesis test",
                  "interpretation": "archived framework estimates, not paid invoices"},
-        "global_multiplicity_sensitivity": "An additional Holm adjustment across all 15 resource, success and stability tests is reported alongside outcome-family adjustments.",
+        "global_multiplicity_sensitivity": "An additional Holm adjustment across all nine interaction-step, success and stability tests is reported alongside outcome-family adjustments.",
         "scope": "fixed archived routes and settings; observational model comparisons, not causal effects of matched decoding parameters",
         "outcome_splits": "success/failure resource summaries are descriptive; no within-outcome hypothesis tests",
-        "taxonomy_scope": "Exploratory paired task-level category-incidence tests and bootstrap intervals are produced by clustered_sensitivity.py; their multiplicity families are separate from these 15 tests."
+        "taxonomy_scope": "Exploratory paired task-level category-incidence tests and bootstrap intervals are produced by clustered_sensitivity.py; their multiplicity families are separate from these nine tests."
     }
     artifact(args.output, "analysis_design.json", args.cohort).write_text(json.dumps(design, indent=2) + "\n")
     print(f"Analyzed {len(rows)} attempts in {n_tasks} paired task clusters.")

@@ -57,13 +57,13 @@ The common agent protocol uses exactly one bash code block per response, serial 
 
 The task is the resampling and pairing unit. For each resource measure, the three trials are first averaged within model/task. Every bootstrap resample draws 100 tasks with replacement and retains all models and their three trials together. We use 10,000 resamples with seed 42 to estimate pointwise 95% percentile intervals for paired mean differences and ratios of arithmetic means. These are estimation intervals, not simultaneous multiple-comparison intervals. The task-level assumption is conditional on the sampled benchmark and repository mix, not a guarantee of transfer to new repositories.
 
-For steps, input tokens and completion tokens, two-sided paired permutation tests swap the complete three-trial model blocks within each task. The statistic is the absolute mean paired difference. We use 19,999 Monte Carlo sign flips and `(extreme + 1)/(permutations + 1)`. The null is exchangeability of the two configured systems' outcomes within each task; it is not a randomized causal comparison of model architecture under matched decoding settings. Holm adjustment covers the nine model-pair by resource tests.
+For interaction steps, two-sided paired permutation tests swap the complete three-trial model blocks within each task. The statistic is the absolute mean paired difference. We use 19,999 Monte Carlo sign flips and `(extreme + 1)/(permutations + 1)`. The null is exchangeability of the two configured systems' outcomes within each task; it is not a randomized causal comparison of model architecture under matched decoding settings. Holm adjustment covers the three model-pair interaction-step tests. Input and completion token totals are retained as descriptive accounting measures and are not subjected to cross-model hypothesis tests.
 
 For resolution, the task-level value is its success fraction among three trials. Paired differences are reported in percentage points. An exact task-swap test computes the signed-sum distribution of integer success-count differences by dynamic programming. Holm adjustment covers the three model pairs.
 
 For stability, a task is unstable when exactly one or two of its three attempts succeed. A two-sided exact McNemar test compares the paired task-level indicators, using the binomial distribution of discordant orientations. Holm adjustment covers the three model pairs. Counts of 0/3, 1/3, 2/3 and 3/3 are also reported because consistency includes persistent failure and is not equivalent to reliable resolution.
 
-As a multiplicity sensitivity analysis, all 15 hypothesis tests are additionally adjusted together using Holm. Both adjustments are exported. The outcome-family analysis and the conservative global analysis are distinguished in the results, particularly for marginal resolution findings. Confidence intervals are not used to bypass the specified p-value corrections.
+As a multiplicity sensitivity analysis, all nine interaction-step, resolution and stability tests are additionally adjusted together using Holm. Both adjustments are exported. The outcome-family analysis and the conservative global analysis are distinguished in the results, particularly for marginal resolution findings. Confidence intervals are not used to bypass the specified p-value corrections.
 
 Success/failure resource splits, the all-models/all-trials-successful subset, and common-budget task-round subsets remain descriptive sensitivity summaries. Conditioning on success selects different task sets across models, so those splits are not causal evidence that failure causes extra reasoning or that one model is intrinsically more efficient. Task/attempt-level failure labels are available under each cohort in `failures/failure_trial_catalog.csv`. The exploratory category-incidence inference described below retains task dependence; aggregate category counts alone do not preserve that structure.
 
@@ -107,7 +107,7 @@ frequencies with identical definitions. Previous descriptive subsets of jointly
 solved tasks and common-budget/common-timeout task-rounds are retained within
 each cohort's resource summary. They do not have separate hypothesis tests.
 The task-paired inference described above applies separately to each cohort.
-As an additional multiplicity sensitivity, all 30 resource/outcome tests across
+As an additional multiplicity sensitivity, all 18 interaction-step/outcome tests across
 both cohorts are Holm-adjusted together in
 `sensitivity/model_comparisons_both_cohorts.csv`. This adjustment does not assume
 independent cohorts. Within-family, within-cohort-global and cross-cohort
@@ -145,15 +145,19 @@ measure model repair behavior. Model comparisons of patch-attributable failure
 categories should be interpreted separately from V5.
 
 The separate chronological-link audit uses the three English coder CSVs and
-explicit final discussion decisions. For unchanged primary categories, it
-flags `NOT_SUPPORTED` when any coder supplies that assessment and assigns
-`SUPPORTED` only when all three coders supply it. Other cases, including
-changed categories without reassessment, are `INDETERMINATE` unless explicitly
-settled in discussion. A negative flag is not a consensus judgment or causal
-disproof. Blank coder statuses are also
-`INDETERMINATE`. Overall percentages retain all 242 failed trials. These are
-descriptive resolution counts, not independent-coder agreement or causal
-identification. The [coding documentation](taxonomy_methodology/README.md#final-chronological-link-judgments)
+explicit final discussion or adjudication decisions. For unchanged primary
+categories, the status selected by at least two of the three coders becomes
+final. A three-way split, an `INDETERMINATE` majority, and a changed category
+without reassessment
+produce a provisional `INDETERMINATE` result that must be adjudicated. The
+current adjudication assigns the provisional V-category cases `SUPPORTED` at
+the validation stage and reviews trajectory, patch, repository-state, and
+evaluation evidence for all non-V cases. Blank coder statuses enter the vote as
+`INDETERMINATE`, but no final `INDETERMINATE` is retained. A majority status
+need not be unanimous and does not establish or disprove causation. Overall
+percentages retain all 242 failed trials. These are descriptive resolution
+counts, not independent-coder agreement or causal identification. The
+[coding documentation](taxonomy_methodology/README.md#final-chronological-link-judgments)
 defines the rule and links the trial-level results.
 
 ## Repository and difficulty strata

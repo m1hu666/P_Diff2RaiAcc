@@ -20,17 +20,11 @@ k = 1,000 reported tokens. Outcome-specific rows are descriptive because the suc
 
 | Comparison | Metric | Difference [95% CI] | Ratio [95% CI] | Family Holm p | Global Holm p |
 | --- | --- | --- | --- | --- | --- |
-| Claude - Gemini | Steps | 3.96 [1.43, 6.51] | 1.10 [1.04, 1.17] | 0.009 | 0.024 |
-| Claude - Gemini | Input (k) | 140.18 [59.00, 221.96] | 1.24 [1.09, 1.40] | 0.003 | 0.007 |
-| Claude - Gemini | Output (k) | 0.29 [-0.59, 1.09] | 1.03 [0.95, 1.11] | 1.000 | 1.000 |
+| Claude - Gemini | Steps | 3.96 [1.43, 6.51] | 1.10 [1.04, 1.17] | 0.002 | 0.016 |
 | Claude - GPT | Steps | 29.83 [27.04, 32.81] | 3.28 [3.06, 3.52] | <0.001 | <0.001 |
-| Claude - GPT | Input (k) | 574.30 [489.27, 670.56] | 4.91 [4.25, 5.69] | <0.001 | <0.001 |
-| Claude - GPT | Output (k) | 0.01 [-1.13, 1.10] | 1.00 [0.90, 1.12] | 1.000 | 1.000 |
 | Gemini - GPT | Steps | 25.86 [23.31, 28.61] | 2.98 [2.76, 3.21] | <0.001 | <0.001 |
-| Gemini - GPT | Input (k) | 434.12 [364.06, 513.22] | 3.95 [3.41, 4.58] | <0.001 | <0.001 |
-| Gemini - GPT | Output (k) | -0.28 [-1.38, 0.84] | 0.97 [0.88, 1.09] | 1.000 | 1.000 |
 
-Differences are left minus right; ratios are left divided by right. Intervals are pointwise task-bootstrap estimates. Holm correction covers the nine resource tests. Read the adjusted p-values for this cohort; a non-significant result does not establish equivalence. Cross-provider token counts do not measure matched internal reasoning computation. A joint adjustment over both cohorts is provided in `../sensitivity/model_comparisons_both_cohorts.csv`.
+Differences are left minus right; ratios are left divided by right. Intervals are pointwise task-bootstrap estimates. Holm correction covers the three pairwise interaction-step tests. Read the adjusted p-values for this cohort; a non-significant result does not establish equivalence. Cross-provider token counts are summarized descriptively and are not subjected to model-comparison tests. A joint adjustment over both cohorts is provided in `../sensitivity/model_comparisons_both_cohorts.csv`.
 
 ## Resolution and execution consistency
 
@@ -42,17 +36,17 @@ Differences are left minus right; ratios are left divided by right. Intervals ar
 
 | Comparison | Difference in pp [95% CI] | Family Holm p | Global Holm p |
 | --- | --- | --- | --- |
-| Claude - Gemini | 4.00 [-1.00, 9.00] | 0.329 | 1.000 |
-| Claude - GPT | 6.67 [2.00, 11.67] | 0.029 | 0.087 |
-| Gemini - GPT | 2.67 [-3.33, 9.00] | 0.457 | 1.000 |
+| Claude - Gemini | 4.00 [-1.00, 9.00] | 0.329 | 0.574 |
+| Claude - GPT | 6.67 [2.00, 11.67] | 0.029 | 0.058 |
+| Gemini - GPT | 2.67 [-3.33, 9.00] | 0.457 | 0.914 |
 
-Resolution differences use task success fractions. Family Holm adjustment covers three model pairs; global adjustment covers all 15 resource/outcome tests within this cohort. Intervals are pointwise, not multiplicity-adjusted.
+Resolution differences use task success fractions. Family Holm adjustment covers three model pairs; global adjustment covers all nine interaction-step and outcome tests within this cohort. Intervals are pointwise, not multiplicity-adjusted.
 
 | Comparison | Difference in pp [95% CI] | Family Holm p | Global Holm p |
 | --- | --- | --- | --- |
-| Claude - Gemini | 8.00 [0.00, 16.00] | 0.289 | 0.770 |
+| Claude - Gemini | 8.00 [0.00, 16.00] | 0.289 | 0.481 |
 | Claude - GPT | 1.00 [-7.00, 9.00] | 1.000 | 1.000 |
-| Gemini - GPT | -7.00 [-15.00, 1.00] | 0.289 | 1.000 |
+| Gemini - GPT | -7.00 [-15.00, 1.00] | 0.289 | 0.574 |
 
 Instability means one or two successes out of three trials. Counts and paired comparisons are shown above; consistently failed tasks also count as consistent.
 

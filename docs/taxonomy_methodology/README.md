@@ -133,20 +133,27 @@ The explicit final decisions are stored in
 [earliest_link_decisions.csv](earliest_link_decisions.csv). For every failed
 trial, apply these rules in order:
 
-1. Use an explicit discussion decision when available.
-2. Otherwise, when the final primary category is unchanged, assign
-   `NOT_SUPPORTED` if at least one coder recorded `NOT_SUPPORTED`.
-3. Assign `SUPPORTED` only when the final category is unchanged and all three
-   coder values are `SUPPORTED`.
-4. Assign `INDETERMINATE` to all remaining trials, including changed categories
-   without a new chronological-link assessment.
+1. Use an explicit discussion or adjudication decision when available.
+2. Otherwise, when the final primary category is unchanged, assign the status
+   selected by at least two of the three coders.
+3. Treat a majority of `INDETERMINATE` votes, a three-way split, or a changed
+   category without reassessment as a provisional `INDETERMINATE` result.
+4. Adjudicate every provisional result as `SUPPORTED` or `NOT_SUPPORTED`. For
+   the current provisional V-category cases, assign `SUPPORTED` because the
+   selected mode is at the final validation stage. For every non-V case, inspect
+   its trajectory, candidate patch, repository state, and evaluation evidence
+   to determine whether the selected category is the earliest directly linked
+   unrecovered deviation.
+5. Do not publish a final `INDETERMINATE` result; an unresolved provisional case
+   is an incomplete adjudication and causes the aggregation script to fail.
 
-This is an asymmetric, conservative flagging rule. An aggregate
-`NOT_SUPPORTED` means that at least one coder raised a negative assessment
-for that category, or that the final discussion explicitly selected that
-status. It does not mean that all coders agreed, nor does it establish a
-causal counterexample. Assessments of a replaced category cannot be applied
-automatically to its replacement.
+The voting stage is symmetric over `SUPPORTED`, `NOT_SUPPORTED`, and
+`INDETERMINATE`. A majority result requires two matching votes but need not be
+unanimous. Explicit adjudication decisions supersede the vote. Assessments of
+a replaced category cannot be applied automatically to its replacement, and
+no aggregate status establishes or disproves a causal claim. The current
+adjudication resolved 44 provisional cases: 21 V-category cases by the stated
+validation-stage rule and 23 non-V cases by trial-specific evidence review.
 
 Rebuild the final trial table, counts, and percentages with:
 

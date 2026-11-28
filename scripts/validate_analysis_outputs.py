@@ -87,14 +87,22 @@ def main():
         assert design['input_sha256'] == hashlib.sha256(artifact(out, 'per_attempt.csv').read_bytes()).hexdigest()
         resources, success, stability = [read(name, cohort) for name in
                                          ('resource_comparisons.csv', 'success_comparisons.csv', 'stability_comparisons.csv')]
-        assert len(resources)==9 and len(success)==len(stability)==3
-        for family, size in ((resources, 9), (success, 3), (stability, 3)):
-            for row in family:
+        assert len(resources)==3 and len(success)==len(stability)==3
+        assert {row['metric'] for row in resources} == {'steps'}
+        for family, size in ((resources, 3), (success, 3), (stability, 3)):
+            adjusted = holm_adjust([float(row['p_value']) for row in family])
+            for row, expected_adjusted in zip(family, adjusted):
                 assert int(row['n_tasks'])==expected_n and int(row['holm_family_size'])==size
                 assert 0 < float(row['p_value']) <= float(row['p_value_holm']) <= 1
-                assert int(row['global_family_size'])==15
+                assert abs(float(row['p_value_holm'])-expected_adjusted) < 1e-12
+                assert int(row['global_family_size'])==9
                 assert float(row['p_value_holm']) <= float(row['p_value_holm_global']) <= 1
-        checked_comparisons += 15
+        primary_tests = resources + success + stability
+        for row, expected_adjusted in zip(
+                primary_tests,
+                holm_adjust([float(row['p_value']) for row in primary_tests])):
+            assert abs(float(row['p_value_holm_global'])-expected_adjusted) < 1e-12
+        checked_comparisons += 9
         catalogue = read('failure_trial_catalog.csv', cohort)
         observed_failed = {(r['task_id'], r['model'], 'round'+r['trial']) for r in catalogue}
         assert observed_failed == {key for key in expected_failed if key[0] in selected}
@@ -143,9 +151,9 @@ def main():
         assert int(row['both_cohorts_family_size'])==len(taxonomy_tests)
         assert abs(float(row['p_value_holm_both_cohorts'])-p) < 1e-12
     joint = list(csv.DictReader((out/'sensitivity/model_comparisons_both_cohorts.csv').open()))
-    assert len(joint)==30
+    assert len(joint)==18
     for row, p in zip(joint, holm_adjust([float(r['p_value']) for r in joint])):
-        assert int(row['both_cohorts_family_size'])==30
+        assert int(row['both_cohorts_family_size'])==18
         assert abs(float(row['p_value_holm_both_cohorts'])-p) < 1e-12
     shifts = list(csv.DictReader((out/'sensitivity/django_taxonomy_shift.csv').open()))
     assert len(shifts) == len(read('failure_taxonomy_summary.csv')) + len(read('failure_stage_summary.csv'))
@@ -168,12 +176,14 @@ def main():
         assert all(r['earliest_link'] in statuses for r in records)
     with (review_docs/'earliest_link_decisions.csv').open() as stream:
         decisions = {(r['task_id'], r['model'], r['trial']): r for r in csv.DictReader(stream)}
+    assert all(r['final_earliest_link'] in {'SUPPORTED', 'NOT_SUPPORTED'}
+               and r['reason'].strip() for r in decisions.values())
     observed_earliest = set()
     for row in earliest_rows:
         review_key = row['task_id'], row['model'], row['trial']
         source_key = row['task_id'], short_models[row['model']], 'round'+row['trial']
         assert row['final_category'] == annotations[source_key]['primary_category']
-        assert row['final_earliest_link'] in statuses
+        assert row['final_earliest_link'] in {'SUPPORTED', 'NOT_SUPPORTED'}
         assert all(coders[n][review_key]['current_category'] == row['reviewed_category'] for n in coders)
         values = [coders[n][review_key]['earliest_link'] for n in coders]
         assert values == [row[f'coder_{n}_earliest_link'] for n in coders]
@@ -183,12 +193,12 @@ def main():
             assert decisions[review_key]['final_category'] == row['final_category']
         elif row['reviewed_category'] != row['final_category']:
             expected, basis = 'INDETERMINATE', 'changed_category_not_reassessed'
-        elif 'NOT_SUPPORTED' in values:
-            expected, basis = 'NOT_SUPPORTED', 'at_least_one_not_supported'
-        elif all(value == 'SUPPORTED' for value in values):
-            expected, basis = 'SUPPORTED', 'three_supported_statuses'
         else:
-            expected, basis = 'INDETERMINATE', 'incomplete_supported_assessment'
+            expected, votes = Counter(values).most_common(1)[0]
+            if votes >= 2:
+                basis = f'majority_{expected.lower()}'
+            else:
+                expected, basis = 'INDETERMINATE', 'no_majority'
         assert (row['final_earliest_link'], row['decision_basis']) == (expected, basis)
         observed_earliest.add(source_key)
     assert observed_earliest == set(annotations) and len(earliest_rows) == len(annotations)

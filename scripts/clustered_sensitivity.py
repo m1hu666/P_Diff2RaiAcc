@@ -327,7 +327,7 @@ def main():
         for cohort in COHORTS:
             resource_effects.extend({'cohort': cohort, 'comparison_family': filename.removesuffix('.csv')} | r
                                     for r in read(artifact(out, filename, cohort)))
-    # These are dependent, nested cohorts: adjust the 30 tests jointly without
+    # These are dependent, nested cohorts: adjust the 18 tests jointly without
     # treating the full/excluded estimates as independent samples.
     for r, p in zip(resource_effects, holm_adjust([float(r['p_value']) for r in resource_effects])):
         r.update(p_value_holm_both_cohorts=p, both_cohorts_family_size=len(resource_effects))

@@ -1,10 +1,11 @@
 """Resolve and count final chronological-link judgments for all failed trials.
 
 Read the three English coder CSVs, canonical final categories, and explicit
-discussion decisions. Missing coder statuses become INDETERMINATE. Discussion
-decisions take priority. For unchanged categories, any NOT_SUPPORTED vote
-produces a negative flag; SUPPORTED requires all three votes. Changed categories
-without reassessment and all remaining cases become INDETERMINATE.
+discussion or adjudication decisions. Missing coder statuses become
+INDETERMINATE. Explicit decisions take priority. For unchanged categories, a
+status wins when it receives at least two of the three votes. A provisional
+INDETERMINATE result or a changed category requires an explicit evidence-based
+adjudication before final output.
 Write a trial-level result, grouped count/percentage table, and readable report under
 result/Statistics results/taxonomy_reliability. No source labels are modified.
 """
@@ -49,11 +50,10 @@ def resolve_status(reviewed, final, statuses, explicit=None):
         return explicit, 'discussion_decision'
     if reviewed != final:
         return 'INDETERMINATE', 'changed_category_not_reassessed'
-    if 'NOT_SUPPORTED' in statuses:
-        return 'NOT_SUPPORTED', 'at_least_one_not_supported'
-    if all(status == 'SUPPORTED' for status in statuses):
-        return 'SUPPORTED', 'three_supported_statuses'
-    return 'INDETERMINATE', 'incomplete_supported_assessment'
+    status, votes = Counter(statuses).most_common(1)[0]
+    if votes >= 2:
+        return status, f'majority_{status.lower()}'
+    return 'INDETERMINATE', 'no_majority'
 
 
 def resolve_reviews(coder_paths, annotations_path, decisions_path, codebook_path):
@@ -81,11 +81,12 @@ def resolve_reviews(coder_paths, annotations_path, decisions_path, codebook_path
         coders.append(records)
     decisions = index(read_csv(decisions_path), decisions_path.name)
     if not set(decisions) <= set(canonical):
-        raise ValueError('Discussion decisions include unknown trials')
+        raise ValueError('Explicit decisions include unknown trials')
     for trial_key, row in decisions.items():
         if (row['final_category'] != canonical[trial_key]['primary_category']
-                or row['final_earliest_link'] not in STATUSES or not row['reason'].strip()):
-            raise ValueError(f'Invalid or stale discussion decision: {trial_key}')
+                or row['final_earliest_link'] not in {'SUPPORTED', 'NOT_SUPPORTED'}
+                or not row['reason'].strip()):
+            raise ValueError(f'Invalid or stale explicit decision: {trial_key}')
     resolved = []
     for trial_key in coders[0]:
         reviewed = [coder[trial_key]['current_category'] for coder in coders]
@@ -98,6 +99,11 @@ def resolve_reviews(coder_paths, annotations_path, decisions_path, codebook_path
             reviewed[0], final_category, statuses,
             override['final_earliest_link'] if override else None,
         )
+        if status == 'INDETERMINATE':
+            raise ValueError(
+                f'Unadjudicated final earliest_link for {trial_key}; add an explicit '
+                'SUPPORTED or NOT_SUPPORTED adjudication decision'
+            )
         resolved.append({
             'task_id': trial_key[0], 'model': trial_key[1], 'trial': trial_key[2],
             'reviewed_category': reviewed[0], 'final_category': final_category,
@@ -138,11 +144,6 @@ def write_csv(path, rows):
 def report_text(rows, summary, decisions_path, report):
     overall = summary[0]
     basis = Counter(r['decision_basis'] for r in rows)
-    any_negative = sum(any(r[f'coder_{name}_earliest_link'] == 'NOT_SUPPORTED'
-                           for name in ('a', 'b', 'c')) for r in rows)
-    changed_negative = sum(r['reviewed_category'] != r['final_category']
-                           and any(r[f'coder_{name}_earliest_link'] == 'NOT_SUPPORTED'
-                                   for name in ('a', 'b', 'c')) for r in rows)
     relative = quote(Path(os.path.relpath(decisions_path, report.parent)).as_posix(), safe='/._-')
     lines = [
         '# Final chronological-link audit', '',
@@ -152,24 +153,29 @@ def report_text(rows, summary, decisions_path, report):
         '| --- | --- | --- |',
         *[f'| {status} | {overall[status]} | {overall[status+"_percent"]:.2f}% |'
           for status in STATUSES], '',
-        f'Explicit [discussion decisions]({relative}) take priority. For remaining trials, '
-        'use NOT_SUPPORTED as a conservative negative flag when the primary category '
-        'is unchanged and at least one coder recorded NOT_SUPPORTED. Use SUPPORTED '
-        'only when the category is unchanged and all three coder values are SUPPORTED. '
-        'All other cases are INDETERMINATE. '
+        f'Explicit [discussion and adjudication decisions]({relative}) take priority. '
+        'For remaining trials, '
+        'when the primary category is unchanged, the status receiving at least two of '
+        'the three coder votes becomes final. A majority of INDETERMINATE votes, a '
+        'three-way split, or a changed category produces a provisional INDETERMINATE '
+        'result that must be adjudicated as SUPPORTED or NOT_SUPPORTED. Votes on a '
+        'replaced category cannot be transferred to its replacement. '
         'Blank coder statuses were filled with INDETERMINATE before applying this rule.', '',
-        'An aggregate NOT_SUPPORTED status records at least one negative assessment '
-        'or an explicit final discussion decision; it does not imply unanimous '
-        'reviewer agreement or establish that a causal claim has been disproved.', '',
-        f'At least one coder recorded NOT_SUPPORTED on {any_negative} pre-discussion '
-        f'trials. Of these, {changed_negative} have a changed primary category and '
-        'are not transferred automatically to the new category.', '',
-        f'The INDETERMINATE total includes {basis["changed_category_not_reassessed"]} trials '
-        'whose category changed without a new chronological-link assessment and '
-        f'{basis["incomplete_supported_assessment"]} trials with incomplete or '
-        'indeterminate support and no eligible negative assessment. '
-        'These entries are not counted as NOT_SUPPORTED. SUPPORTED is an observational '
-        'evidence-link judgment and does not establish a causal root cause.', '',
+        'The vote is symmetric across SUPPORTED, NOT_SUPPORTED, and INDETERMINATE. '
+        'A majority result means at least two coders selected that status; it need not '
+        'be unanimous. The completed adjudication assigns SUPPORTED to the provisional '
+        'V-category cases under the validation-stage rule and resolves every other '
+        'provisional case from its trajectory, patch, repository-state, and evaluation '
+        'evidence. Explicit decisions may supersede the vote. Neither '
+        'SUPPORTED nor NOT_SUPPORTED establishes or disproves a causal root cause.', '',
+        f'Resolution basis: {basis["discussion_decision"]} explicit decisions; '
+        'majority-vote results of '
+        f'SUPPORTED {basis["majority_supported"]}, '
+        f'NOT_SUPPORTED {basis["majority_not_supported"]}, and '
+        f'INDETERMINATE {basis["majority_indeterminate"]}; '
+        f'{basis["no_majority"]} three-way splits; and '
+        f'{basis["changed_category_not_reassessed"]} changed categories without a new '
+        'chronological-link assessment.', '',
         '## Counts by final category', '',
         '| Category | SUPPORTED | NOT_SUPPORTED | INDETERMINATE | Total |',
         '| --- | --- | --- | --- | --- |',

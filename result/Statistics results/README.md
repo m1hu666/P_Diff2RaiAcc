@@ -49,12 +49,16 @@ coder statuses and the final resolution basis; the
 model, and final-category counts and percentages. Rebuild this part alone with
 `python3 scripts/summarize_earliest_links.py`.
 
-Explicit discussion decisions take priority. For other unchanged categories,
-any `NOT_SUPPORTED` assessment produces a negative flag; `SUPPORTED` requires
-all three coder values to be `SUPPORTED`. Changed categories without a new
-assessment and all remaining cases are `INDETERMINATE`. A negative flag does
-not imply unanimous agreement or causal disproof. These descriptive counts include
-all 242 failed trials and are separate from an agreement coefficient.
+Explicit discussion and adjudication decisions take priority. For other
+unchanged categories, the status selected by at least two coders becomes final.
+A three-way split, an `INDETERMINATE` majority, or changed categories without
+a new assessment are
+provisional and require explicit `SUPPORTED` or `NOT_SUPPORTED` adjudication.
+The completed review assigns provisional V-category cases `SUPPORTED` under the
+validation-stage rule and adjudicates non-V cases from the archived evidence;
+no final `INDETERMINATE` remains. A majority status need not be unanimous and
+does not establish or disprove causation. These descriptive counts include all
+242 failed trials and are separate from an agreement coefficient.
 
 ## Shared data and evidence
 
@@ -84,7 +88,7 @@ The following relative paths occur under both `full/` and `without_django/`.
 | Relative path | Contents and interpretation |
 | --- | --- |
 | `resources/summary_metrics.csv` | All/success/failure distributions of steps, prompt tokens, completion tokens and estimated USD; means, medians, quartiles and counts. Outcome splits are descriptive. |
-| `resources/resource_comparisons.csv` | Nine task-paired model comparisons: steps/input/output, mean differences and ratios, pointwise 95% intervals and adjusted p-values. |
+| `resources/resource_comparisons.csv` | Three task-paired interaction-step comparisons with mean differences, ratios, pointwise 95% intervals and adjusted p-values. Token totals remain descriptive in `summary_metrics.csv`. |
 | `resources/estimated_cost_comparisons.csv` | Three exploratory paired cost comparisons, without cost hypothesis tests. |
 | `outcomes/success_stability_summary.csv` | Resolution, 0/3 through 3/3 success counts, instability and task-bootstrap intervals. Consistency includes persistent failure. |
 | `outcomes/success_comparisons.csv` | Three paired success-fraction comparisons with exact task-block-swap tests. |
@@ -120,7 +124,7 @@ records and is not part of the final taxonomy.
 | File | Meaning |
 | --- | --- |
 | [sensitivity/django_taxonomy_shift.csv](sensitivity/django_taxonomy_shift.csv) | Full, Django-only and non-Django counts; failure composition; category rankings; Django contribution; exclusion-minus-full percentage-point changes and joint intervals. |
-| [sensitivity/model_comparisons_both_cohorts.csv](sensitivity/model_comparisons_both_cohorts.csv) | All 30 resource/outcome tests with additional joint Holm correction. |
+| [sensitivity/model_comparisons_both_cohorts.csv](sensitivity/model_comparisons_both_cohorts.csv) | All 18 interaction-step/outcome tests with additional joint Holm correction. |
 | [sensitivity/analysis_design.json](sensitivity/analysis_design.json) | Cohort sizes, seed, resampling, estimands, multiplicity scopes and input hashes. |
 
 The full and non-Django estimates overlap. Django composition-change intervals use
@@ -144,9 +148,9 @@ both estimates. They do not use an independent-groups test.
   zero-observed bootstrap interval cannot bound an unseen event probability.
 - All intervals are pointwise 95% percentile estimates, not simultaneous
   intervals. Non-significance does not establish equivalence.
-- Resource/outcome `p_value_holm` covers its outcome family (9/3/3 tests);
-  `p_value_holm_global` covers 15 tests within a cohort. The cross-cohort table
-  adds `p_value_holm_both_cohorts` over 30 tests.
+- Interaction-step/outcome `p_value_holm` covers its outcome family (3/3/3 tests);
+  `p_value_holm_global` covers nine tests within a cohort. The cross-cohort table
+  adds `p_value_holm_both_cohorts` over 18 tests.
 - Taxonomy `p_value_holm` covers 48 tests within a cohort and
   `p_value_holm_both_cohorts` covers all 96 tests. Taxonomy inference is exploratory
   and a separate family from resource/outcome inference.

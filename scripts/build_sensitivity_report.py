@@ -39,7 +39,7 @@ def overview(out):
                                   f"{metrics['steps']:.2f}", f"{metrics['prompt_tokens']/1000:.2f}",
                                   f"{metrics['completion_tokens']/1000:.2f}", f"{metrics['recorded_cost_usd']:.3f}"])
     lines += [table(['Cohort', 'Model', 'Resolution (%)', 'Mean steps', 'Input (k)', 'Output (k)', 'Estimated USD'], resource_rows), '',
-              'Per-cohort paired tests and confidence intervals are in [full](full/REPORT.md) and [without Django](without_django/REPORT.md). The [joint comparison table](sensitivity/model_comparisons_both_cohorts.csv) additionally applies Holm to all 30 resource/outcome tests across both cohorts. Within-cohort global adjustment covers 15 tests. These scopes must not be interchanged.', '',
+              'Per-cohort paired tests and confidence intervals are in [full](full/REPORT.md) and [without Django](without_django/REPORT.md). The [joint comparison table](sensitivity/model_comparisons_both_cohorts.csv) additionally applies Holm to all 18 interaction-step/outcome tests across both cohorts. Within-cohort global adjustment covers nine tests. These scopes must not be interchanged.', '',
               '## Influence on taxonomy', '']
     stage = [r for r in shift if r['level'] == 'stage']
     categories = [r for r in shift if r['level'] == 'primary_category']

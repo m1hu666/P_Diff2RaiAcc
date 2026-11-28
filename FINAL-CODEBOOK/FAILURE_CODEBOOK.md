@@ -70,9 +70,13 @@ failed benchmark outcome.
 
 These definitions apply to individual assessments. The
 [final aggregation rule](../docs/taxonomy_methodology/README.md#final-chronological-link-judgments)
-uses any eligible negative assessment as a conservative flag and requires
-three positive assessments for support, subject to explicit discussion
-decisions. An aggregate negative flag does not imply coder consensus.
+uses a two-of-three majority vote when the reviewed category is unchanged,
+subject to explicit discussion or adjudication decisions. A majority of
+`INDETERMINATE` votes,
+a three-way split, and a changed category without reassessment are provisional
+and require an evidence-based `SUPPORTED` or `NOT_SUPPORTED` adjudication. The
+final aggregation does not retain `INDETERMINATE`. An aggregate status need not
+be unanimous and does not establish or disprove causation.
 
 ## Annotation policy
 

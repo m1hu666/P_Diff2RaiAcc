@@ -22,7 +22,7 @@ The exclusion cohort is nested in the full cohort. It is a sensitivity analysis,
 | without_django | Gemini | 70.67 | 42.06 | 654.77 | 9.89 | 0.628 |
 | without_django | GPT | 65.33 | 14.01 | 174.35 | 11.34 | 0.269 |
 
-Per-cohort paired tests and confidence intervals are in [full](full/REPORT.md) and [without Django](without_django/REPORT.md). The [joint comparison table](sensitivity/model_comparisons_both_cohorts.csv) additionally applies Holm to all 30 resource/outcome tests across both cohorts. Within-cohort global adjustment covers 15 tests. These scopes must not be interchanged.
+Per-cohort paired tests and confidence intervals are in [full](full/REPORT.md) and [without Django](without_django/REPORT.md). The [joint comparison table](sensitivity/model_comparisons_both_cohorts.csv) additionally applies Holm to all 18 interaction-step/outcome tests across both cohorts. Within-cohort global adjustment covers nine tests. These scopes must not be interchanged.
 
 ## Influence on taxonomy
 

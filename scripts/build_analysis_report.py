@@ -269,7 +269,7 @@ k = 1,000 reported tokens. Outcome-specific rows are descriptive because the suc
 
 {resource_inference}
 
-Differences are left minus right; ratios are left divided by right. Intervals are pointwise task-bootstrap estimates. Holm correction covers the nine resource tests. Read the adjusted p-values for this cohort; a non-significant result does not establish equivalence. Cross-provider token counts do not measure matched internal reasoning computation. A joint adjustment over both cohorts is provided in `../sensitivity/model_comparisons_both_cohorts.csv`.
+Differences are left minus right; ratios are left divided by right. Intervals are pointwise task-bootstrap estimates. Holm correction covers the three pairwise interaction-step tests. Read the adjusted p-values for this cohort; a non-significant result does not establish equivalence. Cross-provider token counts are summarized descriptively and are not subjected to model-comparison tests. A joint adjustment over both cohorts is provided in `../sensitivity/model_comparisons_both_cohorts.csv`.
 
 ## Resolution and execution consistency
 
@@ -277,7 +277,7 @@ Differences are left minus right; ratios are left divided by right. Intervals ar
 
 {success_md}
 
-Resolution differences use task success fractions. Family Holm adjustment covers three model pairs; global adjustment covers all 15 resource/outcome tests within this cohort. Intervals are pointwise, not multiplicity-adjusted.
+Resolution differences use task success fractions. Family Holm adjustment covers three model pairs; global adjustment covers all nine interaction-step and outcome tests within this cohort. Intervals are pointwise, not multiplicity-adjusted.
 
 {stability_md}
 

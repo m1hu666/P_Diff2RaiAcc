@@ -48,7 +48,7 @@ GPT's lower interaction overhead is therefore also observed in successfully solv
 | Gemini - GPT | steps | 22.36 [19.78, 25.22] | 2.97 [2.70, 3.25] |
 | Gemini - GPT | estimated_usd | 0.285 [0.236, 0.337] | 2.60 [2.24, 3.01] |
 
-These exploratory intervals condition on the observed common-success subset; no new hypothesis tests are run. The existing [all-task resource tests](../resources/resource_comparisons.csv) are separate and must not be presented as tests of this subset or of outcome-specific plotted cells.
+These exploratory intervals condition on the observed common-success subset; no new hypothesis tests are run. The existing [all-task interaction-step tests](../resources/resource_comparisons.csv) are separate and must not be presented as tests of this subset or of outcome-specific plotted cells.
 
 ## Supporting cost finding: unresolved attempts absorb disproportionate estimated spending
 

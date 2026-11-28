@@ -4,33 +4,31 @@ The audit covers 242 failed trials on 45 tasks. The primary categories are the c
 
 | Final earliest_link | Count | Percent of all failed trials |
 | --- | --- | --- |
-| SUPPORTED | 130 | 53.72% |
-| NOT_SUPPORTED | 32 | 13.22% |
-| INDETERMINATE | 80 | 33.06% |
+| SUPPORTED | 234 | 96.69% |
+| NOT_SUPPORTED | 8 | 3.31% |
+| INDETERMINATE | 0 | 0.00% |
 
-Explicit [discussion decisions](../../../docs/taxonomy_methodology/earliest_link_decisions.csv) take priority. For remaining trials, use NOT_SUPPORTED as a conservative negative flag when the primary category is unchanged and at least one coder recorded NOT_SUPPORTED. Use SUPPORTED only when the category is unchanged and all three coder values are SUPPORTED. All other cases are INDETERMINATE. Blank coder statuses were filled with INDETERMINATE before applying this rule.
+Explicit [discussion and adjudication decisions](../../../docs/taxonomy_methodology/earliest_link_decisions.csv) take priority. For remaining trials, when the primary category is unchanged, the status receiving at least two of the three coder votes becomes final. A majority of INDETERMINATE votes, a three-way split, or a changed category produces a provisional INDETERMINATE result that must be adjudicated as SUPPORTED or NOT_SUPPORTED. Votes on a replaced category cannot be transferred to its replacement. Blank coder statuses were filled with INDETERMINATE before applying this rule.
 
-An aggregate NOT_SUPPORTED status records at least one negative assessment or an explicit final discussion decision; it does not imply unanimous reviewer agreement or establish that a causal claim has been disproved.
+The vote is symmetric across SUPPORTED, NOT_SUPPORTED, and INDETERMINATE. A majority result means at least two coders selected that status; it need not be unanimous. The completed adjudication assigns SUPPORTED to the provisional V-category cases under the validation-stage rule and resolves every other provisional case from its trajectory, patch, repository-state, and evaluation evidence. Explicit decisions may supersede the vote. Neither SUPPORTED nor NOT_SUPPORTED establishes or disproves a causal root cause.
 
-At least one coder recorded NOT_SUPPORTED on 61 pre-discussion trials. Of these, 29 have a changed primary category and are not transferred automatically to the new category.
-
-The INDETERMINATE total includes 29 trials whose category changed without a new chronological-link assessment and 51 trials with incomplete or indeterminate support and no eligible negative assessment. These entries are not counted as NOT_SUPPORTED. SUPPORTED is an observational evidence-link judgment and does not establish a causal root cause.
+Resolution basis: 53 explicit decisions; majority-vote results of SUPPORTED 188, NOT_SUPPORTED 1, and INDETERMINATE 0; 0 three-way splits; and 0 changed categories without a new chronological-link assessment.
 
 ## Counts by final category
 
 | Category | SUPPORTED | NOT_SUPPORTED | INDETERMINATE | Total |
 | --- | --- | --- | --- | --- |
-| P1 | 17 | 15 | 13 | 45 |
-| P2 | 18 | 1 | 7 | 26 |
-| L1 | 9 | 3 | 0 | 12 |
-| S1 | 34 | 6 | 9 | 49 |
-| S2 | 14 | 1 | 4 | 19 |
-| I1 | 2 | 0 | 6 | 8 |
-| V1 | 4 | 4 | 2 | 10 |
-| V2 | 20 | 0 | 10 | 30 |
-| V3 | 10 | 1 | 11 | 22 |
-| V4 | 2 | 1 | 0 | 3 |
-| V5 | 0 | 0 | 18 | 18 |
+| P1 | 45 | 0 | 0 | 45 |
+| P2 | 26 | 0 | 0 | 26 |
+| L1 | 12 | 0 | 0 | 12 |
+| S1 | 45 | 4 | 0 | 49 |
+| S2 | 19 | 0 | 0 | 19 |
+| I1 | 5 | 3 | 0 | 8 |
+| V1 | 10 | 0 | 0 | 10 |
+| V2 | 30 | 0 | 0 | 30 |
+| V3 | 21 | 1 | 0 | 22 |
+| V4 | 3 | 0 | 0 | 3 |
+| V5 | 18 | 0 | 0 | 18 |
 
 [Trial-level decisions](final_earliest_links.csv) retain all three coder statuses and the resolution basis. The [grouped table](earliest_link_summary.csv) adds model/category counts and percentages. Rebuild with:
 
